@@ -1,0 +1,30 @@
+**完整证据链对应的文件地址**，按“故障发生 → 死因判定”的因果顺序排列：
+
+## 文件地图
+
+| 环节 | 文件/命令地址 | 证明什么 |
+|---|---|---|
+| ① 触发时刻与状态轨迹 | `/var/log/wifi_watchdog/wifi_watch.log` | 每分钟一行采样：故障前 AP/STA 何时开始翻脸、持续多久、何时恢复（`AP_UP→AP_DOWN`、`sta_connected 1→0` 的时间点） |
+| ② 故障现场快照 | `/var/log/wifi_watchdog/incident_年月日_时分秒.log` | 断连瞬间的 `iw dev`、`nmcli`、前后 10 分钟内核/系统日志切片、资源、dnsmasq 存活状态 |
+| ③ 驱动层死亡实锤 | `/var/log/kern.log`（+`.1~.4.gz`，约 3 周历史） | `RTW: ERROR`、`HALMAC][ERR`、`hw_port switch`、`OnDeAuth(p2p0)` —— D1 的直接证据 |
+| ④ 服务层行为链 | `/var/log/syslog`（+`.1~.7.gz`，约 8 天历史） | `CTRL-EVENT-DISCONNECTED` / `CHANNEL-SWITCH` 的先后顺序——判定是“STA 先断拖垮 AP”（C1）还是“同一秒双灭”（D1/H1） |
+| ⑤ 跨重启证据（新） | `/var/log/journal/7ab2309579ca486aa85d01a5e712f7cf/`（已 25M，上限 1G） | 重启不再销毁证据：`journalctl --list-boots` 看启动列表，`journalctl -b -1 -k` 读上次启动的内核日志 |
+| ⑥ 自愈判定（区分服务层/驱动层） | `wifi_watch.log` 及 incident 档案里的 `SOFT_RECOVERY_OK / SOFT_RECOVERY_FAILED` 行；也可 `journalctl -t wifi_watchdog` | FAILED = 软件层重开无效 → 坐实 D1 驱动层死，拿去和供应商交涉的关键判据 |
+| ⑦ 故障频次与重启模式 | `/var/log/wtmp`（用 `last -x reboot` 读） | 无 shutdown 记录的崩溃式重启时间线，统计复发频率是否下降 |
+| ⑧ 配置基线（排除配置回归） | `/etc/NetworkManager/conf.d/default-wifi-powersave-on.conf`（省电=2）、`/etc/NetworkManager/system-connections/myap50G.nmconnection` 等连接配置、`/etc/systemd/journald.conf.d/10-persistent.conf` | 证明故障发生时配置仍正确，排除“配置被改回去”的可能 |
+
+## 下次故障的标准动作（顺序很重要）
+
+```bash
+# 1. 在 120 主机上执行一键取证：
+sudo /usr/local/sbin/wifi_diag_collect.sh
+#    产物：/home/ysc/wifi_diag_<时间戳>/（约3M，含上表①②⑤及日志切片全量）
+
+# 2. 通过 eth1 拷走（不要走无线）：
+#    scp -r ysc@192.168.1.120:/home/ysc/wifi_diag_* ./
+
+# 3. 然后才重启恢复业务
+```
+
+刚才的试运行产物在 `/home/ysc/wifi_diag_20261004_011647/`，建议保留——它就是“健康态对照样本”，下次故障时和故障包一对比，差异一目了然。
+

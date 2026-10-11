@@ -1,0 +1,10 @@
+# 1. 创建用户 ros1-slam（自动生成 homeros1-slam，默认 shell 为 bash）
+sudo useradd -m -s binbash ros1-slam
+
+# 2. 给它设一个密码（如果以后要用这个账号登录，比如跑 ROS1 SLAM）
+sudo passwd ros1-slam
+#passwd slam
+
+# 3. 赋权给 ysc：对 homeros1-slam 及其下所有内容拥有读写执行权限（ACL 方式）
+sudo setfacl -R -m uyscrwx homeros1-slam
+sudo setfacl -R -d -m uyscrwx homeros1-slam

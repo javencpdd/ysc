@@ -1,0 +1,4 @@
+给日志文件分配50M的空间来储存
+sudo apt install -y logrotate          # 安装后 Ubuntu 会自动启用 logrotate.timer
+sudo systemctl enable --now logrotate.timer   # 保险起见再确认启用一次
+sudo truncate -s 0 /var/log/syslog     # 清空 17G 日志（rsyslog 以追加模式写入，安全）
