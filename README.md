@@ -36,8 +36,8 @@ lite3/
 
 ```bash
 git -C /home/jack/lite3Code rev-parse --short HEAD
-sed -n '1,200p' /home/jack/lite3/docs/codebase-map.md
-sed -n '1,200p' /home/jack/lite3/docs/hosts/103-感知导航主机/README.md
+sed -n '1,200p' /home/jack/云深处/lite3/docs/codebase-map.md
+sed -n '1,200p' /home/jack/云深处/lite3/docs/hosts/103-感知导航主机/README.md
 ```
 
 实际修改 YOLO、监控面板或规划脚本时，在 `lite3Code` 中定位源码和部署说明；需要解释部署背景或风险时，再查本库对应笔记。120 侧内容以 [120 主机审计](docs/hosts/120-运动控制主机/README.md) 为入口，不应从 103 代码库推断其完整运行环境。

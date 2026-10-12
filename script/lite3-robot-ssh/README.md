@@ -51,7 +51,7 @@ script/lite3-robot-ssh/scripts/lite3-ssh 120 'hostname; id -un; uname -r'
 该目录保存在仓库 `script/` 下。若要让新 Codex 会话自动发现它，可在本机运行：
 
 ```bash
-ln -s /home/jack/lite3/script/lite3-robot-ssh /home/jack/.codex/skills/lite3-robot-ssh
+ln -s /home/jack/云深处/lite3/script/lite3-robot-ssh /home/jack/.codex/skills/lite3-robot-ssh
 ```
 
 重启 Codex 会话后，可要求“使用 `lite3-robot-ssh` 检查 120 主机”。也可不安装 skill，直接调用脚本。使用 MCP 工具时，仍须先验证实际热点和连接路径；MCP 的普通 SSH 别名连接不一定选中热点网卡。
