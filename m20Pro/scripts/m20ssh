@@ -9,9 +9,9 @@ if [ ! -f "$CONF" ]; then
   cat >&2 <<'EOF'
 AOS_HOST=192.168.0.196
 AOS_USER=user
-AOS_PASS="'"
+AOS_PASS="<改成实际密码>"
 TARGET_USER=user
-TARGET_PASS="'"
+TARGET_PASS="<改成实际密码>"
 NOS_IP=10.21.31.106
 GOS_IP=10.21.31.104
 EOF

@@ -21,3 +21,8 @@ site/
 .workbuddy/*
 # lite3_robot_monitor/
 .codex-remote-bootstrap/
+
+# Credentials (never commit real config files)
+m20Pro/scripts/m20ssh.conf
+*.pem
+*.key

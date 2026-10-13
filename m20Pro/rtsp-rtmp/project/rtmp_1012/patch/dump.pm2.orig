@@ -1,0 +1,137 @@
+[
+  {
+    "name": "m20",
+    "filter_env": [],
+    "namespace": "default",
+    "cwd": "/home/tank/m20",
+    "env": {
+      "SHELL": "/bin/bash",
+      "SUDO_GID": "1003",
+      "SUDO_COMMAND": "/usr/bin/bash -c echo '########## 测试复原 ##########'; m20web on 2>&1 | tail -14; echo; echo '########## 确认相机与推流未受影响 ##########'; for p in video1 video2; do printf '源 %s: ' $p; curl -s -o /dev/null -m 4 -w '%{http_code}\\n' http://127.0.0.1:8888/$p/index.m3u8; done; echo -n '推流连接数: '; ss -tn 2>/dev/null | grep -c 172.31.68.227; echo; echo '########## 再次关闭 ##########'; m20web off 2>&1 | tail -12",
+      "SUDO_USER": "user",
+      "PWD": "/home/tank/m20",
+      "LOGNAME": "root",
+      "PM2_HOME": "/root/.pm2",
+      "HOME": "/root",
+      "LANG": "en_US.UTF-8",
+      "TERM": "unknown",
+      "USER": "root",
+      "SHLVL": "0",
+      "LC_ALL": "en_US.UTF-8",
+      "PATH": "/root/.nvm/versions/node/v20.20.2/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/opt/robot/bin",
+      "SUDO_UID": "1003",
+      "MAIL": "/var/mail/root",
+      "_": "/root/.nvm/versions/node/v20.20.2/lib/node_modules/pm2/bin/pm2",
+      "PM2_USAGE": "CLI",
+      "m20": {},
+      "unique_id": "22d159f3-8cfa-4656-8a6e-b29b6aed93e9"
+    },
+    "merge_logs": true,
+    "vizion": true,
+    "autostart": true,
+    "autorestart": true,
+    "watch": false,
+    "instance_var": "NODE_APP_INSTANCE",
+    "pmx": true,
+    "automation": true,
+    "treekill": true,
+    "username": "root",
+    "windowsHide": true,
+    "kill_retry_time": 100,
+    "node_args": [],
+    "pm_exec_path": "/home/tank/m20/server.js",
+    "pm_cwd": "/home/tank/m20",
+    "exec_interpreter": "node",
+    "exec_mode": "fork_mode",
+    "pm_out_log_path": "/root/.pm2/logs/m20-out.log",
+    "pm_err_log_path": "/root/.pm2/logs/m20-error.log",
+    "pm_pid_path": "/root/.pm2/pids/m20-0.pid",
+    "km_link": false,
+    "vizion_running": false,
+    "NODE_APP_INSTANCE": 0,
+    "SHELL": "/bin/bash",
+    "SUDO_GID": "1003",
+    "SUDO_COMMAND": "/usr/bin/bash -c echo '########## 测试复原 ##########'; m20web on 2>&1 | tail -14; echo; echo '########## 确认相机与推流未受影响 ##########'; for p in video1 video2; do printf '源 %s: ' $p; curl -s -o /dev/null -m 4 -w '%{http_code}\\n' http://127.0.0.1:8888/$p/index.m3u8; done; echo -n '推流连接数: '; ss -tn 2>/dev/null | grep -c 172.31.68.227; echo; echo '########## 再次关闭 ##########'; m20web off 2>&1 | tail -12",
+    "SUDO_USER": "user",
+    "PWD": "/home/tank/m20",
+    "LOGNAME": "root",
+    "PM2_HOME": "/root/.pm2",
+    "HOME": "/root",
+    "LANG": "en_US.UTF-8",
+    "TERM": "unknown",
+    "USER": "root",
+    "SHLVL": "0",
+    "LC_ALL": "en_US.UTF-8",
+    "PATH": "/root/.nvm/versions/node/v20.20.2/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/opt/robot/bin",
+    "SUDO_UID": "1003",
+    "MAIL": "/var/mail/root",
+    "_": "/root/.nvm/versions/node/v20.20.2/lib/node_modules/pm2/bin/pm2",
+    "PM2_USAGE": "CLI",
+    "unique_id": "22d159f3-8cfa-4656-8a6e-b29b6aed93e9",
+    "status": "online",
+    "pm_uptime": 1718663372574,
+    "axm_actions": [
+      {
+        "action_name": "km:heapdump",
+        "action_type": "internal",
+        "arity": 2
+      },
+      {
+        "action_name": "km:cpu:profiling:start",
+        "action_type": "internal",
+        "arity": 2
+      },
+      {
+        "action_name": "km:cpu:profiling:stop",
+        "action_type": "internal",
+        "arity": 1
+      },
+      {
+        "action_name": "km:heap:sampling:start",
+        "action_type": "internal",
+        "arity": 2
+      },
+      {
+        "action_name": "km:heap:sampling:stop",
+        "action_type": "internal",
+        "arity": 1
+      }
+    ],
+    "axm_monitor": {},
+    "axm_options": {
+      "error": true,
+      "heapdump": true,
+      "feature.profiler.heapsnapshot": false,
+      "feature.profiler.heapsampling": true,
+      "feature.profiler.cpu_js": true,
+      "latency": true,
+      "catchExceptions": true,
+      "profiling": true,
+      "metrics": {
+        "v8": true,
+        "network": false,
+        "eventLoop": true,
+        "runtime": true,
+        "http": true
+      },
+      "standalone": false,
+      "tracing": {
+        "enabled": false,
+        "outbound": false
+      },
+      "module_conf": {},
+      "apm": {
+        "type": "node",
+        "version": "8.0.0"
+      },
+      "module_name": "m20",
+      "module_version": "7.0.1"
+    },
+    "axm_dynamic": {},
+    "created_at": 1718663372574,
+    "restart_time": 0,
+    "unstable_restarts": 0,
+    "version": "1.0.0",
+    "node_version": "20.20.2"
+  }
+]

@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# ============================================================================
+# m20web —— 机器狗 Web 控制台（3000 端口）服务管理
+#
+#   m20web off      停止并禁止开机自启（当前默认状态）
+#   m20web on       启动并恢复开机自启
+#   m20web status   查看状态
+#   m20web log      跟踪服务日志
+#
+#   服务实况：
+#     - Node 应用，PM2 名 `m20`，入口 /home/tank/m20/server.js，cwd /home/tank/m20
+#     - 端口 3000（HTTP），提供相机控制网页（startScript/stopScript 指向
+#       rtsp_service/start_push_video.sh 与 stop.sh）
+#     - 开机自启由 pm2-root.service 执行 `pm2 resurrect` 读取 /root/.pm2/dump.pm2 实现
+#
+#   ⚠ 本服务与 m20video 推流无依赖关系，但两者都会操作相机：
+#      本服务的网页如果点了"启动相机"，会走 start_push_video.sh（push_video 二进制
+#      + SM_USB_107X_*.json），与机器人自带的 push_video.sh 争抢摄像头设备。
+#      不使用时保持关闭反而更稳。
+#
+#   停用方式：pm2 stop+delete + pm2 save（surgical），保留 pm2-root.service 不动，
+#   这样 dump 里没有条目，开机 resurrect 不会把它拉起来。
+# ============================================================================
+set -u
+
+APP_NAME="m20"
+APP_SCRIPT="/home/tank/m20/server.js"
+APP_CWD="/home/tank/m20"
+PM2_BIN="/root/.nvm/versions/node/v20.20.2/lib/node_modules/pm2/bin/pm2"
+PM2_NODE_BIN="/root/.nvm/versions/node/v20.20.2/bin"
+export PM2_HOME=/root/.pm2
+export PATH="$PM2_NODE_BIN:$PATH"
+
+PATCH_DIR=/home/user/rtmp_1012/patch
+DUMP_BAK="$PATCH_DIR/dump.pm2.orig"
+
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then exec sudo -- "$0" "$@"; fi
+    echo "需要 root" >&2; exit 1
+fi
+
+[ -x "$PM2_BIN" ] || { echo "错误: 找不到 pm2 ($PM2_BIN)"; exit 1; }
+mkdir -p "$PATCH_DIR"
+
+port_state() {
+    if ss -tln 2>/dev/null | grep -q ':3000 '; then echo "监听中"; else echo "未监听"; fi
+}
+
+running_pids() { pgrep -f '/home/tank/m20/server\.js' 2>/dev/null | tr '\n' ' '; }
+
+case "${1:-status}" in
+    off|stop|disable)
+        echo "=== 停用 3000 端口 Web 控制台 ==="
+
+        echo "--- 备份 PM2 进程清单（用于复原）---"
+        if [ -f /root/.pm2/dump.pm2 ]; then
+            cp -f /root/.pm2/dump.pm2 "$DUMP_BAK"
+            echo "  已备份到 $DUMP_BAK ($(stat -c %s "$DUMP_BAK") bytes)"
+            md5sum "$DUMP_BAK" | sed 's/^/  /'
+        fi
+        # 同时存一份「精确启动命令」文本，备份丢了也能手工恢复
+        cat > "$PATCH_DIR/web3000_restore_notes.txt" <<EOF
+3000 端口 Web 控制台（PM2 应用 m20）原始启动参数
+--------------------------------------------------
+PM2_HOME : /root/.pm2
+应用名   : $APP_NAME
+入口     : $APP_SCRIPT
+工作目录 : $APP_CWD
+解释器   : node (exec_mode=fork)
+日志     : /root/.pm2/logs/m20-out.log , m20-error.log
+自启机制 : pm2-root.service (enabled) -> pm2 resurrect 读取 /root/.pm2/dump.pm2
+
+手工恢复命令:
+  export PM2_HOME=/root/.pm2
+  $PM2_BIN start $APP_SCRIPT --name $APP_NAME --cwd $APP_CWD
+  $PM2_BIN save
+
+或一键:  sudo m20web on
+EOF
+        echo "  已生成 $PATCH_DIR/web3000_restore_notes.txt"
+
+        echo "--- 停止并移出 PM2 列表 ---"
+        "$PM2_BIN" stop "$APP_NAME" 2>&1 | sed 's/^/  /'
+        "$PM2_BIN" delete "$APP_NAME" 2>&1 | sed 's/^/  /'
+
+        echo "--- 持久化（写入 dump，重启不再拉起）---"
+        # 注意：列表为空时 pm2 save 会跳过（"skipping save"），
+        # 此时 dump.pm2 仍保留旧条目，开机 resurrect 照样会拉起 —— 必须 --force
+        if ! "$PM2_BIN" jlist 2>/dev/null | grep -q '"name"'; then
+            "$PM2_BIN" save --force 2>&1 | sed 's/^/  /'
+        else
+            "$PM2_BIN" save 2>&1 | sed 's/^/  /'
+        fi
+
+        sleep 2
+        echo
+        echo "--- 校验 ---"
+        echo -n "  PM2 应用列表条目数: "; "$PM2_BIN" jlist 2>/dev/null | grep -c '"name"'
+        echo "  dump.pm2 中的自启条目:"
+        python3 - <<'PY' 2>/dev/null | sed 's/^/    /'
+import json
+try:
+    data = json.load(open('/root/.pm2/dump.pm2'))
+    if not data:
+        print('(空 —— 开机不会拉起任何应用) ✅')
+    for a in data:
+        print('- name=%s  script=%s' % (a.get('name'), a.get('pm_exec_path')))
+except Exception as e:
+    print('解析失败:', e)
+PY
+        echo -n "  server.js 进程: "; P=$(running_pids); [ -n "$P" ] && echo "$P" || echo "无"
+        echo -n "  端口 3000: "; port_state
+        echo -n "  pm2-root.service: "; systemctl is-enabled pm2-root.service 2>&1
+        echo
+        echo "已停用。开机不会自启（dump 中已无该条目）。"
+        echo "恢复请执行: sudo m20web on"
+        ;;
+
+    on|start|enable)
+        echo "=== 启动 3000 端口 Web 控制台 ==="
+        if "$PM2_BIN" jlist 2>/dev/null | grep -q "\"name\":\"$APP_NAME\""; then
+            echo "  已在 PM2 列表中，直接 start"
+            "$PM2_BIN" start "$APP_NAME" 2>&1 | sed 's/^/  /'
+        else
+            echo "  从原始参数重新注册"
+            "$PM2_BIN" start "$APP_SCRIPT" --name "$APP_NAME" --cwd "$APP_CWD" 2>&1 | sed 's/^/  /'
+        fi
+        "$PM2_BIN" save 2>&1 | sed 's/^/  /'
+        sleep 3
+        echo
+        echo "--- 校验 ---"
+        echo -n "  server.js 进程: "; P=$(running_pids); [ -n "$P" ] && echo "$P" || echo "无"
+        echo -n "  端口 3000: "; port_state
+        echo -n "  HTTP 探测: "
+        curl -s -o /dev/null -m 5 -w '%{http_code}\n' http://127.0.0.1:3000/ 2>&1
+        echo
+        echo "已启动，且已恢复开机自启。"
+        ;;
+
+    status)
+        echo "=== 3000 端口 Web 控制台状态 ==="
+        echo -n "  端口 3000      : "; port_state
+        echo -n "  server.js 进程 : "; P=$(running_pids); [ -n "$P" ] && echo "$P" || echo "无"
+        echo -n "  pm2-root.service: "; systemctl is-enabled pm2-root.service 2>&1
+        echo "  PM2 应用列表:"
+        "$PM2_BIN" list 2>&1 | sed -n '3,12p' | sed 's/^/    /'
+        echo "  dump 中的自启条目:"
+        if [ -f /root/.pm2/dump.pm2 ]; then
+            python3 - <<'PY' 2>/dev/null | sed 's/^/    /'
+import json
+try:
+    data = json.load(open('/root/.pm2/dump.pm2'))
+    if not data:
+        print('(空 —— 开机不会拉起任何应用)')
+    for a in data:
+        print('- name=%s  script=%s  cwd=%s' % (a.get('name'), a.get('pm_exec_path'), a.get('pm_cwd')))
+except Exception as e:
+    print('解析失败:', e)
+PY
+        else
+            echo "    (无 dump 文件)"
+        fi
+        ;;
+
+    log)
+        exec tail -f /root/.pm2/logs/m20-out.log /root/.pm2/logs/m20-error.log
+        ;;
+
+    ""|--help|-h|help)
+        sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+
+    *)
+        echo "未知子命令: $1" >&2
+        sed -n '3,8p' "$0" | sed 's/^# \{0,1\}//'
+        exit 2
+        ;;
+esac

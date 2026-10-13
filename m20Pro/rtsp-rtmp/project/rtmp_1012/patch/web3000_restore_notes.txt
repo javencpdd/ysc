@@ -1,0 +1,16 @@
+3000 端口 Web 控制台（PM2 应用 m20）原始启动参数
+--------------------------------------------------
+PM2_HOME : /root/.pm2
+应用名   : m20
+入口     : /home/tank/m20/server.js
+工作目录 : /home/tank/m20
+解释器   : node (exec_mode=fork)
+日志     : /root/.pm2/logs/m20-out.log , m20-error.log
+自启机制 : pm2-root.service (enabled) -> pm2 resurrect 读取 /root/.pm2/dump.pm2
+
+手工恢复命令:
+  export PM2_HOME=/root/.pm2
+  /root/.nvm/versions/node/v20.20.2/lib/node_modules/pm2/bin/pm2 start /home/tank/m20/server.js --name m20 --cwd /home/tank/m20
+  /root/.nvm/versions/node/v20.20.2/lib/node_modules/pm2/bin/pm2 save
+
+或一键:  sudo m20web on

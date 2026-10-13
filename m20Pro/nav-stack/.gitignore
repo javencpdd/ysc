@@ -1,0 +1,9 @@
+.vscode/
+bags/
+*.bag
+maps/
+.windsurf/
+dev_docs/
+.qoder/
+.agents/
+

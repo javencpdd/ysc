@@ -1,0 +1,30 @@
+[Unit]
+Description=m20pro dual-camera RTSP to RTMP push (rtmp_1012)
+Documentation=file:/home/user/rtmp_1012/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/user/rtmp_1012
+ExecStart=/home/user/rtmp_1012/run_all.sh
+
+# 崩溃/退出后自动重启，保证机器人视频链路自愈
+Restart=always
+RestartSec=10
+
+# 停止时先发 TERM 让 rtmp_forward.sh 结束 gst 并发 EOS
+KillMode=mixed
+TimeoutStopSec=25
+
+# 资源保护：视频推流不应被 OOM 优先杀掉
+OOMScoreAdjust=-300
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=m20video
+
+[Install]
+WantedBy=multi-user.target

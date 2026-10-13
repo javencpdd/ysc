@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# ============================================================================
+# m20video —— M20 双相机 RTSP→RTMP 推流服务控制命令
+#
+#   m20video up        启动推流
+#   m20video down      停止推流
+#   m20video reset     重启推流
+#   m20video status    查看状态（含 CPU/绑核/连接）
+#   m20video log [f|b] 跟踪日志
+#   m20video enable    设置开机自启
+#   m20video disable   取消开机自启
+#   m20video doctor    一键体检（源流/目标网络/进程/连接）
+# ============================================================================
+set -u
+
+APP_DIR="/home/user/rtmp_1012"
+UNIT="m20video.service"
+
+# --- 非 root 时自动提权 ---
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        exec sudo -- "$0" "$@"
+    else
+        echo "错误: 需要 root 权限（MPP 硬件编解码要求）" >&2
+        exit 1
+    fi
+fi
+
+have_systemd_unit() {
+    systemctl list-unit-files 2>/dev/null | grep -q "^${UNIT}"
+}
+
+fallback_start() { "$APP_DIR/start.sh"; }
+fallback_stop()  { "$APP_DIR/stop.sh" all; }
+
+usage() {
+    sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'
+    exit "${1:-0}"
+}
+
+case "${1:-}" in
+    up|start)
+        if have_systemd_unit; then
+            systemctl start "$UNIT"
+            sleep 3
+            systemctl --no-pager --quiet is-active "$UNIT" >/dev/null 2>&1 \
+                && echo "m20video 已启动" || { echo "启动失败，查看: journalctl -u $UNIT -n 50"; exit 1; }
+        else
+            echo "(未安装 systemd 单元，使用 start.sh)"
+            fallback_start
+        fi
+        ;;
+
+    down|stop)
+        if have_systemd_unit; then
+            systemctl stop "$UNIT"
+            echo "m20video 已停止"
+        else
+            fallback_stop
+        fi
+        ;;
+
+    reset|restart)
+        if have_systemd_unit; then
+            systemctl restart "$UNIT"
+            sleep 3
+            systemctl --no-pager --quiet is-active "$UNIT" >/dev/null 2>&1 \
+                && echo "m20video 已重启" || { echo "重启失败，查看: journalctl -u $UNIT -n 50"; exit 1; }
+        else
+            echo "(未安装 systemd 单元，使用 stop.sh + start.sh)"
+            fallback_stop
+            sleep 1
+            fallback_start
+        fi
+        ;;
+
+    status)
+        if have_systemd_unit; then
+            systemctl --no-pager --full status "$UNIT" 2>&1 | head -14
+            echo
+        fi
+        [ -x "$APP_DIR/status.sh" ] && "$APP_DIR/status.sh"
+        ;;
+
+    log)
+        ch="${2:-f}"
+        case "$ch" in
+            f|b) exec tail -f "$APP_DIR/logs/forward-$ch.log" ;;
+            *)   exec tail -f "$APP_DIR/logs/forward-f.log" "$APP_DIR/logs/forward-b.log" ;;
+        esac
+        ;;
+
+    enable)
+        have_systemd_unit || { echo "错误: 未安装 $UNIT"; exit 1; }
+        systemctl enable "$UNIT"
+        echo "已设置开机自启"
+        ;;
+
+    disable)
+        have_systemd_unit || { echo "错误: 未安装 $UNIT"; exit 1; }
+        systemctl disable "$UNIT"
+        echo "已取消开机自启"
+        ;;
+
+    doctor)
+        echo "==================== m20video 体检 ===================="
+        echo "--- 1. 源流（本机 mediamtx） ---"
+        for p in video1 video2; do
+            printf '  %-8s ' "$p"
+            code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:8888/$p/index.m3u8")
+            [ "$code" = "200" ] && echo "在线" || echo "不在线 (HTTP $code) → 上游相机服务可能已挂"
+        done
+        echo "--- 2. 目标服务器 ---"
+        for hp in 172.31.68.227:1936; do
+            h="${hp%:*}"; pt="${hp#*:}"
+            printf '  %-22s ' "$hp"
+            timeout 5 bash -c "echo > /dev/tcp/$h/$pt" 2>/dev/null && echo "TCP 可达" || echo "不可达"
+        done
+        echo "--- 3. 推流进程 ---"
+        pgrep -af 'rtmp-gst' | cut -c1-90 | sed 's/^/  /' || echo "  (无)"
+        echo "--- 4. 到目标的连接 ---"
+        ss -tnp 2>/dev/null | grep 172.31.68.227 | sed 's/^/  /' || echo "  (无)"
+        echo "--- 5. 最近错误 ---"
+        grep -iE 'error|failed|自动停止' "$APP_DIR"/logs/forward-*.log 2>/dev/null | tail -5 | sed 's/^/  /' || echo "  (无)"
+        echo "======================================================="
+        ;;
+
+    ""|-h|--help|help)
+        usage 0
+        ;;
+
+    *)
+        echo "未知子命令: $1" >&2
+        usage 2
+        ;;
+esac

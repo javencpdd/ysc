@@ -1,0 +1,96 @@
+# See Odin-Nav-Stack/docs/TUNING_GUIDE.md for more details
+
+planner_config_file: "configs/planner.yaml"
+dune_checkpoint: "example/dune_train/model/go2/model_5000.pth"
+
+refresh_initial_path: True
+flip_angle: False
+include_initial_path_direction: False
+
+frame:
+  map: "map"
+  base: "base_link"
+  lidar: "odin1_base_link"
+
+
+topic:
+  scan: "/scan"
+  cmd_vel: "/cmd_vel"
+  path: "/initial_path"
+  waypoints: "/waypoints"
+  goal: "/neupan/goal"
+  arrive: "/neupan/arrive"
+  odom: "/odin1/odometry"
+
+
+odom_feedback:
+  enable: false
+  stale_threshold_sec: 0.2
+
+
+smith_predictor:
+  enable: true
+  fixed_lag_sec: 0.02
+  use_solve_time: true
+  max_tau_sec: 0.15
+  velocity_source: "odom"
+scan_range: [0.2, 4.5]
+scan_angle: [-3.14, 3.14]
+scan_downsample: 1
+
+marker_size: 0.05
+marker_z: 0.3
+
+cmd_w_lpf_alpha: 0.0
+
+
+prealign:
+  enable: false
+  heading_threshold: 0.5             # rad, ~30° to enter pre-align
+  obs_distance_threshold: 1.0        # m, front-cone min distance to enter
+  exit_heading_threshold: 0.2        # rad, ~12° to exit (hysteresis)
+  exit_obs_distance_threshold: 1.5   # m, front clearance to exit (hysteresis)
+  cone_half_width_rad: 0.524         # ±30° forward cone for obstacle search
+  angular_kp: 1.5                    # w_cmd = clip(kp * heading_err, ±max_w)
+  max_w: 0.6                         # rad/s, must not exceed robot.max_speed[1]
+  ref_avg_count: 5                   # average first N path yaws for stability
+
+
+adaptive_d_max:
+  enable: false
+  min: 0.05                # lower bound for the resulting d_max
+  max: 0.25                # upper bound for the resulting d_max
+  safety_margin: 0.05      # subtract from (half_width - robot_half_width)
+  forward_window_m: 2.0    # only points within [−margin, this] forward are used
+  lateral_window_m: 2.0    # only points within ±this laterally are used
+  update_period_sec: 0.5   # re-estimate at most every X seconds
+
+
+stuck_escape:
+  enable: true
+  displacement_window_sec: 1.0      # length of the sliding window
+  displacement_threshold_m: 0.05    # <5cm moved over 1s == stuck
+  v_eps: 0.15
+  w_eps: 0.30
+  trigger_frames: 10
+  front_obs_threshold: 1.0
+  cone_half_width_rad: 0.7
+  back_speed: 0.2
+  rotate_speed: 0.8
+  duration_sec: 2.0
+  exit_obs_distance: 1.0
+  side_search_radius_m: 3.5
+  limit_cycle_consecutive_n: 2
+  limit_cycle_window_sec: 20.0
+  min_rotation_rad: 1.05
+  early_replan_enable: true
+  early_replan_trigger_frames: 5
+  early_replan_cooldown_sec: 2.0
+ 
+  post_escape_grace_q_theta_scale: 0.25
+  post_escape_grace_q_s_scale: 0.5
+  post_escape_grace_min_distance_m: 0.5
+  post_escape_grace_clear_threshold_m: 1.0
+  post_escape_grace_clear_dwell_sec: 0.5
+  post_escape_grace_max_sec: 5.0
+

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Relay the existing local H.264 RTSP stream to the external RTMP endpoint.
+# The camera remains owned by rtsp_stream.service; this process never opens /dev/video0.
+set -u
+
+source_url="${SOURCE_URL:-rtsp://127.0.0.1:8554/test}"
+target_url="${RTMP_TARGET_URL:-rtmp://172.31.68.227:1936/live/lite3}"
+retry_seconds="${RETRY_SECONDS:-5}"
+
+while true; do
+    printf "%s starting RTSP-to-RTMP relay: %s -> %s\\n" \
+        "$(date --iso-8601=seconds)" "$source_url" "$target_url"
+
+    /usr/bin/gst-launch-1.0 -e \
+        rtspsrc location="$source_url" protocols=tcp latency=200 ! \
+        rtph264depay ! \
+        h264parse config-interval=-1 ! \
+        flvmux streamable=true ! \
+        rtmpsink location="$target_url live=1"
+    exit_code=$?
+
+    printf "%s relay exited with status %s; retrying in %s seconds\\n" \
+        "$(date --iso-8601=seconds)" "$exit_code" "$retry_seconds" >&2
+    sleep "$retry_seconds"
+done

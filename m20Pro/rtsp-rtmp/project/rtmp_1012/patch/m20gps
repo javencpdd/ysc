@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# ============================================================================
+# m20gps —— 查看 M20 机器狗 GPS 状态 / 数据
+#
+#   m20gps          状态总览（本机 GPS 模块 + M20 狗端遥测 + ROS 话题）
+#   m20gps watch    持续刷新（本机 GPS 模块）
+#   m20gps dog      查询 M20 狗端 GPS（直连协议 TCP 30001）
+#   m20gps dogdump  转储狗端各类遥测的键（电池/温度/电机/CPU/NavStatus…）
+#   m20gps nmea     抓一段原始 NMEA 语句（会短暂共享串口，影响可忽略）
+#   m20gps topic    订阅 ROS 2 /GPS 话题（有定位时才有数据）
+#   m20gps log      跟踪 gps_node 日志
+#
+#   数据链路（两条独立来源，实测结论一致）：
+#     ① GPS 模块 ──(/dev/ttyS5, NMEA 115200)──> gps_node ──> DDS 话题
+#        /GPS (drdds/msg/NavSat)  /GPS_SYS_MODE  /GPS_CFGSYS  /GPS_SYN_UTC
+#     ② 机器狗本体 ──> basic_server (TCP 30001 / UDP 30000, M20 直连协议)
+#        Type=1002 Command=5 的 Items.GPS（狗端遥测，含电池/温度/电机/CPU 等）
+# ============================================================================
+set -u
+
+GPS_LOG_DIR=/var/opt/robot/log
+SERIAL=/dev/ttyS5
+DOG_QUERY=/home/user/rtmp_1012/patch/m20_dog_query.py
+
+newest_log() {
+    ls -t "$GPS_LOG_DIR"/*/gps_node.*.log 2>/dev/null | head -1
+}
+
+show_dog_gps() {
+    [ -f "$DOG_QUERY" ] || { echo "  (未找到 $DOG_QUERY)"; return 0; }
+    echo "  M20 狗端（直连协议 TCP 30001，Type=1002/Command=5 的 Items.GPS）:"
+    timeout 20 python3 "$DOG_QUERY" gps --seconds 6 2>&1 | sed 's/^/  /'
+    return 0
+}
+
+show_from_log() {
+    local f
+    f=$(newest_log)
+    if [ -z "$f" ]; then echo "  找不到 gps_node 日志"; return 1; fi
+    # 取最后一次「解析结果」之后的内容（即最新一块）
+    local blk
+    blk=$(awk '/解析结果/{n=NR} {a[NR]=$0} END{for(i=n;i<=NR;i++) print a[i]}' "$f" 2>/dev/null | head -16)
+    if [ -z "$blk" ]; then echo "  日志中无解析结果"; return 1; fi
+    echo "$blk" | sed -E 's/^\[[^]]*\] \[[^]]*\] \[gps_node\] /  /'
+    echo
+    local q lat lon
+    q=$(echo "$blk"    | grep -oE '定位质量: [0-9]+'         | tail -1 | grep -oE '[0-9]+')
+    lat=$(echo "$blk"  | grep -oE '纬度: [-0-9.]+'           | tail -1 | grep -oE '[-0-9.]+')
+    lon=$(echo "$blk"  | grep -oE '经度: [-0-9.]+'           | tail -1 | grep -oE '[-0-9.]+')
+    local sv
+    sv=$(echo "$blk"   | grep -oE '可见卫星总数: [0-9]+'     | tail -1 | grep -oE '[0-9]+')
+    echo "  ── 判读 ──"
+    case "${q:-}" in
+        0) echo "  ❌ 无有效定位（定位质量=0）。模块与串口正常，但搜不到足够卫星 ——" ;;
+        1) echo "  ⚠️  单点定位（质量=1），精度约米级。" ;;
+        2) echo "  ✅ 差分定位（质量=2）。" ;;
+        4) echo "  ✅✅ RTK 固定解（质量=4），厘米级。" ;;
+        5) echo "  ✅ RTK 浮点解（质量=5）。" ;;
+        *) echo "  定位质量=${q:-未知}" ;;
+    esac
+    [ "${q:-0}" = "0" ] && echo "     通常是室内 / 天线被遮挡。挪到室外或靠近窗口后重试。"
+    [ -n "${sv:-}" ] && echo "  可见卫星总数: $sv"
+    case "${lat:-0}" in
+        0.000000|"") ;;
+        *) echo "  位置: 纬度 $lat  经度 $lon" ;;
+    esac
+    return 0
+}
+
+check_topic() {
+    # 放进子 shell：ROS 的 setup.bash 与 set -u 不兼容，且失败不应影响主流程
+    (
+        set +u
+        [ -f /opt/ros/foxy/setup.bash ] || { echo "  (未找到 ROS 2 环境，跳过话题检查)"; exit 0; }
+        # shellcheck disable=SC1091
+        source /opt/ros/foxy/setup.bash 2>/dev/null
+        export ROS_DOMAIN_ID=0
+        echo "  ROS 2 话题（需有定位才有数据）:"
+        for t in /GPS /GPS_SYS_MODE /GPS_CFGSYS /GPS_SYN_UTC; do
+            printf "    %-16s " "$t"
+            timeout 6 ros2 topic info "$t" 2>/dev/null | grep -E 'Publisher count' | tr -d '\n'
+            echo
+        done
+        echo "    /FIBOCOM/net_rtk/gngga    （RTK NMEA，当前 0 发布者）"
+        echo "    /FIBOCOM/net_rtk/heading  （RTK 航向，当前 0 发布者）"
+    ) 2>/dev/null || true
+    return 0
+}
+
+case "${1:-status}" in
+    ""|status)
+        echo "==================== M20 GPS 状态 ===================="
+        BAUD=$(stty -F "$SERIAL" -a 2>/dev/null | head -1 | grep -oE 'speed [0-9]+' | awk '{print $2}')
+        echo "  串口: $SERIAL @ ${BAUD:-?} baud"
+        echo -n "  持有者: "; fuser "$SERIAL" 2>/dev/null | tr -s ' ' | sed 's/^ //'
+        echo -n "  gps_node: "; pgrep -x gps_node >/dev/null && echo "运行中 (PID $(pgrep -x gps_node | head -1))" || echo "未运行"
+        echo
+        echo "  最近解析结果:"
+        show_from_log || true
+        echo
+        show_dog_gps
+        echo
+        check_topic
+        echo "====================================================="
+        exit 0
+        ;;
+
+    dog)
+        exec python3 "$DOG_QUERY" gps "${@:2}"
+        ;;
+
+    dogdump)
+        exec python3 "$DOG_QUERY" dump
+        ;;
+
+    watch)
+        while true; do clear; "$0" status; sleep 3; done
+        ;;
+
+    nmea)
+        echo "抓取原始 NMEA（3 秒）..."
+        timeout 8 python3 - <<PY
+import os, select, time
+fd = os.open('$SERIAL', os.O_RDONLY | os.O_NONBLOCK)
+buf = b''; t0 = time.time()
+while time.time() - t0 < 3:
+    r, _, _ = select.select([fd], [], [], 0.5)
+    if r:
+        try:
+            d = os.read(fd, 8192)
+            if d: buf += d
+        except OSError: break
+os.close(fd)
+print('  共 %d 字节' % len(buf))
+seen = set()
+for l in buf.decode('ascii','replace').split('\n'):
+    l = l.strip()
+    if not l.startswith('\$'): continue
+    k = l.split(',')[0]
+    if k in seen: continue
+    seen.add(k); print('   ', l[:110])
+PY
+        ;;
+
+    topic)
+        source /opt/ros/foxy/setup.bash 2>/dev/null
+        export ROS_DOMAIN_ID=0
+        echo "订阅 /GPS（Ctrl-C 退出）..."
+        exec ros2 topic echo /GPS
+        ;;
+
+    log)
+        f=$(newest_log); echo "日志: $f"; exec tail -f "$f"
+        ;;
+
+    ""|-h|--help|help)
+        sed -n '3,17p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+
+    *)
+        echo "未知子命令: $1" >&2
+        sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'
+        exit 2
+        ;;
+esac
