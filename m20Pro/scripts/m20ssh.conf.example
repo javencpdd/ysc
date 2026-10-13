@@ -1,0 +1,9 @@
+# 山猫 M20 Pro SSH 跳板配置 (m20ssh 读取)
+# 注意: 密码不得包含 双引号 / 美元符 / 反斜杠
+AOS_HOST=192.168.0.196
+AOS_USER=user
+AOS_PASS="<改成实际密码>"
+TARGET_USER=user
+TARGET_PASS="<改成实际密码>"
+NOS_IP=10.21.31.106
+GOS_IP=10.21.31.104

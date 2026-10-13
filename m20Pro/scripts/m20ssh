@@ -1,0 +1,129 @@
+#!/bin/bash
+# m20ssh - 山猫 M20 Pro 三主机 SSH 跳板工具
+# AOS 对外直连; NOS/GOS 仅内网, 由 AOS sshpass 中转(双层 base64 传输, 不在远端留密码文件)
+set -euo pipefail
+
+CONF="${M20SSH_CONF:-$HOME/.config/m20pro/m20ssh.conf}"
+if [ ! -f "$CONF" ]; then
+  echo "m20ssh: 缺少配置文件 $CONF, 请创建(权限600), 内容示例:" >&2
+  cat >&2 <<'EOF'
+AOS_HOST=192.168.0.196
+AOS_USER=user
+AOS_PASS="'"
+TARGET_USER=user
+TARGET_PASS="'"
+NOS_IP=10.21.31.106
+GOS_IP=10.21.31.104
+EOF
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "$CONF"
+
+: "${AOS_HOST:?配置缺少 AOS_HOST}" "${AOS_USER:?配置缺少 AOS_USER}" "${AOS_PASS:?配置缺少 AOS_PASS}"
+: "${TARGET_USER:?配置缺少 TARGET_USER}" "${TARGET_PASS:?配置缺少 TARGET_PASS}"
+
+usage() {
+  cat <<'EOF'
+m20ssh - 山猫 M20 Pro 三主机 SSH 跳板工具
+用法:
+  m20ssh <aos|nos|gos|IP> [命令...]   在目标执行命令; 不带命令则开交互 shell
+  echo 'cmd' | m20ssh <目标>          将 stdin 当脚本在目标执行
+  m20ssh -f script.sh <目标>          将本地脚本文件送至目标执行
+  m20ssh --list                      列出目标
+配置(权限600): ~/.config/m20pro/m20ssh.conf
+注意: 配置中的密码不得包含 双引号/美元符/反斜杠
+EOF
+  exit 1
+}
+
+resolve() {
+  case "$(echo "$1" | tr 'A-Z' 'a-z')" in
+    aos|196) echo "$AOS_HOST" ;;
+    nos)     echo "${NOS_IP:?配置缺少 NOS_IP}" ;;
+    gos)     echo "${GOS_IP:?配置缺少 GOS_IP}" ;;
+    *)       echo "$1" ;;
+  esac
+}
+
+# 动态 askpass: 密码只经环境变量, 不落盘
+ASKPASS="$(mktemp /tmp/m20askpass.XXXXXX)"
+TMP_SCRIPT="$(mktemp /tmp/m20usr.XXXXXX)"
+TMP_FINAL="$(mktemp /tmp/m20final.XXXXXX)"
+trap 'rm -f "$ASKPASS" "$TMP_SCRIPT" "$TMP_FINAL" 2>/dev/null || true' EXIT
+cat > "$ASKPASS" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$M20_PW"
+EOF
+chmod 700 "$ASKPASS"
+
+ssh_aos() {
+  M20_PW="$AOS_PASS" SSH_ASKPASS="$ASKPASS" SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+    ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+        -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o LogLevel=ERROR \
+        "$AOS_USER@$AOS_HOST" "$@"
+}
+
+[ $# -ge 1 ] || usage
+case "$1" in
+  --list|-l)
+    echo "aos -> $AOS_HOST   (对外, 直连)"
+    echo "nos -> ${NOS_IP:-未配置}   (经 AOS 中转)"
+    echo "gos -> ${GOS_IP:-未配置}   (经 AOS 中转)"
+    exit 0 ;;
+  --help|-h) usage ;;
+esac
+
+MODE=args; SRC=""
+if [ "$1" = "-f" ]; then
+  MODE=file; SRC="$2"; shift 2
+  [ -n "$SRC" ] || usage
+  [ -f "$SRC" ] || { echo "m20ssh: 文件不存在: $SRC" >&2; exit 1; }
+elif [ $# -eq 1 ] && [ ! -t 0 ]; then
+  MODE=stdin
+fi
+TARGET="$(resolve "$1")"
+[ -n "$TARGET" ] || usage
+[ $# -le 1 ] || shift
+
+case "$MODE" in
+  file)  cat "$SRC" > "$TMP_SCRIPT" ;;
+  stdin) cat > "$TMP_SCRIPT" ;;
+  args)
+    if [ $# -eq 0 ]; then : > "$TMP_SCRIPT"; else printf '%s\n' "$*" > "$TMP_SCRIPT"; fi ;;
+esac
+
+# AOS 直连
+if [ "$TARGET" = "$AOS_HOST" ]; then
+  if [ -s "$TMP_SCRIPT" ]; then
+    ssh_aos "bash -s" < "$TMP_SCRIPT"
+  else
+    ssh_aos
+  fi
+  exit $?
+fi
+
+# NOS/GOS: 经 AOS sshpass 中转
+U_B64="$(base64 -w0 "$TMP_SCRIPT")"
+cat > "$TMP_FINAL" <<FIN
+#!/bin/bash
+PW="$TARGET_PASS"
+TARGET="$TARGET"
+cat > /tmp/m20hw.sh <<'HWEOF'
+echo $U_B64 | base64 -d > /tmp/m20usr.sh
+bash /tmp/m20usr.sh
+RC=\$?
+rm -f /tmp/m20usr.sh
+exit \$RC
+HWEOF
+sshpass -p "\$PW" ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \\
+    -o PreferredAuthentications=password -o PubkeyAuthentication=no \\
+    -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o LogLevel=ERROR \\
+    "$TARGET_USER@\$TARGET" bash -s < /tmp/m20hw.sh
+RC=\$?
+rm -f /tmp/m20hw.sh
+exit \$RC
+FIN
+F_B64="$(base64 -w0 "$TMP_FINAL")"
+ssh_aos "echo $F_B64 | base64 -d | bash"

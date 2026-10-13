@@ -1,0 +1,778 @@
+- generic
+  - StaticText "山猫M20 开发指南"
+  - generic [ref=e1] clickable [onclick]
+    - button "分享" [ref=e3]
+      - image
+      - StaticText "分享"
+  - generic [ref=e2] clickable [onclick]
+    - button [ref=e4]
+      - image
+  - generic
+    - StaticText "所有文章"
+    - generic
+      - grid "grid"
+        - rowgroup
+          - generic [ref=e9] clickable [onclick]
+            - generic [ref=e17] clickable [onclick]
+              - image
+            - image
+            - generic [ref=e18] clickable [onclick]
+              - StaticText "山猫M20开发指南"
+          - generic [ref=e10] clickable [onclick]
+            - image
+            - generic [ref=e19] clickable [onclick]
+              - StaticText "硬件参数"
+          - generic [ref=e11] clickable [onclick]
+            - image
+            - generic [ref=e20] clickable [onclick]
+              - StaticText "软件使用指南"
+          - generic [ref=e12] clickable [onclick]
+            - image
+            - generic [ref=e21] clickable [onclick]
+              - StaticText "软件开发指南"
+          - generic [ref=e13] clickable [onclick]
+            - image
+            - generic [ref=e22] clickable [onclick]
+              - StaticText "软件更新说明"
+          - generic [ref=e14] clickable [onclick]
+            - generic [ref=e23] clickable [onclick]
+              - image
+            - image
+            - generic [ref=e24] clickable [onclick]
+              - StaticText "山猫M20开发者文档"
+          - generic [ref=e15] clickable [onclick]
+            - generic [ref=e25] clickable [onclick]
+              - image
+            - image
+            - generic [ref=e26] clickable [onclick]
+              - StaticText "二次开发教程与示例"
+          - generic [ref=e16] clickable [onclick]
+            - generic [ref=e27] clickable [onclick]
+              - image
+            - image
+            - generic [ref=e28] clickable [onclick]
+              - StaticText "Lynx M20 Development Guide"
+    - link "钉钉文档" [ref=e5]
+    - paragraph
+      - StaticText "本页面由用户发布，不代表钉钉的观点"
+      - link "举报" [ref=e6]
+    - generic [ref=e7] clickable [onclick]
+      - image
+  - Iframe [ref=e8]
+    - generic
+      - generic
+        - paragraph
+          - StaticText "硬件参数"
+        - article
+          - generic
+            - StaticText "更新日期："
+            - generic
+              - image
+              - StaticText "2026年06月24日"
+          - StaticText "版本号：V1.0.4"
+          - generic
+            - StaticText "目  录"
+            - StaticText "1 机械尺寸"
+            - StaticText "1.1 关键尺寸"
+            - StaticText "1.2 安装平台"
+            - StaticText "1.3 机械接口"
+            - StaticText "1.4 安装范围"
+            - StaticText "1.5 运动干涉范围"
+            - StaticText "1.6 身体与关节坐标系"
+            - StaticText "1.7 身体连杆参数"
+            - StaticText "1.8 腿部连杆参数"
+            - StaticText "1.9 关节参数"
+            - StaticText "1.10 本体传感器坐标"
+            - StaticText "2 电气接口"
+            - StaticText "2.1 接口尺寸"
+            - StaticText "2.2 网络架构图"
+            - StaticText "2.3 接口定义"
+            - StaticText "2.4 航插线定义"
+            - StaticText "2.5 航插线安装步骤"
+          - separator
+          - generic
+            - image
+            - heading "1 机械尺寸" [level=1, ref=e31]
+          - generic
+            - image
+            - heading "1.1 关键尺寸" [level=2, ref=e32]
+          - generic
+            - image
+          - StaticText "★"
+          - StaticText "关键尺寸由机器人在正常站立的情况下测得，腿部会向身体方向轻微内收。"
+          - generic
+            - image
+            - heading "1.2 安装平台" [level=2, ref=e33]
+          - generic
+            - image
+          - generic
+            - image
+            - heading "1.3 机械接口" [level=2, ref=e34]
+          - StaticText "两条安装导轨上的14个M4孔位可用于固定背载，具体尺寸如图："
+          - generic
+            - image
+          - generic
+            - image
+            - heading "1.4 安装范围" [level=2, ref=e35]
+          - StaticText "背载加装重量应不大于15kg，加装高度应尽量不超过30cm，加装范围不建议超出如下红色区域："
+          - generic
+            - image
+          - StaticText "电气接口标配航插线出线口位于背部，设计背载安装方式时，需在出线口上方预留出距离导轨顶部至少10mm的出线空间。"
+          - generic
+            - image
+          - generic
+            - image
+            - heading "1.5 运动干涉范围" [level=2, ref=e36]
+          - StaticText "由于山猫M20系列机器人腿部关节运动范围较大，极限情况下可旋转至高于机身平面，加装时需注意避免和腿部发生干涉，如下图所示，蓝色和橙色所示空间范围可避免与腿部运动范围干涉。用户可结合机器人模型对加装背载进行设计。"
+          - StaticText "正常工况下，在平地或楼梯行走时，腿的运动范围一般不会超过机身平面，可自行考虑适当扩大加装范围。"
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell " " [ref=e51]
+                      - generic
+                        - image
+                  - row
+                    - cell " " [ref=e52]
+                      - generic
+                        - image
+                    - cell " " [ref=e53]
+                      - generic
+                        - image
+          - generic
+            - image
+            - heading "1.6 身体与关节坐标系" [level=2, ref=e37]
+          - generic
+            - image
+          - generic
+            - image
+          - StaticText "★"
+          - StaticText "弧形箭头指示与其颜色一致的关节坐标系的旋转正方向。"
+          - StaticText "★"
+          - StaticText "当各个关节均为零度时，各坐标系如下图。红色为 x 轴，绿色为 y 轴，蓝色为 z 轴。关节的旋转轴和旋转正方向请参考上图。"
+          - generic
+            - image
+          - generic
+            - image
+            - heading "1.7 身体连杆参数" [level=2, ref=e38]
+          - generic
+            - generic
+              - image
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "连杆参数" [ref=e54]
+                      - StaticText "连杆参数"
+                    - cell "数值" [ref=e55]
+                      - StaticText "数值"
+                    - cell "说明" [ref=e56]
+                      - StaticText "说明"
+                  - row
+                    - cell "长度(Lbody)" [ref=e57]
+                      - StaticText "长度(Lbody)"
+                    - cell "0.82m" [ref=e58]
+                      - StaticText "0.82m"
+                    - cell "身体总长度" [ref=e59]
+                      - StaticText "身体总长度"
+                  - row
+                    - cell "髋前后间距(Lhip)" [ref=e60]
+                      - StaticText "髋前后间距(Lhip)"
+                    - cell "0.625m" [ref=e61]
+                      - StaticText "0.625m"
+                    - cell "前后髋关节中心距离" [ref=e62]
+                      - StaticText "前后髋关节中心距离"
+                  - row
+                    - cell "髋左右间距(Whip)" [ref=e63]
+                      - StaticText "髋左右间距(Whip)"
+                    - cell "0.137m" [ref=e64]
+                      - StaticText "0.137m"
+                    - cell "左右髋关节中心的距离" [ref=e65]
+                      - StaticText "左右髋关节中心的距离"
+                  - row
+                    - cell "宽度(Wbody)" [ref=e66]
+                      - StaticText "宽度(Wbody)"
+                    - cell "0.506m" [ref=e67]
+                      - StaticText "0.506m"
+                    - cell "身体总宽度" [ref=e68]
+                      - StaticText "身体总宽度"
+          - generic
+            - image
+            - heading "1.8 腿部连杆参数" [level=2, ref=e39]
+          - generic
+            - image
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "连杆参数" [ref=e69]
+                      - StaticText "连杆参数"
+                    - cell "数值" [ref=e70]
+                      - StaticText "数值"
+                    - cell "说明" [ref=e71]
+                      - StaticText "说明"
+                  - row
+                    - cell "足部宽度(L1)" [ref=e72]
+                      - StaticText "足部宽度(L1)"
+                    - cell "0.104m" [ref=e73]
+                      - StaticText "0.104m"
+                    - cell "髋侧摆关节中心与大腿平面距离" [ref=e74]
+                      - StaticText "髋侧摆关节中心与大腿平面距离"
+                  - row
+                    - cell "大腿长度(L2)" [ref=e75]
+                      - StaticText "大腿长度(L2)"
+                    - cell "0.25m" [ref=e76]
+                      - StaticText "0.25m"
+                    - cell "髋前摆关节中心与膝关节中心在XZ平面上的投影距离" [ref=e77]
+                      - StaticText "髋前摆关节中心与膝关节中心在XZ平面上的投影距离"
+                  - row
+                    - cell "膝关节宽度(L3)" [ref=e78]
+                      - StaticText "膝关节宽度(L3)"
+                    - cell "0.029m" [ref=e79]
+                      - StaticText "0.029m"
+                    - cell "大腿平面与小腿平面距离" [ref=e80]
+                      - StaticText "大腿平面与小腿平面距离"
+                  - row
+                    - cell "小腿长度(L4)" [ref=e81]
+                      - StaticText "小腿长度(L4)"
+                    - cell "0.25m" [ref=e82]
+                      - StaticText "0.25m"
+                    - cell "膝关节中心与足部关节中心在XZ平面上的投影距离" [ref=e83]
+                      - StaticText "膝关节中心与足部关节中心在XZ平面上的投影距离"
+                  - row
+                    - cell "足部宽度(L5)" [ref=e84]
+                      - StaticText "足部宽度(L5)"
+                    - cell "0.073m" [ref=e85]
+                      - StaticText "0.073m"
+                    - cell "小腿平面与足部关节距离" [ref=e86]
+                      - StaticText "小腿平面与足部关节距离"
+                  - row
+                    - cell "足部轮胎直径" [ref=e87]
+                      - StaticText "足部轮胎直径"
+                    - cell "0.18m" [ref=e88]
+                      - StaticText "0.18m"
+                    - cell "足部缓冲件直径" [ref=e89]
+                      - StaticText "足部缓冲件直径"
+          - generic
+            - image
+            - heading "1.9 关节参数" [level=2, ref=e40]
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "关节参数" [ref=e90]
+                      - StaticText "关节参数"
+                    - cell "运动范围/峰值转速" [ref=e91]
+                      - StaticText "运动范围/峰值转速"
+                    - cell "峰值扭矩" [ref=e92]
+                      - StaticText "峰值扭矩"
+                  - row
+                    - cell "髋侧摆(HipX)" [ref=e93]
+                      - StaticText "髋侧摆(HipX)"
+                    - cell "-35°~25°" [ref=e94]
+                      - StaticText "-35°~25°"
+                    - cell "76Nm@72V" [ref=e95]
+                      - StaticText "76Nm@72V"
+                  - row
+                    - cell "髋前摆(HipY)" [ref=e96]
+                      - StaticText "髋前摆(HipY)"
+                    - cell "-140°~140°" [ref=e97]
+                      - StaticText "-140°~140°"
+                    - cell "76Nm@72V" [ref=e98]
+                      - StaticText "76Nm@72V"
+                  - row
+                    - cell "膝关节(Knee)" [ref=e99]
+                      - StaticText "膝关节(Knee)"
+                    - cell "22°~328°" [ref=e100]
+                      - StaticText "22°~328°"
+                    - cell "76Nm@72V" [ref=e101]
+                      - StaticText "76Nm@72V"
+                  - row
+                    - cell "足轮(Foot)" [ref=e102]
+                      - StaticText "足轮(Foot)"
+                    - cell "68rad/s@72V" [ref=e103]
+                      - StaticText "68rad/s@72V"
+                    - cell "21.6Nm@72V" [ref=e104]
+                      - StaticText "21.6Nm@72V"
+          - generic
+            - image
+            - heading "1.10 本体传感器坐标" [level=2, ref=e41]
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "传感器" [ref=e105]
+                      - StaticText "传感器"
+                    - cell "坐标系数值（相对于身体坐标系）" [ref=e106]
+                      - StaticText "坐标系数值（相对于身体坐标系）"
+                  - row
+                    - cell "X(mm)" [ref=e107]
+                      - StaticText "X(mm)"
+                    - cell "Y(mm)" [ref=e108]
+                      - StaticText "Y(mm)"
+                    - cell "Z(mm)" [ref=e109]
+                      - StaticText "Z(mm)"
+                  - row
+                    - cell "IMU" [ref=e110]
+                      - StaticText "IMU"
+                    - cell "63.2" [ref=e111]
+                      - StaticText "63.2"
+                    - cell "-26.8" [ref=e112]
+                      - StaticText "-26.8"
+                    - cell "-43.5" [ref=e113]
+                      - StaticText "-43.5"
+                  - row
+                    - cell "前广角相机" [ref=e114]
+                      - StaticText "前广角相机"
+                    - cell "376.46" [ref=e115]
+                      - StaticText "376.46"
+                    - cell "0" [ref=e116]
+                      - StaticText "0"
+                    - cell "37.38" [ref=e117]
+                      - StaticText "37.38"
+                  - row
+                    - cell "后广角相机" [ref=e118]
+                      - StaticText "后广角相机"
+                    - cell "-376.46" [ref=e119]
+                      - StaticText "-376.46"
+                    - cell "0" [ref=e120]
+                      - StaticText "0"
+                    - cell "37.38" [ref=e121]
+                      - StaticText "37.38"
+                  - row
+                    - cell "前激光雷达" [ref=e122]
+                      - StaticText "前激光雷达"
+                    - cell "320.28" [ref=e123]
+                      - StaticText "320.28"
+                    - cell "0" [ref=e124]
+                      - StaticText "0"
+                    - cell "-13" [ref=e125]
+                      - StaticText "-13"
+                  - row
+                    - cell "后激光雷达" [ref=e126]
+                      - StaticText "后激光雷达"
+                    - cell "-320.28" [ref=e127]
+                      - StaticText "-320.28"
+                    - cell "0" [ref=e128]
+                      - StaticText "0"
+                    - cell "-13" [ref=e129]
+                      - StaticText "-13"
+          - StaticText "★"
+          - generic
+            - StaticText "山猫M20的其他动力学参数可以在提供的"
+            - link "URDF" [ref=e30]
+            - StaticText "文件中获得。"
+          - separator
+          - generic
+            - image
+            - heading "2 电气接口" [level=1, ref=e42]
+          - generic
+            - image
+            - heading "2.1 接口尺寸" [level=2, ref=e43]
+          - generic
+            - StaticText "M20"
+            - StaticText "   M20 Pro"
+          - generic
+            - image
+          - generic
+            - image
+            - heading "2.2 网络架构图" [level=2, ref=e44]
+          - StaticText "山猫M20"
+          - generic
+            - SvgRoot
+              - StaticText "AOS"
+              - StaticText "NOS"
+              - StaticText "交换机"
+              - StaticText "交换机"
+              - StaticText "DCU"
+              - StaticText "MCU"
+              - StaticText "广角相机"
+              - StaticText "对频接收机"
+              - generic
+                - StaticText "WiFi"
+                - LineBreak "\n"
+                - StaticText "10.21.41.1/24"
+              - StaticText "手柄"
+              - StaticText "关节×16"
+              - StaticText "电池×2"
+              - StaticText "①网口"
+              - StaticText "eth0(10.21.33.103)"
+              - StaticText "eth1(10.21.32.103)"
+              - StaticText "UART"
+              - StaticText "GPIO"
+              - StaticText "eth2(10.21.31.103)"
+              - StaticText "eth0(10.21.33.106)"
+              - StaticText "eth1(10.21.31.106)"
+              - StaticText "eth1(10.21.32.121)"
+              - generic
+                - StaticText "后激光雷达"
+                - LineBreak "\n"
+                - StaticText "10.21.33.202"
+              - generic
+                - StaticText "前激光雷达"
+                - LineBreak "\n"
+                - StaticText "10.21.33.201"
+              - StaticText "照明灯"
+              - StaticText "指示灯"
+              - StaticText "卫星定位"
+              - StaticText "IMU"
+              - StaticText "UART"
+          - StaticText "山猫M20 Pro"
+          - generic
+            - SvgRoot
+              - StaticText "AOS"
+              - StaticText "NOS"
+              - StaticText "GOS"
+              - StaticText "交换机"
+              - StaticText "交换机"
+              - StaticText "MCU"
+              - StaticText "IMU"
+              - StaticText "对频接收机"
+              - generic
+                - StaticText "后激光雷达"
+                - LineBreak "\n"
+                - StaticText "10.21.33.202"
+              - generic
+                - StaticText "WiFi"
+                - LineBreak "\n"
+                - StaticText "10.21.41.1/24"
+              - StaticText "手柄"
+              - StaticText "⑥网口"
+              - generic
+                - StaticText "②③④⑤"
+                - LineBreak "\n"
+                - StaticText "网口"
+              - StaticText "①USB"
+              - StaticText "eth0(10.21.33.103)"
+              - StaticText "UART"
+              - StaticText "GPIO"
+              - StaticText "eth2(10.21.31.103)"
+              - StaticText "eth0(10.21.33.106)"
+              - StaticText "eth1(10.21.31.106)"
+              - StaticText "eth0(10.21.31.104)"
+              - StaticText "eth1(10.21.34.104)"
+              - StaticText "USB"
+              - generic
+                - StaticText "前激光雷达"
+                - LineBreak "\n"
+                - StaticText "10.21.33.201"
+              - StaticText "照明灯"
+              - StaticText "指示灯"
+              - StaticText "DCU"
+              - StaticText "广角相机"
+              - StaticText "关节×16"
+              - StaticText "电池×2"
+              - StaticText "eth1(10.21.32.103)"
+              - StaticText "eth1(10.21.32.121)"
+              - StaticText "卫星定位"
+          - generic
+            - image
+            - heading "2.3 接口定义" [level=2, ref=e45]
+          - StaticText "机器人对外提供了供电接口和通讯接口，支持对外供电的最大总功率为360W，其中24V供电接口对外供电的最大总功率为250W、USB接口最大对外输出功率为5V 1.4A。"
+          - generic
+            - generic
+              - image
+          - generic
+            - generic
+              - image
+          - generic
+            - StaticText "【注意】72V对外供电接口的实际输出范围为56~84V。"
+          - generic
+            - image
+            - heading "2.4 航插线定义" [level=2, ref=e46]
+          - StaticText "机器人配备了各个接口的标准航插线，其线序定义如下所述。"
+          - generic
+            - image
+            - heading "72V供电（56~84V）" [level=3, ref=e47]
+              - StaticText "72V供电（56~84V）"
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "序号" [ref=e130]
+                      - StaticText "序号"
+                    - cell "颜色" [ref=e131]
+                      - StaticText "颜色"
+                    - cell "定义" [ref=e132]
+                      - StaticText "定义"
+                  - row
+                    - cell "1" [ref=e133]
+                      - StaticText "1"
+                    - cell "蓝" [ref=e134]
+                      - StaticText "蓝"
+                    - cell "GND" [ref=e135]
+                      - StaticText "GND"
+                  - row
+                    - cell "2" [ref=e136]
+                      - StaticText "2"
+                    - cell "GND" [ref=e137]
+                      - StaticText "GND"
+                  - row
+                    - cell "3" [ref=e138]
+                      - StaticText "3"
+                    - cell "棕" [ref=e139]
+                      - StaticText "棕"
+                    - cell "VCC" [ref=e140]
+                      - StaticText "VCC"
+                  - row
+                    - cell "4" [ref=e141]
+                      - StaticText "4"
+                    - cell "VCC" [ref=e142]
+                      - StaticText "VCC"
+          - generic
+            - StaticText "【注意】72V对外供电接口的实际输出范围为56~84V。"
+          - generic
+            - image
+            - heading "24V供电+网口" [level=3, ref=e48]
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "序号" [ref=e143]
+                      - StaticText "序号"
+                    - cell "颜色" [ref=e144]
+                      - StaticText "颜色"
+                    - cell "定义" [ref=e145]
+                      - StaticText "定义"
+                  - row
+                    - cell "1" [ref=e146]
+                      - StaticText "1"
+                    - cell "黑" [ref=e147]
+                      - StaticText "黑"
+                    - cell "GND" [ref=e148]
+                      - StaticText "GND"
+                  - row
+                    - cell "2" [ref=e149]
+                      - StaticText "2"
+                    - cell "红" [ref=e150]
+                      - StaticText "红"
+                    - cell "24V" [ref=e151]
+                      - StaticText "24V"
+                  - row
+                    - cell "3" [ref=e152]
+                      - StaticText "3"
+                    - cell "棕" [ref=e153]
+                      - StaticText "棕"
+                    - cell "TX+" [ref=e154]
+                      - StaticText "TX+"
+                  - row
+                    - cell "4" [ref=e155]
+                      - StaticText "4"
+                    - cell "灰" [ref=e156]
+                      - StaticText "灰"
+                    - cell "TX-" [ref=e157]
+                      - StaticText "TX-"
+                  - row
+                    - cell "5" [ref=e158]
+                      - StaticText "5"
+                    - cell "黄" [ref=e159]
+                      - StaticText "黄"
+                    - cell "RX+" [ref=e160]
+                      - StaticText "RX+"
+                  - row
+                    - cell "6" [ref=e161]
+                      - StaticText "6"
+                    - cell "白" [ref=e162]
+                      - StaticText "白"
+                    - cell "TX2+" [ref=e163]
+                      - StaticText "TX2+"
+                  - row
+                    - cell "7" [ref=e164]
+                      - StaticText "7"
+                    - cell "绿" [ref=e165]
+                      - StaticText "绿"
+                    - cell "TX2-" [ref=e166]
+                      - StaticText "TX2-"
+                  - row
+                    - cell "8" [ref=e167]
+                      - StaticText "8"
+                    - cell "蓝" [ref=e168]
+                      - StaticText "蓝"
+                    - cell "RX2-" [ref=e169]
+                      - StaticText "RX2-"
+                  - row
+                    - cell "9" [ref=e170]
+                      - StaticText "9"
+                    - cell "浅绿" [ref=e171]
+                      - StaticText "浅绿"
+                    - cell "GND" [ref=e172]
+                      - StaticText "GND"
+                  - row
+                    - cell "10" [ref=e173]
+                      - StaticText "10"
+                    - cell "粉红" [ref=e174]
+                      - StaticText "粉红"
+                    - cell "24V" [ref=e175]
+                      - StaticText "24V"
+                  - row
+                    - cell "11" [ref=e176]
+                      - StaticText "11"
+                    - cell "橙" [ref=e177]
+                      - StaticText "橙"
+                    - cell "RX-" [ref=e178]
+                      - StaticText "RX-"
+                  - row
+                    - cell "12" [ref=e179]
+                      - StaticText "12"
+                    - cell "紫" [ref=e180]
+                      - StaticText "紫"
+                    - cell "RX2+" [ref=e181]
+                      - StaticText "RX2+"
+          - generic
+            - image
+            - heading "网口" [level=3, ref=e49]
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "序号" [ref=e182]
+                      - StaticText "序号"
+                    - cell "颜色" [ref=e183]
+                      - StaticText "颜色"
+                    - cell "定义" [ref=e184]
+                      - StaticText "定义"
+                  - row
+                    - cell "1" [ref=e185]
+                      - StaticText "1"
+                    - cell "-" [ref=e186]
+                      - StaticText "-"
+                    - cell "-" [ref=e187]
+                      - StaticText "-"
+                  - row
+                    - cell "2" [ref=e188]
+                      - StaticText "2"
+                    - cell "-" [ref=e189]
+                      - StaticText "-"
+                    - cell "-" [ref=e190]
+                      - StaticText "-"
+                  - row
+                    - cell "3" [ref=e191]
+                      - StaticText "3"
+                    - cell "白橙" [ref=e192]
+                      - StaticText "白橙"
+                    - cell "TX+" [ref=e193]
+                      - StaticText "TX+"
+                  - row
+                    - cell "4" [ref=e194]
+                      - StaticText "4"
+                    - cell "橙" [ref=e195]
+                      - StaticText "橙"
+                    - cell "TX-" [ref=e196]
+                      - StaticText "TX-"
+                  - row
+                    - cell "5" [ref=e197]
+                      - StaticText "5"
+                    - cell "白绿" [ref=e198]
+                      - StaticText "白绿"
+                    - cell "RX+" [ref=e199]
+                      - StaticText "RX+"
+                  - row
+                    - cell "6" [ref=e200]
+                      - StaticText "6"
+                    - cell "蓝" [ref=e201]
+                      - StaticText "蓝"
+                    - cell "TX2+" [ref=e202]
+                      - StaticText "TX2+"
+                  - row
+                    - cell "7" [ref=e203]
+                      - StaticText "7"
+                    - cell "白蓝" [ref=e204]
+                      - StaticText "白蓝"
+                    - cell "TX2-" [ref=e205]
+                      - StaticText "TX2-"
+                  - row
+                    - cell "8" [ref=e206]
+                      - StaticText "8"
+                    - cell "棕" [ref=e207]
+                      - StaticText "棕"
+                    - cell "RX2-" [ref=e208]
+                      - StaticText "RX2-"
+                  - row
+                    - cell "9" [ref=e209]
+                      - StaticText "9"
+                    - cell "-" [ref=e210]
+                      - StaticText "-"
+                    - cell "-" [ref=e211]
+                      - StaticText "-"
+                  - row
+                    - cell "10" [ref=e212]
+                      - StaticText "10"
+                    - cell "-" [ref=e213]
+                      - StaticText "-"
+                    - cell "-" [ref=e214]
+                      - StaticText "-"
+                  - row
+                    - cell "11" [ref=e215]
+                      - StaticText "11"
+                    - cell "绿" [ref=e216]
+                      - StaticText "绿"
+                    - cell "RX-" [ref=e217]
+                      - StaticText "RX-"
+                  - row
+                    - cell "12" [ref=e218]
+                      - StaticText "12"
+                    - cell "白棕" [ref=e219]
+                      - StaticText "白棕"
+                    - cell "RX2+" [ref=e220]
+                      - StaticText "RX2+"
+          - generic
+            - image
+            - heading "2.5 航插线安装步骤" [level=2, ref=e50]
+          - StaticText "电气接口标配航插线出线口位于机器人背部。为便于操作，用户可将侧面的航插面板拆除后再安装航插线束。安装完毕后，用户需确认面板下的对外供电开关是否已开启，随后将航插面板安装至原位。"
+          - generic
+            - image
+        - generic
+          - generic
+            - generic
+              - StaticText "大纲"
+            - StaticText "硬件参数"
+            - generic
+              - generic
+                - StaticText "1 机械尺寸"
+              - generic
+                - StaticText "1.1 关键尺寸"
+              - generic
+                - StaticText "1.2 安装平台"
+              - generic
+                - StaticText "1.3 机械接口"
+              - generic
+                - StaticText "1.4 安装范围"
+              - generic
+                - StaticText "1.5 运动干涉范围"
+              - generic
+                - StaticText "1.6 身体与关节坐标系"
+              - generic
+                - StaticText "1.7 身体连杆参数"
+              - generic
+                - StaticText "1.8 腿部连杆参数"
+              - generic
+                - StaticText "1.9 关节参数"
+              - generic
+                - StaticText "1.10 本体传感器坐标"
+              - generic
+                - StaticText "2 电气接口"
+              - generic
+                - StaticText "2.1 接口尺寸"
+              - generic
+                - StaticText "2.2 网络架构图"
+              - generic
+                - StaticText "2.3 接口定义"
+              - generic
+                - StaticText "2.4 航插线定义"
+              - generic
+                - StaticText "72V供电（56~84V）"
+              - generic
+                - StaticText "24V供电+网口"
+              - generic
+                - StaticText "网口"
+              - generic
+                - StaticText "2.5 航插线安装步骤"
+      - textbox [ref=e29]

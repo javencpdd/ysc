@@ -1,0 +1,818 @@
+- generic
+  - StaticText "山猫M20 开发指南"
+  - generic [ref=e1] clickable [onclick]
+    - button "分享" [ref=e3]
+      - image
+      - StaticText "分享"
+  - generic [ref=e2] clickable [onclick]
+    - button [ref=e4]
+      - image
+  - generic
+    - StaticText "所有文章"
+    - generic
+      - grid "grid"
+        - rowgroup
+          - generic [ref=e9] clickable [onclick]
+            - generic [ref=e20] clickable [onclick]
+              - image
+            - image
+            - generic [ref=e21] clickable [onclick]
+              - StaticText "山猫M20开发指南"
+          - generic [ref=e10] clickable [onclick]
+            - image
+            - generic [ref=e22] clickable [onclick]
+              - StaticText "硬件参数"
+          - generic [ref=e11] clickable [onclick]
+            - image
+            - generic [ref=e23] clickable [onclick]
+              - StaticText "软件使用指南"
+          - generic [ref=e12] clickable [onclick]
+            - image
+            - generic [ref=e24] clickable [onclick]
+              - StaticText "软件开发指南"
+          - generic [ref=e13] clickable [onclick]
+            - image
+            - generic [ref=e25] clickable [onclick]
+              - StaticText "软件更新说明"
+          - generic [ref=e14] clickable [onclick]
+            - generic [ref=e26] clickable [onclick]
+              - image
+            - image
+            - generic [ref=e27] clickable [onclick]
+              - StaticText "山猫M20开发者文档"
+          - generic [ref=e15] clickable [onclick]
+            - generic [ref=e28] clickable [onclick]
+              - image
+            - image
+            - generic [ref=e29] clickable [onclick]
+              - StaticText "二次开发教程与示例"
+          - generic [ref=e16] clickable [onclick]
+            - image
+            - generic [ref=e30] clickable [onclick]
+              - StaticText "基于C++的二次开发教程"
+          - generic [ref=e17] clickable [onclick]
+            - image
+            - generic [ref=e31] clickable [onclick]
+              - StaticText "基于Python的二次开发教程"
+          - generic [ref=e18] clickable [onclick]
+            - image
+            - generic [ref=e32] clickable [onclick]
+              - StaticText "山猫M20 外部主机雷达数据接收配置指南"
+          - generic [ref=e19] clickable [onclick]
+            - generic [ref=e33] clickable [onclick]
+              - image
+            - image
+            - generic [ref=e34] clickable [onclick]
+              - StaticText "Lynx M20 Development Guide"
+    - link "钉钉文档" [ref=e5]
+    - paragraph
+      - StaticText "本页面由用户发布，不代表钉钉的观点"
+      - link "举报" [ref=e6]
+    - generic [ref=e7] clickable [onclick]
+      - image
+  - Iframe [ref=e8]
+    - generic
+      - generic
+        - paragraph
+          - StaticText "软件使用指南"
+        - article
+          - generic
+            - StaticText "更新日期："
+            - generic
+              - image
+              - StaticText "2026年03月03日"
+          - StaticText "版本号：V1.0.2"
+          - generic
+            - StaticText "目录"
+            - generic
+              - StaticText "1 系统概况"
+              - StaticText "2 远程登录"
+              - StaticText "2.1 SSH 连接"
+              - StaticText "2.2 VNC连接"
+              - StaticText "3 建图导航"
+              - StaticText "3.1 建图路线规划"
+              - StaticText "3.2 建图步骤"
+              - StaticText "3.3 地图文件夹和地图包"
+              - StaticText "3.4 查看点云地图"
+              - StaticText "3.5 栅格地图修改"
+              - StaticText "3.6 地图包操作"
+              - StaticText "3.7 初始化定位"
+              - StaticText "3.8 导航"
+              - StaticText "3.9 地图坐标系与像素坐标系的转换"
+              - StaticText "附录1 相机视频流获取"
+          - separator
+          - generic
+            - StaticText "[强制] 请使用山猫M20 Pro机器人执行本指南操作，山猫M20机器人不支持本指南中的操作。"
+          - generic
+            - image
+            - heading "1 系统概况" [level=1, ref=e42]
+          - StaticText "山猫M20 Pro内部搭载了运动主机AOS、导航主机NOS和通用主机GOS："
+          - StaticText "1."
+          - StaticText "运动主机AOS：负责运动控制、系统监控、器件管理等基础平台功能；"
+          - StaticText "2."
+          - StaticText "导航主机NOS：负责建图、定位导航、避障、自主充电等感知功能；"
+          - StaticText "3."
+          - StaticText "通用主机GOS：部署了基础镜像系统，用户可以在通用主机中进行开发。"
+          - generic
+            - StaticText "各主机间的网络架构如下图所示，更多细节可查阅"
+            - generic
+              - image
+              - StaticText "硬件参数"
+            - StaticText "。"
+          - generic
+            - SvgRoot
+              - StaticText "AOS运动主机"
+              - StaticText "NOS导航主机"
+              - StaticText "GOS通用主机"
+              - StaticText "交换机"
+              - StaticText "交换机"
+              - StaticText "GMAC0(10.21.33.103)"
+              - StaticText "USB(10.21.31.103)"
+              - StaticText "GMAC0(10.21.33.106)"
+              - StaticText "GMAC1(10.21.31.106)"
+              - StaticText "GMAC0(10.21.31.104)"
+              - StaticText "USB"
+              - StaticText "WiFi"
+              - StaticText "10.21.41.1/24"
+              - StaticText "⑥网口"
+              - StaticText "①USB3.0"
+              - generic
+                - StaticText "②③④⑤"
+                - LineBreak "\n"
+                - StaticText "网口"
+              - StaticText "GMAC1(10.21.31.104)"
+          - separator
+          - generic
+            - image
+            - heading "2 远程登录" [level=1, ref=e43]
+          - generic
+            - StaticText "用户可在自己的电脑上下载并安装"
+            - link "MobaXterm" [ref=e40]
+            - StaticText "（或其他终端工具），以便通过SSH或VNC等方式远程进入机器人各主机内。"
+          - StaticText "在建立远程连接前，需要通过WiFi或网口，将开发主机连接到机器人。"
+          - StaticText "WiFi初始名称：CA9B_NO.XXX_5G（XXX为具体的机器人序列号）"
+          - StaticText "WiFi初始密码：12345678"
+          - generic
+            - image
+            - heading "2.1 SSH 连接" [level=2, ref=e44]
+          - generic
+            - StaticText "导航主机NOS和通用主机GOS均支持SSH连接访问。各主机的地址[hostname_ip]，以及用户名[user]和密码如下表所示："
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "主机" [ref=e68]
+                      - StaticText "主机"
+                    - cell "[hostname_ip]" [ref=e69]
+                      - StaticText "[hostname_ip]"
+                    - cell "[user]" [ref=e70]
+                      - StaticText "[user]"
+                    - cell "密码" [ref=e71]
+                      - StaticText "密码"
+                  - row
+                    - cell "导航主机NOS" [ref=e72]
+                      - StaticText "导航主机NOS"
+                    - cell "10.21.31.106" [ref=e73]
+                      - StaticText "10.21.31.106"
+                    - cell "user" [ref=e74]
+                      - StaticText "user"
+                    - cell "'（英文单引号）" [ref=e75]
+                      - StaticText "'（英文单引号）"
+                  - row
+                    - cell "通用主机GOS" [ref=e76]
+                      - StaticText "通用主机GOS"
+                    - cell "10.21.31.104" [ref=e77]
+                      - StaticText "10.21.31.104"
+                    - cell "user" [ref=e78]
+                      - StaticText "user"
+                    - cell "'（英文单引号）" [ref=e79]
+                      - StaticText "'（英文单引号）"
+          - StaticText "1."
+          - StaticText "通过WiFi连接到机器人。"
+          - StaticText "2."
+          - StaticText "打开MobaXterm（或其他终端工具），点击[Start local terminal]按钮。"
+          - generic
+            - image
+          - StaticText "3."
+          - generic
+            - StaticText "用户可在MobaXterm（或其他终端工具）中运行命令 ssh [user]@[hostname_ip] 连接到对应主机，例如SSH连接导航主机可执行如下图所示命令，并根据提示输入密码 ' 。"
+          - generic
+            - image
+          - generic
+            - image
+            - heading "2.2 VNC连接" [level=2, ref=e45]
+          - StaticText "导航主机NOS和通用主机GOS均支持VNC远程访问桌面。"
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "主机" [ref=e80]
+                      - StaticText "主机"
+                    - cell "主机地址" [ref=e81]
+                      - StaticText "主机地址"
+                    - cell "VNC连接密码" [ref=e82]
+                      - StaticText "VNC连接密码"
+                    - cell "桌面锁屏密码" [ref=e83]
+                      - StaticText "桌面锁屏密码"
+                  - row
+                    - cell "导航主机NOS" [ref=e84]
+                      - StaticText "导航主机NOS"
+                    - cell "10.21.31.106" [ref=e85]
+                      - StaticText "10.21.31.106"
+                    - cell "'（英文单引号）" [ref=e86]
+                      - StaticText "'（英文单引号）"
+                    - cell "'（英文单引号）" [ref=e87]
+                      - StaticText "'（英文单引号）"
+                  - row
+                    - cell "通用主机GOS" [ref=e88]
+                      - StaticText "通用主机GOS"
+                    - cell "10.21.31.104" [ref=e89]
+                      - StaticText "10.21.31.104"
+                    - cell "'（英文单引号）" [ref=e90]
+                      - StaticText "'（英文单引号）"
+                    - cell "'（英文单引号）" [ref=e91]
+                      - StaticText "'（英文单引号）"
+          - StaticText "1."
+          - StaticText "在进行VNC连接前，需要通过SSH连接到机器人，运行以下命令行以开启VNC功能："
+          - generic
+            - textbox [ref=e57]: x11vnc -display :0 -forever -shared -noxdamage
+              - generic
+                - StaticText "x11vnc -display :0 -forever -shared -noxdamage"
+          - generic
+            - generic
+              - image
+              - StaticText "2."
+              - generic
+                - StaticText "在MobaXterm中配置VNC访问："
+                - image
+            - generic
+              - StaticText "a."
+              - StaticText "点击Session"
+              - StaticText "b."
+              - StaticText "选择VNC"
+              - StaticText "c."
+              - generic
+                - StaticText "输入需要连接的主机地址[hostname_ip]"
+              - StaticText "d."
+              - StaticText "点击OK"
+          - StaticText "3."
+          - generic
+            - StaticText "输入密码 '，随后可远程访问导航主机桌面。"
+          - separator
+          - generic
+            - image
+            - heading "3 建图导航" [level=1, ref=e46]
+          - generic
+            - StaticText "建图是指机器人在行走过程中，通过激光雷达等传感器实时采集周围环境数据，确定自身当前位姿并构建周围环境的地图。构建的地图可能有多种形式，如点云、栅格等，将会用于定位、路径规划等下游模块。"
+          - StaticText "当前建图功能仅支持构建小面积（50m×50m）场景的点云和栅格地图。"
+          - generic
+            - image
+            - heading "3.1 建图路线规划" [level=2, ref=e47]
+          - StaticText "用户需提前规划好机器人的建图路线，确保路线："
+          - StaticText "1."
+          - generic
+            - StaticText "构成回环，即在建图过程中重复访问已扫描过的区域，与历史轨迹形成交点或重合路段；"
+          - StaticText "2."
+          - StaticText "尽量先走小回环，后走大回环；"
+          - StaticText "3."
+          - StaticText "覆盖到整个任务区域。"
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell " " [ref=e92]
+                      - generic
+                        - image
+                    - cell " " [ref=e93]
+                      - generic
+                        - image
+                  - row
+                    - cell "推荐路线 路线有交错，可构成回环 覆盖到所有区域" [ref=e94]
+                      - StaticText "推荐路线"
+                      - StaticText "路线有交错，可构成回环"
+                      - StaticText "覆盖到所有区域"
+                    - cell "不推荐路线 路线没有交错，没有回环 没有覆盖到所有区域" [ref=e95]
+                      - StaticText "不推荐路线"
+                      - StaticText "路线没有交错，没有回环"
+                      - StaticText "没有覆盖到所有区域"
+          - generic
+            - image
+            - heading "3.2 建图步骤" [level=2, ref=e48]
+          - generic
+            - generic
+              - StaticText "【注意】 建图过程中避免大量人员来回走动或存在大体积的临时物体。"
+            - generic
+              - StaticText "【注意】 建图过程中请勿遮挡激光雷达，否则可能导致建图失败。"
+            - generic
+              - StaticText "【注意】 提前清理建图路线上的杂物并打开任务区域中的所有门。"
+          - StaticText "1."
+          - StaticText "启动建图程序前确保机器人静止站立；"
+          - generic
+            - generic
+              - image
+              - StaticText "2."
+              - StaticText "SSH连接到导航主机NOS（或通过导航主机NOS的VNC远程桌面打开终端），根据需要选择并输入对应的建图启动指令："
+            - generic
+              - StaticText "a."
+              - StaticText "默认建图指令，即采用小面积建图模式，地图默认命名为“map-[日期]-[时间]”，默认建图过程中开启RViz，建图完成后默认激活该地图使其用于定位导航："
+              - generic
+                - textbox [ref=e64]: sudo drmap mapping
+                  - generic
+                    - StaticText "sudo drmap mapping"
+              - StaticText "b."
+              - StaticText "如需指定地图名称，可使用-n指令，并在-n后携带地图名称："
+              - generic
+                - textbox [ref=e65]: sudo drmap mapping -n xxx    # 通过-n指令，指定地图名为xxx
+                  - generic
+                    - StaticText "sudo drmap mapping -n xxx    # 通过-n指令，指定地图名为xxx"
+              - StaticText "c."
+              - StaticText "如建图过程中无需开启Rviz，可使用-s指令："
+              - generic
+                - textbox [ref=e66]: sudo drmap mapping -s
+                  - generic
+                    - StaticText "sudo drmap mapping -s"
+              - StaticText "d."
+              - StaticText "如建图完成后无需立即激活该地图，可使用-b指令："
+              - generic
+                - textbox [ref=e67]: sudo drmap mapping -b
+                  - generic
+                    - StaticText "sudo drmap mapping -b"
+          - StaticText "3."
+          - StaticText "等待约3~5秒，出现下图中的提示“正在建图，Building map”时表示已经完成建图程序启动和初始化过程，并开始建图："
+          - generic
+            - image
+          - StaticText "4."
+          - StaticText "遥控机器人按预定建图路线平稳行走，请避免急加减速、急转弯或剧烈运动。"
+          - StaticText "5."
+          - generic
+            - StaticText "全程行走完毕后，打开终端输入指令 sudo drmap stop_mapping ，即可结束建图程序并开始后续处理，待终端打印内容提示建图结束后，即可关闭终端。"
+          - generic
+            - image
+          - generic
+            - StaticText "【注意】 结束建图过程中出现卡顿现象，可多执行几次结束建图指令，使建图程序关闭，以顺利进行后续处理步骤。"
+          - generic
+            - image
+            - heading "3.3 地图文件夹和地图包" [level=2, ref=e49]
+              - StaticText "3.3 地图文件夹和地图包"
+          - generic
+            - StaticText "每次建图生成的地图包均为一个单独的文件夹，命名为"
+            - code
+              - StaticText "[指定名称]-[日期]-[时间]"
+            - StaticText "，所有的地图包统一存放在地图文件夹/var/opt/robot/data/maps路径下。"
+          - generic
+            - StaticText "地图文件夹下存在名为active的软链接，它指向的地图包处于激活状态，即该地图包会被用于定位导航规划。仅会有一个地图包处于激活状态。"
+          - generic
+            - StaticText "【注意】 每个地图包中均包含必要的所有数据，请参考“3.4 地图包操作”，通过drmap指令对地图包整体进行转移、备份、替换等操作，切勿单独修改替换其中的部分文件。"
+          - generic
+            - image
+            - heading "3.4 查看点云地图" [level=2, ref=e50]
+          - StaticText "打开终端输入下面的命令打开PCD viewer，查看建好的三维点云地图："
+          - generic
+            - textbox [ref=e58]: cd /var/opt/robot/data/maps/XXXX-XX-XXXXX #XXXX-XX-XXXXX为需要查看点云地图的所在文件夹
+    pcl_viewer full_cloud.pcd
+              - generic
+                - StaticText "cd /var/opt/robot/data/maps/XXXX-XX-XXXXX #XXXX-XX-XXXXX为需要查看点云地图的所在文件夹"
+              - StaticText "pcl_viewer full_cloud.pcd"
+          - StaticText "PCD viewer如下图所示："
+          - generic
+            - image
+          - StaticText "PCD viewer基础操作："
+          - StaticText "1. 滑动滚轮控制点云模型的缩放。"
+          - StaticText "2. 拖拽左键控制点云模型的旋转。"
+          - StaticText "3. 拖拽滑轮控制点云模型的平移。"
+          - StaticText "4. 数字按键(1~5)选择点云模型的显示模式。"
+          - generic
+            - image
+            - heading "3.5 栅格地图修改" [level=2, ref=e51]
+          - StaticText "若栅格地图不完全符合实际环境或需要人为划定可通行区域，可以使用GNU Image Manipulation Program（GIMP）对.pgm文件进行修图："
+          - StaticText "1."
+          - generic
+            - StaticText "将M20 导航主机（NOS）中需要修改的"
+            - code
+              - StaticText ".pgm"
+            - StaticText "文件传输至开发者的开发主机上；"
+          - StaticText "2."
+          - generic
+            - StaticText "在开发者的开发主机上下载并安装"
+            - link "GIMP" [ref=e41]
+            - StaticText "；"
+          - StaticText "3."
+          - generic
+            - StaticText "右击传输至开发主机的 "
+            - code
+              - StaticText ".pgm"
+            - StaticText " 文件，选择open with Other Application，然后选中GNU Image Manipulation Program，并点击Select键。"
+          - generic
+            - image
+            - StaticText "    "
+            - image
+          - generic
+            - image
+          - StaticText "a."
+          - StaticText "若GNU Image Manipulation Program未显示两侧的工具栏，可单击Tab键显示工具栏。"
+          - StaticText "b."
+          - StaticText "工具栏提供了前景色与背景色工具，前景色设置画笔工具的颜色，背景色设置橡皮擦工具的颜色。栅格地图中规定黑色为障碍物，即不可通行区域，白色为可通行区域，灰色为未知区域。您可以使用画笔工具或橡皮擦工具添加或擦除黑色区域。按住shift键后单击鼠标左键可画直线，按住ctrl键后单击鼠标左键可吸取颜色。"
+          - StaticText "4."
+          - generic
+            - StaticText "修改完成后在上方菜单栏选择File - Overwrite occ_grid.pgm对原文件进行覆盖（请勿选择 File - Save 保存），关闭该软件时会再次出现保存提示，此时点击Discard Changes即可。"
+          - generic
+            - image
+          - generic
+            - StaticText "【注意】 如果有多张栅格地图，栅格地图的名称符合"
+            - code
+              - StaticText "occ_grid_XXX.pgm"
+            - StaticText "格式（其中XXX为地图编号），例如："
+            - code
+              - StaticText "occ_grid_3.pgm"
+            - StaticText "。请依次修改并保存多张栅格地图文件。"
+          - StaticText "5."
+          - generic
+            - StaticText "将修改完成的 "
+            - code
+              - StaticText ".pgm"
+            - StaticText " 文件重新传输至山猫 M20 导航主机（NOS）中对应的原始 "
+            - code
+              - StaticText ".pgm"
+            - StaticText " 文件目录，并覆盖原有 "
+            - code
+              - StaticText ".pgm"
+            - StaticText " 文件。"
+          - generic
+            - image
+            - heading "3.6 地图包操作" [level=2, ref=e52]
+          - StaticText "用户可在终端中执行drmap相关命令来对地图包整体进行打包、备份、复用等操作。命令输入支持TAB补全，也可通过命令加 -h选项查看命令基础用法。"
+          - StaticText "1."
+          - StaticText "压缩打包：将当前地图包压缩为zip包并备份至/home/user/Downloads文件夹下。"
+          - generic
+            - textbox [ref=e59]: drmap pack
+              - StaticText "drmap pack"
+          - StaticText "2."
+          - StaticText "解压：将压缩打包后的地图包解压到/var/opt/robot/data/maps路径下。"
+          - generic
+            - textbox [ref=e60]: drmap unpack [path_to_map_package]     # [path_to_map_package] 指要解压的地图zip包文件路径
+              - generic
+                - StaticText "drmap unpack [path_to_map_package]     # [path_to_map_package] 指要解压的地图zip包文件路径"
+          - StaticText "3."
+          - generic
+            - StaticText "激活：将需要使用的地图激活用于定位导航（地图默认存放在 /var/opt/robot/data/maps 路径下，激活后需重启生效）。"
+          - generic
+            - textbox [ref=e61]: sudo drmap apply [path_to_map_folder]     # [path_to_map_folder] 指要激活的地图包文件夹路径
+              - generic
+                - StaticText "sudo drmap apply [path_to_map_folder]     # [path_to_map_folder] 指要激活的地图包文件夹路径"
+          - generic
+            - image
+            - heading "3.7 初始化定位" [level=2, ref=e53]
+          - generic
+            - StaticText "初始化定位是指在机器人执行导航前或定位意外丢失后，确认机器人定位是否正确，并对机器人定位校正重置的过程。"
+          - StaticText "1."
+          - StaticText "打开终端运行下述指令，以打开RViz："
+          - button [ref=e36]
+            - image
+          - button "复制代码" [ref=e37]
+            - image
+            - StaticText "复制代码"
+          - generic
+            - textbox [ref=e62]: su
+    source /opt/ros/foxy/setup.bash
+    export XAUTHORITY=/home/user/.Xauthority
+    rviz2
+              - StaticText "su"
+              - generic
+                - StaticText "source /opt/ros/foxy/setup.bash"
+              - generic
+                - StaticText "export XAUTHORITY=/home/user/.Xauthority"
+              - StaticText "rviz2"
+          - StaticText "2."
+          - StaticText "点击左上角“File-Open Config”，在弹窗中选择 /opt/robot/share/localization/conf 路径下的RViz配置文件localization.rviz，以加载定位所需的数据："
+          - generic
+            - image
+          - StaticText "3."
+          - StaticText "检查实时点云与地图是否重合，如果不重合（例如下图），需要参考下一步初始化机器人定位。"
+          - generic
+            - image
+          - StaticText "4."
+          - StaticText "初始化或重置机器人定位："
+          - generic
+            - image
+          - StaticText "a."
+          - StaticText "点击顶部工具栏中的[2D Pose Estimate]。"
+          - StaticText "b."
+          - StaticText "确定机器人的实际位置和朝向，将鼠标移动到地图中的对应位置，按住左键并依照实际朝向拖拽出箭头，然后松开鼠标左键。"
+          - StaticText "c."
+          - StaticText "若定位初始化成功，实时点云与地图会重合，如图中所示；若定位初始化失败，从第1步开始重新操作即可。"
+          - generic
+            - image
+            - heading "3.8 导航" [level=2, ref=e54]
+              - StaticText "3.8 导航"
+          - generic
+            - StaticText "用户可通过"
+            - generic
+              - image
+              - StaticText "软件开发指南"
+            - StaticText "中的相关接口来下发导航任务并获取执行状态。"
+          - generic
+            - image
+            - heading "3.9 地图坐标系与像素坐标系的转换" [level=2, ref=e55]
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell " " [ref=e96]
+                      - generic
+                        - image
+                    - cell " " [ref=e97]
+                      - generic
+                        - image
+                  - row
+                    - cell "地图坐标系" [ref=e98]
+                      - StaticText "地图坐标系"
+                    - cell "像素坐标系" [ref=e99]
+                      - StaticText "像素坐标系"
+          - StaticText "地图包中的配置文件occ_grid.yaml内包含了地图图像信息，用户可据此对地图坐标系和像素坐标系下的坐标信息进行换算："
+          - button [ref=e38]
+            - image
+          - button "复制代码" [ref=e39]
+            - image
+            - StaticText "复制代码"
+          - generic
+            - textbox [ref=e63]: image: /var/opt/robot/data/maps//map-20250802-151130/occ_grid.pgm
+    resolution: 0.1                   # 表示地图图像像素在实际地图中的物理长度Res(m)
+    origin: [-8.6, -11.2, 0.0]        # 前两个参数表示地图图像左下角在地图坐标系下的坐标[X0,Y0](m)
+    negate: 0
+    occupied_thresh: 0.65
+    free_thresh: 0.196
+              - generic
+                - StaticText "image: /var/opt/robot/data/maps//map-20250802-151130/occ_grid.pgm"
+              - generic
+                - StaticText "resolution: 0.1                   # 表示地图图像像素在实际地图中的物理长度Res(m)"
+              - generic
+                - StaticText "origin: [-8.6, -11.2, 0.0]        # 前两个参数表示地图图像左下角在地图坐标系下的坐标[X0,Y0](m)"
+              - generic
+                - StaticText "negate: 0"
+              - generic
+                - StaticText "occupied_thresh: 0.65"
+              - generic
+                - StaticText "free_thresh: 0.196"
+          - StaticText "机器人在地图坐标系和像素坐标系中的位置坐标换算公式如下："
+          - generic
+            - MathMLMath
+              - MathMLRow
+                - MathMLRow
+                  - MathMLRow
+                    - MathMLOperator
+                      - StaticText "{"
+                    - MathMLTable
+                      - MathMLTableRow
+                        - MathMLTableCell
+                          - MathMLRow
+                            - MathMLRow
+                              - MathMLSub
+                                - MathMLIdentifier
+                                  - StaticText "𝑥"
+                                - MathMLIdentifier
+                                  - StaticText "𝑝"
+                              - MathMLOperator
+                                - StaticText "="
+                              - MathMLFraction
+                                - MathMLRow
+                                  - MathMLIdentifier
+                                    - StaticText "Pos"
+                                  - MathMLOperator
+                                    - StaticText "⁡"
+                                  - MathMLIdentifier
+                                    - StaticText "𝑋"
+                                  - MathMLOperator
+                                    - StaticText "−"
+                                  - MathMLIdentifier
+                                    - StaticText "𝑋"
+                                  - MathMLNumber
+                                    - StaticText "0"
+                                - MathMLIdentifier
+                                  - StaticText "Res"
+                                - MathMLOperator
+                                  - StaticText "⁡"
+                      - MathMLTableRow
+                        - MathMLTableCell
+                          - MathMLRow
+                            - MathMLRow
+                      - MathMLTableRow
+                        - MathMLTableCell
+                          - MathMLRow
+                            - MathMLRow
+                              - MathMLSub
+                                - MathMLIdentifier
+                                  - StaticText "𝑦"
+                                - MathMLIdentifier
+                                  - StaticText "𝑝"
+                              - MathMLOperator
+                                - StaticText "="
+                              - MathMLIdentifier
+                                - StaticText "𝐻"
+                              - MathMLOperator
+                                - StaticText "−"
+                              - MathMLFraction
+                                - MathMLRow
+                                  - MathMLIdentifier
+                                    - StaticText "Pos"
+                                  - MathMLOperator
+                                    - StaticText "⁡"
+                                  - MathMLIdentifier
+                                    - StaticText "𝑌"
+                                  - MathMLOperator
+                                    - StaticText "−"
+                                  - MathMLIdentifier
+                                    - StaticText "𝑌"
+                                  - MathMLNumber
+                                    - StaticText "0"
+                                - MathMLIdentifier
+                                  - StaticText "Res"
+                                - MathMLOperator
+                                  - StaticText "⁡"
+                    - MathMLText
+                      - StaticText "("
+                    - MathMLSub
+                      - MathMLIdentifier
+                        - StaticText "𝑥"
+                      - MathMLIdentifier
+                        - StaticText "𝑝"
+                    - MathMLOperator
+                      - StaticText ","
+                    - MathMLSub
+                      - MathMLIdentifier
+                        - StaticText "𝑦"
+                      - MathMLIdentifier
+                        - StaticText "𝑝"
+                  - MathMLText
+                    - StaticText "取整)"
+          - StaticText "公式涉及的参数如下："
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "参数名称" [ref=e100]
+                      - StaticText "参数名称"
+                    - cell "参数含义" [ref=e101]
+                      - StaticText "参数含义"
+                  - row
+                    - cell " " [ref=e102]
+                      - generic
+                        - MathMLMath
+                          - MathMLRow
+                            - MathMLRow
+                              - MathMLOperator
+                                - StaticText "("
+                              - MathMLIdentifier
+                                - StaticText "Pos"
+                              - MathMLOperator
+                                - StaticText "⁡"
+                              - MathMLIdentifier
+                                - StaticText "𝑋"
+                              - MathMLOperator
+                                - StaticText ","
+                              - MathMLIdentifier
+                                - StaticText "Pos"
+                              - MathMLOperator
+                                - StaticText "⁡"
+                              - MathMLIdentifier
+                                - StaticText "𝑌"
+                              - MathMLOperator
+                                - StaticText ")"
+                    - cell "地图坐标系下的坐标值" [ref=e103]
+                      - StaticText "地图坐标系下的坐标值"
+                  - row
+                    - cell " " [ref=e104]
+                      - generic
+                        - MathMLMath
+                          - MathMLRow
+                            - MathMLRow
+                              - MathMLOperator
+                                - StaticText "("
+                              - MathMLSub
+                                - MathMLIdentifier
+                                  - StaticText "𝑥"
+                                - MathMLIdentifier
+                                  - StaticText "𝑝"
+                              - MathMLOperator
+                                - StaticText ","
+                              - MathMLSub
+                                - MathMLIdentifier
+                                  - StaticText "𝑦"
+                                - MathMLIdentifier
+                                  - StaticText "𝑝"
+                              - MathMLOperator
+                                - StaticText ")"
+                    - cell "像素坐标系下的坐标值" [ref=e105]
+                      - StaticText "像素坐标系下的坐标值"
+                  - row
+                    - cell " " [ref=e106]
+                      - generic
+                        - MathMLMath
+                          - MathMLRow
+                            - MathMLRow
+                              - MathMLIdentifier
+                                - StaticText "𝑅"
+                              - MathMLIdentifier
+                                - StaticText "𝑒"
+                              - MathMLIdentifier
+                                - StaticText "𝑠"
+                    - cell "地图图像像素在实际地图中的物理长度(m)" [ref=e107]
+                      - StaticText "地图图像像素在实际地图中的物理长度(m)"
+                  - row
+                    - cell " " [ref=e108]
+                      - generic
+                        - MathMLMath
+                          - MathMLRow
+                            - MathMLRow
+                              - MathMLOperator
+                                - StaticText "("
+                              - MathMLIdentifier
+                                - StaticText "𝑋"
+                              - MathMLNumber
+                                - StaticText "0"
+                              - MathMLOperator
+                                - StaticText ","
+                              - MathMLIdentifier
+                                - StaticText "𝑌"
+                              - MathMLNumber
+                                - StaticText "0"
+                              - MathMLOperator
+                                - StaticText ")"
+                    - cell "地图图像左下角在地图坐标系下的坐标(m)" [ref=e109]
+                      - StaticText "地图图像左下角在地图坐标系下的坐标(m)"
+                  - row
+                    - cell " " [ref=e110]
+                      - generic
+                        - MathMLMath
+                          - MathMLRow
+                            - MathMLRow
+                              - MathMLIdentifier
+                                - StaticText "𝐻"
+                    - cell "地图图像高度包含的像素数（查看文件属性可获得）" [ref=e111]
+                      - StaticText "地图图像高度包含的像素数（查看文件属性可获得）"
+          - separator
+          - generic
+            - image
+            - heading "附录1 相机视频流获取" [level=1, ref=e56]
+          - StaticText "山猫M20的前后广角相机采用RTSP 协议拉流，RTSP地址如下所示："
+          - generic
+            - generic
+              - generic
+                - table
+                  - row
+                    - cell "相机位置" [ref=e112]
+                      - StaticText "相机位置"
+                    - cell "RTSP地址" [ref=e113]
+                      - StaticText "RTSP地址"
+                  - row
+                    - cell "前广角相机" [ref=e114]
+                      - StaticText "前广角相机"
+                    - cell "rtsp://10.21.31.103:8554/video1" [ref=e115]
+                      - StaticText "rtsp://10.21.31.103:8554/video1"
+                  - row
+                    - cell "后广角相机" [ref=e116]
+                      - StaticText "后广角相机"
+                    - cell "rtsp://10.21.31.103:8554/video2" [ref=e117]
+                      - StaticText "rtsp://10.21.31.103:8554/video2"
+          - StaticText "开发者可以通过上述地址拉取前后广角相机的RTSP视频流。"
+        - generic
+          - generic
+            - generic
+              - StaticText "大纲"
+            - StaticText "软件使用指南"
+            - generic
+              - generic
+                - StaticText "1 系统概况"
+              - generic
+                - StaticText "2 远程登录"
+              - generic
+                - StaticText "2.1 SSH 连接"
+              - generic
+                - StaticText "2.2 VNC连接"
+              - generic
+                - StaticText "3 建图导航"
+              - generic
+                - StaticText "3.1 建图路线规划"
+              - generic
+                - StaticText "3.2 建图步骤"
+              - generic
+                - StaticText "3.3 地图文件夹和地图包"
+              - generic
+                - StaticText "3.4 查看点云地图"
+              - generic
+                - StaticText "3.5 栅格地图修改"
+              - generic
+                - StaticText "3.6 地图包操作"
+              - generic
+                - StaticText "3.7 初始化定位"
+              - generic
+                - StaticText "3.8 导航"
+              - generic
+                - StaticText "3.9 地图坐标系与像素坐标系的转换"
+              - generic
+                - StaticText "附录1 相机视频流获取"
+      - textbox [ref=e35]
