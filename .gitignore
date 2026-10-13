@@ -18,6 +18,6 @@ site/
 # Local agent/session metadata
 .agents/
 .codex/
-.workbuddy/
+.workbuddy/*
 # lite3_robot_monitor/
 .codex-remote-bootstrap/
