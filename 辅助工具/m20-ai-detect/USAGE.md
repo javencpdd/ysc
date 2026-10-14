@@ -73,7 +73,7 @@ journalctl -u m20-ai-console -f
 
 - **默认开放**（未设 TOKEN），内网谁都能开——机器人内网本就是可信环境；
 - 若配了 `M20AIC_TOKEN`（在 `m20-ai-console.env` 里），页面右上角填入同一个值即可，API 调用需带 `X-Console-Token` 头；
-- 写操作（启停/改配置/清理日志）在主机侧经 **sudoers 白名单**调 root helper 完成，`user` 拿不到裸 root；每次提权调用在 syslog 留痕（`grep m20-ai-console-helper /var/log/syslog`），可审计；
+- 写操作（启停/改配置/清理日志）在主机侧经 **sudoers 白名单**调 root helper 完成，`user` 拿不到裸 root；每次提权调用在系统日志留痕（GOS 无 rsyslog、走 journald：`journalctl -t m20-ai-console-helper -n 20`），可审计；
 - 控制台**不监听外网**：改绑定地址需同时改 `m20-ai-console.env` 的 `M20AIC_BIND` 并重启 `m20-ai-console`。
 
 ### 2.4 控制台自己的管理

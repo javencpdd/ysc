@@ -30,7 +30,7 @@
 
 - 2026-10-15 本地打桩验证（stub 掉 systemctl/sudo/journalctl）：up/down/restart/reset/status/log 全流程、幂等（对已是目标态的服务不重复调用）、失败中止（停服务失败则不删帧）、helper 调用次序（stop→start 严格有序）均符合预期；
 - 修复打桩中暴露的真实健壮性问题：`set -e + pipefail` 下 `hostname -I`／无条件 `find` 管道返回非零会杀死整个 status——已全部加 `|| true` 兜底并复测；
-- 104 实测（2026-10-15）：`aiDetect status / down / up / reset / log / down --all / up --all` 端到端通过，helper 调用在 syslog 留痕；
+- 104 实测（2026-10-15）：`aiDetect status / down / up / reset / log / doctor / down --all / up --all` 端到端通过；helper 调用在系统日志留痕（GOS 无 rsyslog，落 journald：`journalctl -t m20-ai-console-helper`），控制台 spool 清空记 `journalctl -t m20-ai-console`；
 - 提权面复核：新增 3 条白名单仅允许对 `m20-ai-console.service` 做 start/stop/restart，无参数注入面；`reset` 的删帧完全不提权（`spool/` 归 `user`，与网页端同一路径）。
 
 ## 后果
