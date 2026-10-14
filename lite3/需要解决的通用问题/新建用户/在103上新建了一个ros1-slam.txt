@@ -6,5 +6,5 @@ sudo passwd ros1-slam
 #passwd slam
 
 # 3. 赋权给 ysc：对 homeros1-slam 及其下所有内容拥有读写执行权限（ACL 方式）
-sudo setfacl -R -m uyscrwx homeros1-slam
-sudo setfacl -R -d -m uyscrwx homeros1-slam
+sudo setfacl -R -m u:ysc:rwx homeros1-slam
+sudo setfacl -R -d -m u:ysc:rwx homeros1-slam

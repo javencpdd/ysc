@@ -1,6 +1,7 @@
 # m20video —— 双相机 RTSP→RTMP 推流项目笔记
 
-> 主机：`user@192.168.0.196`（`aos`，Lite3 感知主机，RK3588 级 SoC，Ubuntu 20.04 aarch64）
+> 主机：`user@192.168.0.196`（`aos`，**M20 Pro 的 AOS 运控主机**，RK3588 级 SoC，Ubuntu 20.04 aarch64）
+> ⚠️ 2026-10-14 更正：此处原写「Lite3 感知主机」有误 —— Lite3 的感知主机是 `192.168.1.103`（hostname `lite`），与 M20 的 196 不是同一台。
 > 项目：`/home/user/rtmp_1012/`，本地镜像 `rtsp_rtmp/project/rtmp_1012/`
 > 日期：2026-10-12
 > 目标：把两路相机 RTSP 转成 RTMP，推到 `rtmp://172.31.68.227:1936/live/m20pro-f` 与 `m20pro-b`

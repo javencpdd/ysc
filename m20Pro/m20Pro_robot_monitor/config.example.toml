@@ -1,0 +1,57 @@
+# M20 Pro Web 控制台 —— 配置示例（部署前复制为 config.toml 或直接用环境变量）
+#
+# ⚠️ 本文件是**脱敏示例**，真实凭据/内网口令禁止入库（PLAN §9）。
+# 实际生效方式：环境变量（前缀 M20_），见下方每项注释；本文件供部署时对照查阅。
+#
+# 196 上建议以 systemd Environment= 或 /home/djw/monitor/.env 形式注入。
+
+# ---------------- 顶层 ----------------
+# data_source = "mock"    # mock | udp | ros2（ros2 为 PLAN §18 路径 1 预留）
+# replay_file = ""        # 回放文件路径（JSONL：每行 {"t":秒,"hex":"..."}），为空则不启用
+# log_level   = "INFO"
+
+# ---------------- AOS 本体（监控协议服务端）----------------
+# 环境变量：M20_ROBOT__TARGET_IP / __TARGET_PORT / __HEARTBEAT_HZ / __LINK_TIMEOUT
+[robot]
+# 实测（2026-10-14）：basic_server 监听 0.0.0.0:30000，绑全网卡 → 下列地址均可达
+#   127.0.0.1（推荐，后端驻 196 时最稳）/ 10.21.31.103 / 10.21.33.103
+# ⚠️ 后端若部署到 196 之外的主机，必须改为 AOS 内网 IP
+target_ip     = "127.0.0.1"
+target_port   = 30000            # UDP 监控协议端口（docs/04 §1.1.2）
+heartbeat_hz  = 5.0              # ≥1Hz（docs/04 §1.2.1）；SDK 默认 5Hz
+link_timeout  = 3.0              # 超过该时间无推送即判定链路断开（秒）
+
+# ---------------- 状态层新鲜度（ADR-006）----------------
+[state]
+stale_threshold   = 0.5          # per-topic 停更阈值（秒），超时标 stale 但不删旧值
+raw_history_size  = 1000         # 原始报文环形缓冲条数（有界，ADR-007）
+raw_preview_bytes = 64
+
+# ---------------- Web 服务 ----------------
+[service]
+host           = "0.0.0.0"
+port           = 8080            # Web + REST + WS 同源；避开 C5 冲突端口清单
+push_hz        = 10              # WS 推送频率
+schema_version = "1.0"           # 前后端契约版本，变更须同步契约测试
+serve_frontend = true
+frontend_dist  = "../frontend/dist"
+
+# ---------------- 控制通道（分层开放，ADR-004）----------------
+[control]
+enabled         = false          # 默认 L0 只监！开启 L1 需显式配置 + 前端二次确认
+lease_seconds   = 5.0            # 租约时长；WS 断开即失效
+axis_hz         = 20             # 轴指令循环频率
+axis_timeout_ms = 250            # 看门狗超时 → 零位停发（等待恢复）。
+                                 # **绝不自动软急停**（2026-10-15 两次事故教训：
+                                 # 任何"自动放倒"都会把机器人打成栽倒）；软急停只由人触发
+audit_size      = 500            # 审计日志条数（有界）
+# 轴指令值域钳制边界（安全上限，2026-10-15 真机实测：
+#   0.25≈0.32m/s 舒适档 / 0.40≈0.54m/s 上限 / ≥0.70≈1.1m/s 已实测危险）
+axis_min        = -0.40
+axis_max        = 0.40
+
+# ---------------- 视频（M3，本期默认关）----------------
+[video]
+enabled  = false
+rtsp_url = "rtsp://127.0.0.1:8554/video1"   # 196 本机 MediaMTX（近零中继）
+hls_port = 8081

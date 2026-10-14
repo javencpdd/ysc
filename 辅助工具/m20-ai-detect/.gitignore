@@ -1,0 +1,28 @@
+# ---- 运行时产物（永远不要入库）----
+.runtime/
+*.pyc
+__pycache__/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# ---- 本地配置（可能含内网地址/凭据，只提交 .example）----
+m20-ai-detect.env
+.env
+*.local
+
+# ---- 在目标主机上产生的数据（只应存在于 GOS 的 /home/djw）----
+spool/
+raw/
+results/
+alerts/
+saved/
+log/
+tmp/
+
+# ---- 编辑器 / 系统 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

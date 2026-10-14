@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m20-ai-console</title>
+<style>
+:root{
+  --bg:#f5f4f0; --surface:#ffffff; --surface2:#f1efe8; --text:#1c1c1a; --text2:#5f5e5a;
+  --border:#d3d1c7; --border2:#b4b2a9;
+  --okbg:#e1f5ee; --oktx:#0f6e56; --warnbg:#faeeda; --warntx:#854f0b;
+  --errbg:#fcebeb; --errtx:#a32d2d; --infotx:#185fa5;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme=light]){
+    --bg:#1a1a18; --surface:#242422; --surface2:#2c2c2a; --text:#e8e6df; --text2:#a3a19a;
+    --border:#3d3d3a; --border2:#5f5e5a;
+    --okbg:#0f3d30; --oktx:#5dcaa5; --warnbg:#4a3418; --warntx:#ef9f27;
+    --errbg:#4d1f1f; --errtx:#f09595; --infotx:#85b7eb;
+  }
+}
+:root[data-theme=dark]{
+  --bg:#1a1a18; --surface:#242422; --surface2:#2c2c2a; --text:#e8e6df; --text2:#a3a19a;
+  --border:#3d3d3a; --border2:#5f5e5a;
+  --okbg:#0f3d30; --oktx:#5dcaa5; --warnbg:#4a3418; --warntx:#ef9f27;
+  --errbg:#4d1f1f; --errtx:#f09595; --infotx:#85b7eb;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+.wrap{max-width:1080px;margin:0 auto;padding:20px 16px 60px}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
+h1{font-size:16px;font-weight:500;margin:0}
+.sub{font-size:12px;color:var(--text2);margin-top:2px}
+.pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;padding:4px 12px;border-radius:999px;background:var(--surface2);color:var(--text2)}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+.pill.ok{background:var(--okbg);color:var(--oktx)}
+.pill.err{background:var(--errbg);color:var(--errtx)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
+.metric{background:var(--surface2);border-radius:10px;padding:14px 16px}
+.metric .k{font-size:12px;color:var(--text2)}
+.metric .v{font-size:22px;font-weight:500;margin-top:2px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+.card{background:var(--surface);border:0.5px solid var(--border);border-radius:12px;padding:16px 18px}
+.card.wide{grid-column:1/-1}
+.card h2{font-size:14px;font-weight:500;margin:0 0 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+label.f{display:block;font-size:13px;color:var(--text2);margin:10px 0 5px}
+input[type=text],input[type=number],select{width:100%;padding:7px 10px;border:0.5px solid var(--border2);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px}
+input[type=range]{width:100%}
+button{padding:7px 14px;border:0.5px solid var(--border2);border-radius:8px;background:transparent;color:var(--text);font-size:13px;cursor:pointer}
+button:hover{background:var(--surface2)}
+button.primary{border-color:var(--oktx);color:var(--oktx)}
+button.danger{border-color:var(--errtx);color:var(--errtx)}
+button.sm{font-size:12px;padding:3px 10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row.end{justify-content:flex-end}
+.check{display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0}
+.note{font-size:12px;color:var(--text2);line-height:1.6}
+.logbox{background:var(--surface2);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:12px;line-height:1.9;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+.logline{padding:0 4px;border-radius:3px}
+.lvl-alert{color:var(--warntx)}
+.lvl-fail{color:var(--errtx)}
+.lvl-boot{color:var(--infotx)}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;background:var(--warnbg);color:var(--warntx)}
+.tag.ok{background:var(--okbg);color:var(--oktx)}
+.tag.err{background:var(--errbg);color:var(--errtx)}
+.statusline{font-size:12px;color:var(--text2);margin-top:10px;min-height:18px}
+.statusline.ok{color:var(--oktx)}
+.statusline.err{color:var(--errtx)}
+#drop{border:1px dashed var(--border2);border-radius:8px;padding:22px;text-align:center;font-size:13px;color:var(--text2);cursor:pointer}
+#drop.over{background:var(--surface2)}
+#result-img{max-width:100%;border-radius:8px;margin-top:10px;display:none}
+.item{font-size:13px;padding:4px 0;border-bottom:0.5px solid var(--border)}
+.item:last-child{border-bottom:none}
+.rec{cursor:pointer;border-radius:6px;padding:5px 8px !important}
+.rec:hover{background:var(--surface2)}
+.tokenbar{display:none;gap:8px;align-items:center;margin-bottom:12px;background:var(--warnbg);color:var(--warntx);padding:8px 12px;border-radius:8px;font-size:13px}
+.tokenbar input{flex:1}
+.kv{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:0.5px solid var(--border)}
+.kv:last-child{border-bottom:none}
+.kv .k{color:var(--text2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>m20-ai-console</h1>
+      <div class="sub">GOS 10.21.31.104:5050 · 控制 m20-ai-detect 采样服务</div>
+    </div>
+    <div class="row">
+      <button class="sm" id="theme-btn" title="切换主题">主题</button>
+      <span class="pill" id="svc-pill"><span class="dot"></span><span id="svc-text">检测中…</span></span>
+    </div>
+  </header>
+
+  <div class="tokenbar" id="tokenbar">
+    <span>需要访问 token：</span>
+    <input type="text" id="token-input" placeholder="输入 M20AIC_TOKEN">
+    <button class="sm" id="token-save">保存</button>
+  </div>
+
+  <div class="cards">
+    <div class="metric"><div class="k">今日帧数</div><div class="v" id="m-frames">–</div></div>
+    <div class="metric"><div class="k">告警次数</div><div class="v" id="m-alerts">–</div></div>
+    <div class="metric"><div class="k">AI 平均耗时</div><div class="v" id="m-ai">–</div></div>
+    <div class="metric"><div class="k">磁盘余量</div><div class="v" id="m-disk">–</div></div>
+    <div class="metric"><div class="k">journal 占用</div><div class="v" id="m-journal">–</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>服务控制</h2>
+      <div class="row">
+        <button onclick="svc('start')">启动</button>
+        <button onclick="svc('stop')">停止</button>
+        <button onclick="svc('restart')">重启</button>
+      </div>
+      <div class="note" style="margin-top:10px">systemd m20-ai-detect · 经 sudoers 白名单执行（仅放行 start/stop/restart）</div>
+      <div class="statusline" id="svc-status"></div>
+    </div>
+
+    <div class="card">
+      <h2>最近检测 <span class="note" id="recent-sub">点任一帧看完整响应</span></h2>
+      <div id="recent"><div class="note">加载中…</div></div>
+      <div class="statusline" id="recent-status"></div>
+    </div>
+
+    <div class="card wide">
+      <h2>检测配置</h2>
+      <div class="grid">
+        <div>
+          <label class="f" for="cap">检测接口（AI 服务 33 项能力）</label>
+          <select id="cap"></select>
+        </div>
+        <div>
+          <label class="f">检测方式</label>
+          <label class="check"><input type="radio" name="mode" value="stream" checked onchange="setMode()"> 视频流抽帧（服务常驻，1fps 落库）</label>
+          <label class="check"><input type="radio" name="mode" value="single" onchange="setMode()"> 单帧检测（上传一张图，即返即显，可勾选留存证据）</label>
+        </div>
+        <div>
+          <label class="f" for="obj">obj_thresh：<span id="obj-v">0.30</span></label>
+          <input type="range" id="obj" min="0.05" max="0.9" step="0.05" value="0.3" oninput="document.getElementById('obj-v').textContent=this.value">
+        </div>
+        <div>
+          <label class="f" for="nms">nms_thresh：<span id="nms-v">0.45</span></label>
+          <input type="range" id="nms" min="0.1" max="0.9" step="0.05" value="0.45" oninput="document.getElementById('nms-v').textContent=this.value">
+        </div>
+      </div>
+      <div class="row end" style="margin-top:14px">
+        <span class="note">写入 m20-ai-detect.env 后自动重启，与 CLI 配置同源</span>
+        <button class="primary" onclick="saveConfig()">保存并重启服务</button>
+      </div>
+      <div class="statusline" id="cfg-status"></div>
+    </div>
+
+    <div class="card">
+      <h2>相机与采集</h2>
+      <label class="check"><input type="checkbox" id="en-f" checked> 前视 video1（rtsp://10.21.31.103:8554/video1）</label>
+      <label class="check"><input type="checkbox" id="en-b"> 后视 video2</label>
+      <label class="f" for="fps">抽帧速率（fps）</label>
+      <input type="number" id="fps" value="1" min="0.2" max="5" step="0.5" style="width:100px">
+      <div class="row end" style="margin-top:12px"><button onclick="saveCameras()">保存并重启</button></div>
+      <div class="statusline" id="cam-status"></div>
+    </div>
+
+    <div class="card">
+      <h2>告警规则</h2>
+      <label class="f" for="labels">标签（逗号分隔）</label>
+      <input type="text" id="labels" value="person,fire,smoke">
+      <label class="f" for="score">触发阈值：<span id="score-v">0.60</span></label>
+      <input type="range" id="score" min="0.1" max="0.95" step="0.05" value="0.6" oninput="document.getElementById('score-v').textContent=this.value">
+      <div class="row end" style="margin-top:12px"><button onclick="saveAlerts()">保存并重启</button></div>
+      <div class="statusline" id="alert-status"></div>
+    </div>
+
+    <div class="card wide" id="single-card" style="display:none">
+      <h2>单帧检测</h2>
+      <div id="drop">点击选择或拖入一张图片（jpg/png，≤20MB）</div>
+      <input type="file" id="file" accept="image/*" style="display:none">
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="detect-btn" disabled>开始检测</button>
+        <label class="check" style="margin:0"><input type="checkbox" id="single-save"> 保存这一帧（图 + 响应落 saved/console/）</label>
+        <span class="note">直接调 AI 接口，结果即返即显；勾选保存后同时留存证据</span>
+      </div>
+      <div class="statusline" id="detect-status"></div>
+      <img id="result-img" alt="检测结果">
+      <div id="result-items"></div>
+      <label class="f">原始响应 JSON（AI 接口实际返回，已剥离 base64 大图字段）</label>
+      <div class="logbox" id="result-raw" style="max-height:220px"></div>
+    </div>
+
+    <div class="card wide" id="detail-card" style="display:none">
+      <h2>响应详情 <span class="row"><button class="sm" onclick="closeDetail()">关闭</button></span></h2>
+      <div class="grid">
+        <div>
+          <div class="kv"><span class="k">帧</span><span id="d-frame" style="word-break:break-all"></span></div>
+          <div class="kv"><span class="k">相机 / 时间</span><span id="d-cam"></span></div>
+          <div class="kv"><span class="k">耗时</span><span id="d-ms"></span></div>
+          <div class="kv"><span class="k">来源</span><span id="d-source"></span></div>
+          <label class="f">解析结果（检出了什么）</label>
+          <div id="d-summary"></div>
+          <div class="row" style="margin-top:12px">
+            <button class="sm" id="d-redetect" onclick="redetectCurrent()">重新检测（调 AI 服务）</button>
+            <span class="note">用 raw/ 环形缓冲里的原帧重调，约 0.25s；未留存时才需要</span>
+          </div>
+          <div class="statusline" id="d-status"></div>
+        </div>
+        <div><img id="d-img" alt="检测结果图" style="display:none;max-width:100%;border-radius:8px"></div>
+      </div>
+      <label class="f">原始响应 JSON（AI 接口实际返回，已剥离 base64 大图字段）</label>
+      <div class="logbox" id="d-raw" style="max-height:280px"></div>
+    </div>
+
+    <div class="card wide">
+      <h2>运行日志
+        <span class="row">
+          <button class="sm" onclick="setLogLevel('all')">全部</button>
+          <button class="sm" onclick="setLogLevel('alert')">告警</button>
+          <button class="sm" onclick="setLogLevel('fail')">失败</button>
+          <button class="sm" onclick="setLogLevel('boot')">启动</button>
+          <input type="text" id="log-q" placeholder="搜索关键字" style="width:140px" oninput="loadLogs()">
+          <label class="check" style="margin:0"><input type="checkbox" id="auto-refresh" checked> 自动刷新</label>
+        </span>
+      </h2>
+      <div class="logbox" id="logbox"><div class="note">加载中…</div></div>
+      <div class="note" style="margin-top:8px">来源 journalctl -u m20-ai-detect（时间戳为本机时钟，钉在 2024 属正常，权威时间以 JSONL 的 ts 为准）</div>
+    </div>
+
+    <div class="card wide">
+      <h2>日志与数据留存策略</h2>
+      <div class="grid">
+        <div>
+          <label class="f" for="vac-size">journal 立即清理 — 空间上限（如 200M / 1G）</label>
+          <div class="row"><input type="text" id="vac-size" placeholder="200M" style="flex:1"><button onclick="vacuum('size')">执行</button></div>
+          <label class="f" for="vac-time">或按时间清理（如 7d / 24h）</label>
+          <div class="row"><input type="text" id="vac-time" placeholder="7d" style="flex:1"><button onclick="vacuum('time')">执行</button></div>
+        </div>
+        <div>
+          <label class="f" for="max-use">journald 空间上限（SystemMaxUse）</label>
+          <input type="text" id="max-use" placeholder="200M">
+          <label class="f" for="max-sec">journald 保留时长（MaxRetentionSec，如 7d）</label>
+          <input type="text" id="max-sec" placeholder="留空=不限">
+          <div class="row end" style="margin-top:10px"><button onclick="saveJournald()">保存并重启 journald</button></div>
+        </div>
+        <div>
+          <label class="f" for="ring-mb">raw/ 环形缓冲上限（MB，env 级）</label>
+          <input type="text" id="ring-mb" value="200">
+          <label class="f" for="keep-days">results/ 保留天数（0 = 永不删，env 级）</label>
+          <input type="text" id="keep-days" value="0">
+          <label class="f" for="save-mode">响应留存条件（SAVE_MODE，env 级）</label>
+          <select id="save-mode">
+            <option value="off">off — 只写 JSONL，不存图/响应</option>
+            <option value="alert">alert — 命中告警规则时存</option>
+            <option value="any">any — 检出任意目标时存</option>
+            <option value="all">all — 每帧都存</option>
+          </select>
+          <div class="note" style="margin:6px 0">触发时成对落 saved/&lt;cam&gt;/：标注结果图 .jpg + 原始响应 .json（已剥离 base64 大图）。1fps 磁盘参考：all ≈100MB/天、any ≈20MB/天、alert 通常 KB 级。</div>
+          <div class="row end" style="margin-top:10px">
+            <button onclick="saveEnvRetention()">保存 ring/保留天数（重启后生效）</button>
+            <button onclick="saveSaveMode()">保存留存条件（重启后生效）</button>
+          </div>
+        </div>
+        <div>
+          <label class="f">清空积压帧（spool/，待推理的陈旧帧）</label>
+          <div class="note" style="margin:2px 0 8px">AI 服务劣化后 spool/ 可能积压大量陈旧帧。此操作<b>停采集 → 删除 spool/ 内全部待推理帧 → 重启采集</b>，之后以实时（1fps）为准。raw/ 环形缓冲与 results/ 记录不动。</div>
+          <div class="row end"><button class="danger" onclick="clearSpool()">清空积压帧</button></div>
+        </div>
+        <div>
+          <label class="f" for="lr-rotate">文件日志轮转份数（logrotate rotate）</label>
+          <input type="text" id="lr-rotate" value="7">
+          <div class="row end" style="margin-top:10px"><button onclick="saveLogrotate()">保存</button></div>
+        </div>
+      </div>
+      <div class="statusline" id="ret-status"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+var TOKEN_KEY = "m20aic-token";
+function token(){ return localStorage.getItem(TOKEN_KEY) || ""; }
+function api(path, opts){
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  if (token()) opts.headers["X-Console-Token"] = token();
+  return fetch(path, opts).then(function(r){
+    if (r.status === 401){
+      document.getElementById("tokenbar").style.display = "flex";
+      throw new Error("token 不符");
+    }
+    return r.json();
+  });
+}
+function jpost(path, body){
+  return api(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})});
+}
+function el(id){ return document.getElementById(id); }
+function setText(id, t){ el(id).textContent = t; }
+function statusLine(id, msg, ok){
+  var e = el(id);
+  e.textContent = msg || "";
+  e.className = "statusline" + (ok === true ? " ok" : ok === false ? " err" : "");
+}
+function esc(s){ var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+
+/* ---------- 主题 ---------- */
+(function(){
+  var saved = localStorage.getItem("m20aic-theme");
+  if (saved) document.documentElement.setAttribute("data-theme", saved);
+  el("theme-btn").onclick = function(){
+    var cur = document.documentElement.getAttribute("data-theme");
+    var dark = cur ? cur === "dark" : matchMedia("(prefers-color-scheme:dark)").matches;
+    var next = dark ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("m20aic-theme", next);
+  };
+})();
+el("token-save").onclick = function(){
+  localStorage.setItem(TOKEN_KEY, el("token-input").value.trim());
+  document.getElementById("tokenbar").style.display = "none";
+  refreshAll();
+};
+
+/* ---------- 状态 ---------- */
+var aiSamples = [];
+function loadStatus(){
+  api("/api/status").then(function(d){
+    var on = d.service === "active";
+    var pill = el("svc-pill");
+    pill.className = "pill" + (on ? " ok" : (d.service === "unknown" ? "" : " err"));
+    setText("svc-text", d.service === "active" ? "服务运行中" : d.service === "unknown" ? "状态未知" : "服务已停止");
+    setText("m-frames", d.frames_today == null ? "–" : d.frames_today);
+    setText("m-alerts", d.alerts_today == null ? "–" : d.alerts_today);
+    setText("m-disk", d.disk && d.disk.disk_free_gb != null ? d.disk.disk_free_gb + " GB" : "–");
+    setText("m-journal", d.journal_usage || "–");
+    if (d.clock_offset_sec != null) setText("m-ai", Math.round(d.clock_offset_sec) + " s 偏移");
+  }).catch(function(e){ setText("svc-text", "连接失败"); });
+}
+function svc(action){
+  jpost("/api/service", {action: action}).then(function(d){
+    statusLine("svc-status", (d.detail || "已执行 " + action), true);
+    loadStatus();
+  }).catch(function(e){ statusLine("svc-status", String(e), false); });
+}
+
+/* ---------- 配置 ---------- */
+var CFG = null;
+function loadConfig(){
+  api("/api/config").then(function(d){
+    CFG = d;
+    var sel = el("cap");
+    sel.innerHTML = "";
+    if (!d.capabilities.length){
+      var o = document.createElement("option");
+      o.textContent = d.capabilities_error ? ("能力列表拉取失败：" + d.capabilities_error) : "（无能力列表）";
+      sel.appendChild(o);
+    } else {
+      d.capabilities.forEach(function(c){
+        var o = document.createElement("option");
+        o.value = c.id;
+        o.textContent = c.title + (c.ready ? "" : "（未就绪）");
+        if (c.id === d.effective.cap_id) o.selected = true;
+        sel.appendChild(o);
+      });
+    }
+    el("obj").value = d.effective.params.obj_thresh != null ? d.effective.params.obj_thresh : 0.3;
+    el("obj-v").textContent = el("obj").value;
+    el("nms").value = d.effective.params.nms_thresh != null ? d.effective.params.nms_thresh : 0.45;
+    el("nms-v").textContent = el("nms").value;
+    el("fps").value = d.effective.fps;
+    var names = d.effective.cameras.map(function(c){ return c.name; });
+    el("en-f").checked = names.indexOf("front") >= 0;
+    el("en-b").checked = names.indexOf("back") >= 0;
+    el("labels").value = d.effective.alert_labels.join(",");
+    el("score").value = d.effective.alert_score;
+    el("score-v").textContent = d.effective.alert_score;
+    loadRecent();
+  }).catch(function(e){ /* 401 等由全局处理 */ });
+}
+function collectParams(){
+  var p = Object.assign({}, CFG.effective.params);
+  p.obj_thresh = parseFloat(el("obj").value);
+  p.nms_thresh = parseFloat(el("nms").value);
+  return JSON.stringify(p);
+}
+function saveConfig(){
+  var updates = {M20AI_CAP_ID: el("cap").value, M20AI_PARAMS_JSON: collectParams()};
+  jpost("/api/config", {updates: updates}).then(function(d){
+    statusLine("cfg-status", d.detail, true); loadConfig(); loadStatus();
+  }).catch(function(e){ statusLine("cfg-status", String(e), false); });
+}
+function saveCameras(){
+  var updates = {
+    M20AI_ENABLE_F: el("en-f").checked ? "1" : "0",
+    M20AI_ENABLE_B: el("en-b").checked ? "1" : "0",
+    M20AI_FPS: el("fps").value
+  };
+  jpost("/api/config", {updates: updates}).then(function(d){
+    statusLine("cam-status", d.detail, true); loadConfig(); loadStatus();
+  }).catch(function(e){ statusLine("cam-status", String(e), false); });
+}
+function saveAlerts(){
+  var updates = {M20AI_ALERT_LABELS: el("labels").value, M20AI_ALERT_SCORE: el("score").value};
+  jpost("/api/config", {updates: updates}).then(function(d){
+    statusLine("alert-status", d.detail, true); loadConfig();
+  }).catch(function(e){ statusLine("alert-status", String(e), false); });
+}
+
+/* ---------- 最近检测（真实 JSONL 记录，ADR-006） ---------- */
+function fmtTs(ts){ return (ts || "").replace("T", " ").slice(0, 19); }
+function loadRecent(){
+  api("/api/recent?n=12").then(function(d){
+    var box = el("recent");
+    box.innerHTML = "";
+    setText("recent-sub", d.save_mode && d.save_mode !== "off"
+      ? ("留存条件 " + d.save_mode + " · 点任一帧看完整响应")
+      : "留存关闭（SAVE_MODE=off）· 点帧可重新检测");
+    if (!d.records.length){ box.innerHTML = '<div class="note">今日暂无检测记录</div>'; return; }
+    d.records.forEach(function(r){
+      var div = document.createElement("div");
+      div.className = "item rec";
+      var ts = fmtTs(r.ts).slice(11);
+      var n = r.n_items || 0;
+      var parts = [];
+      (r.items || []).slice(0, 4).forEach(function(it){
+        parts.push(it.label + " " + (it.score != null ? Number(it.score).toFixed(2) : "?"));
+      });
+      if (n > 4) parts.push("等 " + n + " 个");
+      var line = ts + " · " + (r.cam || "") + " · " +
+        (n > 0 ? ("检出 " + n + " 个目标：" + parts.join("、")) : "未检出任何目标") +
+        " · " + Math.round(r.e2e_ms || 0) + "ms";
+      if (r.alert) line += " · 告警";
+      if (r.saved_image) line += " · 已留存";
+      div.textContent = line;
+      div.title = "点击查看该帧的完整响应";
+      div.onclick = function(){ openDetail(r); };
+      box.appendChild(div);
+    });
+  }).catch(function(){});
+}
+
+/* ---------- 响应详情 ---------- */
+var currentRec = null;
+function openDetail(r){
+  currentRec = r;
+  el("detail-card").style.display = "block";
+  el("detail-card").scrollIntoView({behavior:"smooth", block:"start"});
+  setText("d-frame", r.frame || "");
+  setText("d-cam", (r.cam || "") + " · " + fmtTs(r.ts));
+  setText("d-ms", "端到端 " + Math.round(r.e2e_ms || 0) + "ms" +
+    (r.elapsed_ms != null ? " · 服务端 " + Math.round(r.elapsed_ms) + "ms" : ""));
+  loadDetail(false);
+}
+function loadDetail(redetect){
+  var r = currentRec;
+  if (!r) return;
+  statusLine("d-status", redetect ? "重新检测中（调 AI 服务）…" : "加载中…");
+  api("/api/response?frame=" + encodeURIComponent(r.frame) +
+      "&cam=" + encodeURIComponent(r.cam || "front") +
+      "&redetect=" + (redetect ? "1" : "0")).then(function(d){
+    renderDetail(d);
+    statusLine("d-status", d.source === "saved" ? "已留存的响应（saved/）" : "实时重新检测的结果", true);
+  }).catch(function(e){ statusLine("d-status", String(e), false); });
+}
+function renderDetail(d){
+  setText("d-source", d.source === "saved" ? "已留存（saved/ 直读）" : "重新检测（实时调 AI 服务）");
+  var img = el("d-img");
+  if (d.result_image){ img.src = d.result_image; img.style.display = "block"; }
+  else { img.style.display = "none"; }
+  var items = d.items || (d.raw && d.raw.results && d.raw.results.items) || [];
+  var box = el("d-summary");
+  box.innerHTML = "";
+  if (!items.length){
+    var n = document.createElement("div");
+    n.className = "note";
+    n.textContent = "未检出任何目标";
+    box.appendChild(n);
+  } else {
+    items.forEach(function(it){
+      var div = document.createElement("div");
+      div.className = "item";
+      div.textContent = (it.label || "?") + " · score " + (it.score != null ? Number(it.score).toFixed(2) : "?");
+      box.appendChild(div);
+    });
+  }
+  el("d-raw").textContent = JSON.stringify(d.raw || {}, null, 2);
+}
+function redetectCurrent(){ loadDetail(true); }
+function closeDetail(){
+  el("detail-card").style.display = "none";
+  currentRec = null;
+}
+
+/* ---------- 单帧检测 ---------- */
+function setMode(){
+  var single = document.querySelector('input[name=mode]:checked').value === "single";
+  el("single-card").style.display = single ? "block" : "none";
+}
+var pickedFile = null;
+(function(){
+  var drop = el("drop"), file = el("file");
+  drop.onclick = function(){ file.click(); };
+  file.onchange = function(){ if (file.files[0]) pick(file.files[0]); };
+  drop.ondragover = function(e){ e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = function(){ drop.classList.remove("over"); };
+  drop.ondrop = function(e){
+    e.preventDefault(); drop.classList.remove("over");
+    if (e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]);
+  };
+  function pick(f){
+    pickedFile = f;
+    drop.textContent = "已选：" + f.name + "（" + Math.round(f.size / 1024) + " KB）";
+    el("detect-btn").disabled = false;
+    el("result-img").style.display = "none";
+    el("result-items").innerHTML = "";
+    el("result-raw").textContent = "";
+  }
+  el("detect-btn").onclick = function(){
+    if (!pickedFile) return;
+    statusLine("detect-status", "检测中…");
+    var cap = CFG ? encodeURIComponent(el("cap").value) : "";
+    var save = el("single-save").checked ? "1" : "0";
+    fetch("/api/detect?cap=" + cap + "&include_image=1&save=" + save, {
+      method: "POST",
+      headers: token() ? {"X-Console-Token": token()} : {},
+      body: pickedFile
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (!d.ok){ statusLine("detect-status", d.error || "检测失败", false); return; }
+      var msg = "完成：" + d.n_items + " 个目标 · 服务端 " + Math.round(d.elapsed_ms || 0) + "ms · 端到端 " + Math.round(d.e2e_ms || 0) + "ms";
+      if (d.saved_image) msg += " · 已留存 " + d.saved_image;
+      statusLine("detect-status", msg, true);
+      var img = el("result-img");
+      if (d.result_image){ img.src = d.result_image; img.style.display = "block"; }
+      var box = el("result-items");
+      box.innerHTML = "";
+      (d.items || []).forEach(function(it){
+        var div = document.createElement("div");
+        div.className = "item";
+        div.textContent = it.label + " · score " + (it.score != null ? Number(it.score).toFixed(2) : "?");
+        box.appendChild(div);
+      });
+      el("result-raw").textContent = JSON.stringify(d.raw_response || {}, null, 2);
+    }).catch(function(e){ statusLine("detect-status", String(e), false); });
+  };
+})();
+
+/* ---------- 日志 ---------- */
+var logLevel = "all";
+function setLogLevel(lv){ logLevel = lv; loadLogs(); }
+function loadLogs(){
+  var q = encodeURIComponent(el("log-q").value.trim());
+  api("/api/logs?level=" + logLevel + "&q=" + q + "&n=300").then(function(d){
+    var box = el("logbox");
+    box.innerHTML = "";
+    if (!d.lines.length){ box.innerHTML = '<div class="note">无匹配日志</div>'; return; }
+    var frag = document.createDocumentFragment();
+    d.lines.forEach(function(l){
+      var div = document.createElement("div");
+      div.className = "logline lvl-" + l.level;
+      div.textContent = l.raw;
+      frag.appendChild(div);
+    });
+    box.appendChild(frag);
+    box.scrollTop = box.scrollHeight;
+  }).catch(function(){});
+}
+
+/* ---------- 留存 ---------- */
+function loadRetention(){
+  api("/api/retention").then(function(d){
+    el("ring-mb").value = d.ring_max_mb;
+    el("keep-days").value = d.results_keep_days;
+    el("save-mode").value = d.save_mode || "off";
+    if (d.journald_managed.SystemMaxUse) el("max-use").value = d.journald_managed.SystemMaxUse;
+    if (d.journald_managed.MaxRetentionSec) el("max-sec").value = d.journald_managed.MaxRetentionSec;
+    if (d.logrotate_rotate != null) el("lr-rotate").value = d.logrotate_rotate;
+  }).catch(function(){});
+}
+function saveRetention(body, okMsg){
+  jpost("/api/retention", body).then(function(d){
+    statusLine("ret-status", (d.notes || [okMsg]).join("；"), true);
+    loadRetention();
+  }).catch(function(e){ statusLine("ret-status", String(e), false); });
+}
+function vacuum(kind){
+  var body = {journal_vacuum: {}};
+  body.journal_vacuum[kind] = el(kind === "size" ? "vac-size" : "vac-time").value.trim();
+  saveRetention(body);
+}
+function saveJournald(){
+  saveRetention({journald_limits: {
+    SystemMaxUse: el("max-use").value.trim(),
+    MaxRetentionSec: el("max-sec").value.trim()
+  }});
+}
+function saveEnvRetention(){
+  saveRetention({ring_max_mb: el("ring-mb").value.trim(), results_keep_days: el("keep-days").value.trim()});
+}
+function saveSaveMode(){
+  saveRetention({save_mode: el("save-mode").value});
+}
+function saveLogrotate(){
+  saveRetention({logrotate_rotate: el("lr-rotate").value.trim()});
+}
+function clearSpool(){
+  if (!confirm("确定清空 spool/ 全部待推理帧？\n\n将：停采集 → 删除积压帧 → 重启采集（以实时 1fps 为主）。\nraw/ 环形缓冲与 results/ 检测记录不受影响。")) return;
+  statusLine("ret-status", "正在清空积压并重启采样器…");
+  saveRetention({spool_clear: true});
+}
+
+/* ---------- 轮询 ---------- */
+function refreshAll(){ loadStatus(); loadConfig(); loadRetention(); loadLogs(); loadRecent(); }
+refreshAll();
+setInterval(function(){ loadStatus(); loadRecent(); }, 5000);
+setInterval(function(){ if (el("auto-refresh").checked) loadLogs(); }, 4000);
+</script>
+</body>
+</html>

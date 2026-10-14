@@ -1,0 +1,28 @@
+[Unit]
+Description=m20-ai-console: web UI for m20-ai-detect sampler
+Documentation=file:/home/djw/m20-ai-detect/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# GOS 无 djw 账户；登录账户是 user（/home/djw 靠 ACL 授权），与采样器一致
+User=user
+Group=user
+WorkingDirectory=/home/djw/m20-ai-detect
+Environment=PYTHONPATH=/home/djw/m20-ai-detect/src:/home/djw/m20-ai-detect
+EnvironmentFile=/home/djw/m20-ai-detect/m20-ai-console.env
+ExecStart=/usr/bin/python3 -m webconsole
+Restart=always
+RestartSec=5
+# 资源限制同采样器：只用小核 0-3（大核 4-7 被厂商 isolcpus 隔离），内存封顶 256M
+CPUAffinity=0-3
+MemoryMax=256M
+ReadWritePaths=/home/djw/m20-ai-detect
+# 刻意不设 NoNewPrivileges/ProtectSystem/ProtectHome 等硬化（与采样器 unit 的差异）：
+# 本服务必须经 sudo 调 root helper 才能做写操作，NoNewPrivileges=true 会直接禁掉
+# sudo 的 setuid，写功能全灭。补偿：sudoers 白名单收窄到 9 条完整命令行
+# （/etc/sudoers.d/m20-ai-console，见 README §5.1），helper 内二次校验参数。
+
+[Install]
+WantedBy=multi-user.target

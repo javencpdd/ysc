@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+# ============================================================
+# aiDetect —— m20-ai-detect 的终端运维命令（在 GOS 10.21.31.104 上以 user 执行）
+#
+# 提权模型（与 ADR-005 / ADR-007 一致）：
+#   * 服务动作（启停/重启）一律经 sudoers 精确白名单调 root helper
+#     （NOPASSWD、无自由参数），本脚本不引入任何其它提权路径；
+#   * 清 spool/ 积压帧不提权——文件归 user（与网页端「清空积压帧」同款操作）；
+#   * reset = 停采样器 → 删 spool/*.jpg → 起采样器。
+#
+# 装入（console-bootstrap.sh 会自动执行；手动亦可）：
+#   sudo install -m 755 deploy/aiDetect /usr/local/bin/aiDetect
+#   sudo ln -sf /usr/local/bin/aiDetect /usr/local/bin/aidetect
+# ============================================================
+set -euo pipefail
+
+ENV_FILE_DEFAULT=/home/djw/m20-ai-detect/m20-ai-detect.env
+BASE="${M20AI_BASE_DIR:-}"
+if [[ -z "$BASE" && -f "$ENV_FILE_DEFAULT" ]]; then
+  BASE="$(sed -n 's/^M20AI_BASE_DIR=//p' "$ENV_FILE_DEFAULT" | head -1 | tr -d '"' || true)"
+fi
+BASE="${BASE:-/home/djw/m20-ai-detect}"
+ENV_FILE="$BASE/m20-ai-detect.env"
+HELPER="${M20AI_HELPER:-/usr/local/sbin/m20-ai-console-helper}"
+SAMPLER=m20-ai-detect
+CONSOLE=m20-ai-console
+
+if [[ -z "$BASE" || "$BASE" == "/" ]]; then
+  echo "aiDetect: BASE 非法：'$BASE'" >&2
+  exit 1
+fi
+
+die() { printf 'aiDetect: %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- 基础件
+state_of() { systemctl is-active "$1" 2>/dev/null || true; }
+pid_of()   { systemctl show "$1" -p MainPID --value 2>/dev/null || true; }
+since_of() {
+  local s
+  s="$(systemctl show "$1" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+  printf '%s' "$s" | sed -E 's/^[A-Za-z]{3} //'
+}
+
+helper() { sudo -n "$HELPER" "$@"; }
+
+svc_action() {  # $1=sampler|console  $2=start|stop|restart
+  local target="$1" verb="$2" sub
+  if [[ "$target" == "console" ]]; then sub="console-$verb"; else sub="svc-$verb"; fi
+  helper "$sub"
+}
+
+act_hint() {  # $1=unit  $2=动作描述（服务动作失败时的可操作提示）
+  die "「$2」失败。检查：① /etc/sudoers.d/m20-ai-console 白名单是否含对应子命令（重跑 deploy/console-bootstrap.sh）；② journalctl -u $1 -n 20"
+}
+
+report_svc() {  # $1=unit  $2=标签
+  local st
+  st="$(state_of "$1")"
+  printf '  %s  %s' "$2" "$st"
+  if [[ "$st" == "active" ]]; then
+    printf '  PID %s  since %s' "$(pid_of "$1")" "$(since_of "$1")"
+  fi
+  echo
+}
+
+last_record() {  # 今日 JSONL 最后一条，格式化一行；无记录/解析失败返回非 0
+  local f="$BASE/results/$(date +%Y%m%d).jsonl"
+  [[ -f "$f" ]] || return 1
+  tail -n 1 "$f" | python3 -c '
+import json, sys
+
+def fmt(it):
+    try:
+        s = "%.2f" % float(it.get("score") or 0)
+    except Exception:
+        s = "-"
+    return "%s %s" % (it.get("label", "?"), s)
+
+try:
+    r = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    sys.exit(1)
+items = r.get("items") or []
+top = "，".join(fmt(i) for i in items[:3])
+flags = []
+if r.get("alert"):
+    flags.append("ALERT")
+if r.get("saved_image") or r.get("resp_path"):
+    flags.append("已留存")
+print("  %s  cam=%s  检出 %s 个%s%s" % (
+    r.get("ts", "-"), r.get("cam", "-"), r.get("n_items", len(items)),
+    ("：" + top) if top else "",
+    ("  [" + "/".join(flags) + "]") if flags else "",
+))
+' 2>/dev/null
+}
+
+# ---------------------------------------------------------------- 子命令
+cmd_up() {
+  local all=0 a
+  for a in "$@"; do
+    case "$a" in
+      --all|-a) all=1 ;;
+      *) die "up 未知参数：$a（用法：aiDetect up [--all]）" ;;
+    esac
+  done
+
+  if [[ "$(state_of "$SAMPLER")" == "active" ]]; then
+    echo "采样器 $SAMPLER 已是 active（PID $(pid_of "$SAMPLER")），无需操作"
+  else
+    echo "启动采样器 $SAMPLER …"
+    svc_action sampler start || act_hint "$SAMPLER" "启动采样器"
+    sleep 1
+    echo "  → $(state_of "$SAMPLER")（PID $(pid_of "$SAMPLER")）"
+  fi
+
+  if [[ $all -eq 1 ]]; then
+    if [[ "$(state_of "$CONSOLE")" == "active" ]]; then
+      echo "控制台 $CONSOLE 已是 active（PID $(pid_of "$CONSOLE")），无需操作"
+    else
+      echo "启动控制台 $CONSOLE …"
+      svc_action console start || act_hint "$CONSOLE" "启动控制台"
+      sleep 1
+      echo "  → $(state_of "$CONSOLE")（PID $(pid_of "$CONSOLE")）"
+    fi
+  fi
+}
+
+cmd_down() {
+  local all=0 a
+  for a in "$@"; do
+    case "$a" in
+      --all|-a) all=1 ;;
+      *) die "down 未知参数：$a（用法：aiDetect down [--all]）" ;;
+    esac
+  done
+
+  if [[ "$(state_of "$SAMPLER")" != "active" ]]; then
+    echo "采样器 $SAMPLER 已是 inactive，无需操作"
+  else
+    echo "停止采样器 $SAMPLER …"
+    svc_action sampler stop || act_hint "$SAMPLER" "停止采样器"
+    echo "  → $(state_of "$SAMPLER")"
+  fi
+
+  if [[ $all -eq 1 ]]; then
+    if [[ "$(state_of "$CONSOLE")" != "active" ]]; then
+      echo "控制台 $CONSOLE 已是 inactive，无需操作"
+    else
+      echo "停止控制台 $CONSOLE …"
+      svc_action console stop || act_hint "$CONSOLE" "停止控制台"
+      echo "  → $(state_of "$CONSOLE")"
+    fi
+  else
+    echo "提示：控制台仍在运行（网页 http://<GOS-IP>:5050 可继续用）；要全停：aiDetect down --all"
+  fi
+}
+
+cmd_restart() {
+  local all=0 a
+  for a in "$@"; do
+    case "$a" in
+      --all|-a) all=1 ;;
+      *) die "restart 未知参数：$a（用法：aiDetect restart [--all]）" ;;
+    esac
+  done
+
+  echo "重启采样器 $SAMPLER …"
+  svc_action sampler restart || act_hint "$SAMPLER" "重启采样器"
+  sleep 1
+  echo "  → $(state_of "$SAMPLER")（PID $(pid_of "$SAMPLER")）"
+
+  if [[ $all -eq 1 ]]; then
+    echo "重启控制台 $CONSOLE …"
+    svc_action console restart || act_hint "$CONSOLE" "重启控制台"
+    sleep 1
+    echo "  → $(state_of "$CONSOLE")（PID $(pid_of "$CONSOLE")）"
+  fi
+}
+
+cmd_reset() {
+  [[ $# -eq 0 ]] || die "reset 不接受参数（用法：aiDetect reset）"
+  [[ -d "$BASE/spool" ]] || die "找不到 $BASE/spool（BASE 是否正确？）"
+
+  echo "aiDetect reset —— 清空积压帧，以实时为准（只动 spool/）"
+
+  echo "  [1/3] 停止采样器 $SAMPLER …"
+  if ! svc_action sampler stop; then
+    die "停采样器失败，未清空任何帧（检查 sudoers 白名单：重跑 deploy/console-bootstrap.sh）"
+  fi
+
+  echo "  [2/3] 清空 spool/ 待推理帧 …"
+  local frames bytes mb left
+  frames="$(find "$BASE/spool" -name '*.jpg' -type f 2>/dev/null | wc -l | tr -d ' ' || true)"
+  bytes="$(find "$BASE/spool" -name '*.jpg' -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}' || true)"
+  find "$BASE/spool" -name '*.jpg' -type f -delete 2>/dev/null || echo "        警告：部分帧删除失败"
+  mb="$(awk -v b="$bytes" 'BEGIN{printf "%.1f", b/1048576}')"
+  left="$(find "$BASE/spool" -name '*.jpg' -type f 2>/dev/null | wc -l | tr -d ' ' || true)"
+  if [[ "$left" != "0" && -n "$left" ]]; then
+    echo "        已删 $frames 帧（$mb MB），仍剩 $left 帧（删除失败？）"
+  else
+    echo "        已删 $frames 帧（$mb MB）"
+  fi
+
+  echo "  [3/3] 启动采样器 $SAMPLER …"
+  if ! svc_action sampler start; then
+    die "清空已完成，但重启采样器失败！手动检查：journalctl -u $SAMPLER -n 30"
+  fi
+  sleep 1
+  echo "  → $(state_of "$SAMPLER")（PID $(pid_of "$SAMPLER")）"
+  echo "完成：之后按实时 1 fps 消费；raw/ 环形缓冲与 results/ 记录未动。"
+}
+
+cmd_status() {
+  [[ $# -eq 0 ]] || die "status 不接受参数"
+  local nframes oldest age_min f nrec nsaved port ip
+
+  echo "M20 AI 检测 —— 状态总览"
+  echo "  主机 $(hostname 2>/dev/null || echo '?')    工程 $BASE"
+  echo
+
+  echo "服务"
+  report_svc "$SAMPLER" "采样器"
+  report_svc "$CONSOLE" "控制台"
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  port="$(sed -n 's/^M20AIC_PORT=//p' "$BASE/m20-ai-console.env" 2>/dev/null | head -1 || true)"
+  port="${port:-5050}"
+  if [[ -n "${ip:-}" ]]; then
+    echo "        控制台地址 http://$ip:$port（机器人内网）"
+  fi
+  echo
+
+  echo "版本"
+  if PYTHONPATH="$BASE/src:$BASE" python3 -c 'import m20_ai_detect, webconsole' 2>/dev/null; then
+    PYTHONPATH="$BASE/src:$BASE" python3 -c 'import m20_ai_detect, webconsole; print("  采样器 v%s / 控制台 v%s" % (m20_ai_detect.__version__, webconsole.__version__))' \
+      || echo "  （版本读取失败）"
+  else
+    echo "  （python 导入失败，检查 $BASE/src 与 $BASE/webconsole）"
+  fi
+  echo
+
+  echo "积压与存储"
+  nframes="$(find "$BASE/spool" -name '*.jpg' -type f 2>/dev/null | wc -l | tr -d ' ' || true)"
+  if [[ "$nframes" -gt 0 ]]; then
+    oldest="$(find "$BASE/spool" -name '*.jpg' -type f -printf '%T@\n' 2>/dev/null | sort -n | head -1 || true)"
+    if [[ -n "$oldest" ]]; then
+      age_min="$(awk -v a="$oldest" -v n="$(date +%s)" 'BEGIN{printf "%.1f", (n-a)/60}')"
+    else
+      age_min="?"
+    fi
+    echo "  spool/ 待推理   $nframes 帧（最早 $age_min 分钟前）"
+  else
+    echo "  spool/ 待推理   0 帧（实时跟上，无积压）"
+  fi
+  f="$BASE/results/$(date +%Y%m%d).jsonl"
+  nrec=0
+  if [[ -f "$f" ]]; then
+    nrec="$(wc -l < "$f" | tr -d ' ' || true)"
+  fi
+  echo "  results/ 今日   $nrec 条检测记录"
+  nsaved="$(find "$BASE/saved" -name '*.json' -type f 2>/dev/null | wc -l | tr -d ' ' || true)"
+  echo "  saved/ 留存     $nsaved 对（图+响应）"
+  df -h --output=target,pcent,avail "$BASE" 2>/dev/null | awk 'NR==2{printf "  磁盘 %s   已用 %s，可用 %s\n", $1, $2, $3}' || true
+  echo
+
+  echo "最近检测（今日最后一条）"
+  last_record || echo "  （暂无可显示的记录）"
+}
+
+cmd_log() {
+  local n=100 follow=0 grep="" unit="$SAMPLER" label="采样器"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -n) n="${2:-}"; [[ -n "$n" ]] || die "-n 需要一个数字"; shift 2 ;;
+      -f|--follow) follow=1; shift ;;
+      -g|--grep) grep="${2:-}"; [[ -n "$grep" ]] || die "-g 需要一个关键词"; shift 2 ;;
+      --console) unit="$CONSOLE"; label="控制台"; shift ;;
+      *) die "log 未知参数：$1（用法：aiDetect log [-n 行数] [-f] [-g 关键词] [--console]）" ;;
+    esac
+  done
+  [[ "$n" =~ ^[0-9]+$ ]] || die "-n 需要数字（当前：$n）"
+
+  local -a args=(-u "$unit" -n "$n" --no-pager -o short-iso)
+  if [[ $follow -eq 1 ]]; then
+    args+=(-f)
+  fi
+
+  if [[ -n "$grep" ]]; then
+    echo "== $label 日志（最近 $n 行内匹配 \"$grep\"）"
+    journalctl "${args[@]}" | grep -- "$grep" || echo "（无匹配）"
+  else
+    if [[ $follow -eq 1 ]]; then
+      echo "== $label 日志（最近 $n 行，跟踪中；Ctrl-C 退出）"
+    else
+      echo "== $label 日志（最近 $n 行）"
+    fi
+    journalctl "${args[@]}" || true
+  fi
+}
+
+cmd_doctor() {
+  [[ $# -eq 0 ]] || die "doctor 不接受参数"
+  [[ -f "$ENV_FILE" ]] || die "找不到 $ENV_FILE"
+  echo "跑 doctor 门禁（ffmpeg / AI 服务 / 时钟 / 视频源 / 磁盘）…"
+  ( cd "$BASE" && set -a && . "$ENV_FILE" && set +a \
+      && PYTHONPATH="$BASE/src" python3 -m m20_ai_detect doctor ) \
+    || die "doctor 未全绿（见上方各项）"
+}
+
+usage() {
+  cat <<'EOF'
+aiDetect —— m20-ai-detect 终端运维命令（GOS 10.21.31.104）
+
+用法：aiDetect <子命令> [参数]
+
+  up [--all]                 启动采样器（--all 连控制台一起）
+  down [--all]               停止采样器（--all 连控制台一起）
+  restart [--all]            重启采样器（--all 连控制台一起）
+  reset                      清空积压帧 + 重启采样器（实时优先；只动 spool/）
+  status                     状态总览（服务 / 版本 / 积压 / 磁盘 / 最近检测）
+  log [-n 行数] [-f] [-g 关键词] [--console]
+                             看运行日志（默认采样器；-f 跟踪、Ctrl-C 退出）
+  doctor                     上线前门禁检查（ffmpeg/AI 服务/时钟/视频源/磁盘）
+  help                       本帮助
+
+示例：
+  aiDetect status                巡检一眼看全
+  aiDetect down                  AI 服务劣化时先停下（机器人动作不受影响）
+  aiDetect reset                 积压太多：清空并以实时为准
+  aiDetect log -g FAIL -n 300    在最近 300 行里找失败记录
+
+说明：
+  * 服务动作经 sudoers 白名单（/usr/local/sbin/m20-ai-console-helper）免密执行；
+  * reset 与网页「清空积压帧」等价：停采样器 → 删 spool/*.jpg → 起采样器；
+    只清未推理的待办帧，raw/ 环形缓冲与 results/ 记录不动；
+  * down 默认只停采样器（控制台网页仍可用）；全停用 down --all。
+EOF
+}
+
+# ---------------------------------------------------------------- 入口
+CMD="${1:-help}"
+if [[ $# -gt 0 ]]; then shift; fi
+
+case "$CMD" in
+  up|down|restart|reset|status|st|log|logs|doctor)
+    [[ -d "$BASE" ]] || die "工程目录不存在：$BASE（可用 M20AI_BASE_DIR 覆盖）"
+    ;;
+esac
+
+case "$CMD" in
+  up)              cmd_up "$@" ;;
+  down)            cmd_down "$@" ;;
+  restart)         cmd_restart "$@" ;;
+  reset)           cmd_reset "$@" ;;
+  status|st)       cmd_status "$@" ;;
+  log|logs)        cmd_log "$@" ;;
+  doctor)          cmd_doctor "$@" ;;
+  help|-h|--help)  usage ;;
+  *)               usage >&2; echo "aiDetect: 未知子命令：$CMD" >&2; exit 2 ;;
+esac

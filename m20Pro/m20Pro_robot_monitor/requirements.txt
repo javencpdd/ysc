@@ -1,0 +1,19 @@
+# M20 Pro Web 控制台 后端依赖
+#
+# 目标平台：AOS 192.168.0.196（Ubuntu 20.04，实测 python3 = 3.8.10）
+# 版本下限按 Python 3.8 选取；依赖最小化（PLAN §13.3）——只有这 4 个包 + pytest。
+#
+# ⚠️ 196 上装依赖前必看（PLAN §15.1，2026-10-15 修订）：
+#   1) 系统时钟被上游 NTP 拉回 2024（chrony 源本身错 846 天，makestep 会被拉回去）
+#      → **HTTPS/TLS 全废**，pip 必须走 http 镜像 + --trusted-host：
+#        pip install -r requirements.txt -i http://mirrors.aliyun.com/pypi/simple/ \
+#            --trusted-host mirrors.aliyun.com
+#      （清华 http 实测 403，不可用；install.sh 已内置该 http 源）
+#   2) 196 实测缺 ensurepip → `python3 -m venv` 会失败，先执行：
+#        sudo apt install -y python3.8-venv python3-pip
+#   3) 控制台本身不受时钟影响：新鲜度一律 time.monotonic()（ADR-006，已实测验证）
+fastapi>=0.110
+uvicorn>=0.27
+websockets>=12.0
+pydantic>=2.6
+pydantic-settings>=2.1

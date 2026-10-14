@@ -1,0 +1,47 @@
+[Unit]
+Description=M20 Pro Robot Console (FastAPI + Vue3)
+Documentation=file:/home/djw/monitor/note/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+Group=user
+WorkingDirectory=/home/djw/monitor/backend
+
+# ---- 运行模式 ----
+# data_source: udp=真机（默认）| mock=无真机演练
+Environment="M20__DATA_SOURCE=udp"
+# 监控协议服务端：实测 basic_server 监听 0.0.0.0:30000，回环即可达（最稳）
+Environment="M20_ROBOT__TARGET_IP=127.0.0.1"
+Environment="M20_ROBOT__TARGET_PORT=30000"
+Environment="M20_ROBOT__HEARTBEAT_HZ=5"
+# Web：单端口提供 页面/REST/WS/HLS
+Environment="M20_SERVICE__HOST=0.0.0.0"
+Environment="M20_SERVICE__PORT=8080"
+Environment="M20_SERVICE__PUSH_HZ=10"
+Environment="M20_SERVICE__SERVE_FRONTEND=true"
+# ---- 控制通道：默认 L0 只监！开启 L1 需改这里为 true 并重启 ----
+Environment="M20_CONTROL__ENABLED=false"
+# ---- 视频（HLS，不转码）----
+Environment="M20_VIDEO__ENABLED=true"
+Environment="M20_VIDEO__RTSP_URL=rtsp://127.0.0.1:8554/video1"
+Environment="M20_VIDEO__HLS_DIR=/home/djw/monitor/hls"
+Environment="M20__LOG_LEVEL=INFO"
+
+ExecStart=/home/djw/monitor/venv/bin/python -m uvicorn main:app \
+          --host 0.0.0.0 --port 8080 --log-level info
+
+Restart=on-failure
+RestartSec=3
+# 优雅停机：先停看门狗补零位 → 关控制 → 停数据源
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=m20pro-console
+
+[Install]
+WantedBy=multi-user.target

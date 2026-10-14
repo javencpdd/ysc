@@ -11,6 +11,9 @@
 *.ini     text eol=lf
 *.md      text eol=lf
 
+# deploy/m20monitor 是无后缀 shell 脚本（同上，必须 LF，否则报 bad interpreter）
+m20monitor text eol=lf
+
 # 二进制按原样存储，不做任何转换
 *.png     binary
 *.jpg     binary

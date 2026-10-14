@@ -1,0 +1,21 @@
+{
+  "name": "m20pro-console-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "M20 Pro 四足机器人 Web 控制台前端（Vue3 + Vite）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "echarts": "^5.5.0",
+    "hls.js": "^1.5.13",
+    "vue": "^3.4.21"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "vite": "^5.2.0"
+  }
+}

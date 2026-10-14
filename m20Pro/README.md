@@ -17,6 +17,7 @@ m20Pro/
 ├── rl-training/         Isaac Lab 强化学习训练工程（49 个文件）
 ├── nav-stack/           Odin-Nav-Stack ROS 1 导航栈参考实现（235 个文件）
 ├── sdk-deploy/          官方 SDK 部署源码（124 个文件）
+├── m20Pro_robot_monitor/  M20 Pro Web 监控控制台（FastAPI + Vue3；部署于 AOS 196 /home/djw/monitor）
 └── rtsp-rtmp/           196 主机流媒体链路工程资产（89 个文件）
 ```
 
@@ -32,6 +33,7 @@ m20Pro/
 | `rl-training/` | rl_training（Isaac Lab 2.3.2 + RSL-RL） | [`rl-training/README.md`](rl-training/README.md) |
 | `nav-stack/` | Odin-Nav-Stack（ROS 1 Noetic，参考） | [`nav-stack/README.md`](nav-stack/README.md) |
 | `sdk-deploy/` | sdk_deploy（ROS 2 Sim-to-Real） | [`sdk-deploy/README.md`](sdk-deploy/README.md) |
+| `m20Pro_robot_monitor/` | **Web 监控控制台**（状态监控 + 视频 + 分层控制；已部署 AOS 196） | [`m20Pro_robot_monitor/README.md`](m20Pro_robot_monitor/README.md) · [QUICKSTART](m20Pro_robot_monitor/QUICKSTART.md) · [docs/](m20Pro_robot_monitor/docs/architecture.md) |
 | `rtsp-rtmp/` | 196 主机 RTSP/RTMP 全链路 + rtmp_1012 项目 | [`rtsp-rtmp/README.md`](rtsp-rtmp/README.md) |
 
 ## 文件清单（与实际存放一一对应）

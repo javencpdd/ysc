@@ -1,0 +1,319 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+alive
+===== [0] 时间与 uptime =====
+Fri 21 Jun 2024 01:20:47 AM CST
+ 01:20:47 up  5:41,  0 users,  load average: 1.21, 1.48, 1.65
+===== [1] 控制台 control status =====
+{"control":{"enabled":false,"estop":false,"lease_active":false,"lease_remaining":0.0,"axis_hz":20,"sent_packets":55,"rejected_packets":36,"last_error":"控制租约已失效（5.0s 内未续约），请重新获取","last_command":"axis"},"watchdog":{"running":true,"paused":true,"tripped":true,"hz":20,"timeout_ms":250,"sent_frames":73,"trip_count":2,"values":{"x":0.1,"y":0.0,"z":0.0,"roll":0.0,"pitch":0.0,"yaw":0.0}}}
+===== [2] 控制台 state =====
+{"schema_version":"1.0","type":"snapshot","server_time":1718904047.51124,"connected":true,"since_last_update_ms":68.7,"topics":{"ack":{"ts":1718904047.4424562,"age_ms":68.7,"stale":false,"data":{"error_code":0}},"motion":{"ts":1718904047.4226058,"age_ms":88.5,"stale":false,"data":{"roll":0.006953247357159853,"pitch":0.006032783072441816,"yaw":1.540178656578064,"omega_z":-3.274237678851932e-05,"linear_x":0.054909586906433105,"linear_y":0.05022778734564781,"height":0.5718963146209717,"payload":-0.1207084059715271,"remain_mile":7.359300136566162,"joints":[0.5361850261688232,2.102037191390991,2.4274990558624268,-0.051585473120212555,-0.528325617313385,-2.118894338607788,-2.358290910720825,-0.010864552110433578,-0.537937581539154,-2.053534507751465,-2.3523647785186768,0.02924593724310398,0.559239387512207,2.013036012649536,2.217191457748413,0.010992375202476978],"joint_count":16,"joint_names":["LF_hip_x","LF_hip_y","LF_knee","LF_wheel","RF_hip_x","RF_hip_y","RF_knee","RF_wheel","LB_hip_x","LB_hip_y","LB_knee","LB_wheel","RB_hip_x","RB_hip_y","RB_knee","RB_wheel"]}},"fault":{"ts":1718904047.4017587,"age_ms":109.4,"stale":false,"data":{"errors":[],"error_count":0,"has_fault":false}},"device":{"ts":1718904047.4233444,"age_ms":87.8,"stale":false,"data":{"batteries":[{"voltage":69,"level":25,"temperature":39.599998474121094,"charging":false,"serial":""},{"voltage":80,"level":86,"temperature":46.5,"charging":false,"serial":""}],"battery_count":2,"level":25,"voltage":69,"temperature":39.599998474121094,"charging":false,"level_left":25,"level_right":86,"voltage_left":69,"voltage_right":80,"charge_left":false,"charge_right":false,"motor_temperatures":[50.0,36.38999938964844,36.83000183105469,34.33000183105469,47.75,36.04999923706055,42.310001373291016,34.119998931884766,38.63999938964844,35.08000183105469,36.25,34.02000045776367,42.220001220703125,36.040000915527344,46.15999984741211,33.560001373291016],"temperature_keys":["Driver","LeftBackHipXDriver","LeftBackHipXMotor","LeftBackHipYDriver","LeftBackHipYMotor","LeftBackKneeDriver","LeftBackKneeMotor","LeftBackWheelDriver","LeftBackWheelMotor","LeftFrontHipXDriver","LeftFrontHipXMotor","LeftFrontHipYDriver","LeftFrontHipYMotor","LeftFrontKneeDriver","LeftFrontKneeMotor","LeftFrontWheelDriver","LeftFrontWheelMotor","Motor","RightBackHipXDriver","RightBackHipXMotor","RightBackHipYDriver","RightBackHipYMotor","RightBackKneeDriver","RightBackKneeMotor","RightBackWheelDriver","RightBackWheelMotor","RightFrontHipXDriver","Ri
+===== [3] 控制台 status =====
+{"data_source":"udp","source_stats":{"mode":"udp","running":true,"target":"127.0.0.1:30000","sent_heartbeats":37994,"received_packets":170553},"ws_clients":0,"counters":{"received":170553,"parsed":170553,"errors":0,"dropped":169553,"error_rate":0.0,"uptime":7598.714},"uptime_seconds":7598.714,"control":{"enabled":false,"estop":false,"lease_active":false,"lease_remaining":0.0,"axis_hz":20,"sent_packets":55,"rejected_packets":36,"last_error":"控制租约已失效（5.0s 内未续约），请重新获取","last_command":"axis"},"watchdog":{"running":true,"paused":true,"tripped":true,"hz":20,"timeout_ms":250,"sent_frames":73,"trip_count":2,"values":{"x":0.1,"y":0.0,"z":0.0,"roll":0.0,"pitch":0.0,"yaw":0.0}}}
+===== [4] ROS 环境探测 =====
+/opt/ros/foxy/bin/ros2
+ros2 found
+===== [5] ROS 节点列表 =====
+/traversability_estimation_node
+===== [6] /STEER topic info -v =====
+Type: drdds/msg/Steer
+
+Publisher count: 1
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: drdds/msg/Steer
+Endpoint type: PUBLISHER
+GID: 01.0f.6d.a9.f7.0b.bd.d6.01.00.00.00.00.00.23.03.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+Subscription count: 2
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: drdds/msg/Steer
+Endpoint type: SUBSCRIPTION
+GID: 01.0f.6d.a9.f3.0b.58.24.01.00.00.00.00.00.03.04.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: drdds/msg/Steer
+Endpoint type: SUBSCRIPTION
+GID: 01.0f.6d.a9.f3.0b.58.24.01.00.00.00.00.00.05.04.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+===== [7] /REAL_STEER topic info -v =====
+Type: drdds/msg/Steer
+
+Publisher count: 1
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: drdds/msg/Steer
+Endpoint type: PUBLISHER
+GID: 01.0f.6d.a9.f7.0b.bd.d6.01.00.00.00.00.00.24.03.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+Subscription count: 1
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: drdds/msg/Steer
+Endpoint type: SUBSCRIPTION
+GID: 01.0f.6d.a9.f3.0b.58.24.01.00.00.00.00.00.04.04.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+===== [8] /HANDLE_STEER topic info -v =====
+Type: drdds/msg/Steer
+
+Publisher count: 1
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: drdds/msg/Steer
+Endpoint type: PUBLISHER
+GID: 01.0f.6d.a9.f7.0b.bd.d6.01.00.00.00.00.00.25.03.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+Subscription count: 1
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: drdds/msg/Steer
+Endpoint type: SUBSCRIPTION
+GID: 01.0f.67.42.ee.09.bf.e7.01.00.00.00.00.00.06.04.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+===== [9] /MOTION_INFO topic info -v =====
+Type: drdds/msg/MotionInfo
+
+Publisher count: 1
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: drdds/msg/MotionInfo
+Endpoint type: PUBLISHER
+GID: 01.0f.6d.a9.f3.0b.58.24.01.00.00.00.00.00.19.03.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+Subscription count: 6
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: drdds/msg/MotionInfo
+Endpoint type: SUBSCRIPTION
+GID: 01.0f.67.42.31.0b.ec.72.01.00.00.00.00.00.23.04.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+Node name: traversability_estimation_node
+Node namespace: /
+Topic type: drdds/msg/MotionInfo
+Endpoint type: SUBSCRIPTION
+GID: 01.0f.67.42.bb.0b.54.73.01.00.00.00.00.00.1f.04.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: drdds/msg/MotionInfo
+Endpoint type: SUBSCRIPTION
+GID: 01.0f.67.42.e6.09.bd.56.01.00.00.00.00.00.03.04.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
+  Durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
+  Lifespan: 2147483651294967295 nanoseconds
+  Deadline: 2147483651294967295 nanoseconds
+  Liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
+  Liveliness lease duration: 2147483651294967295 nanoseconds
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+===== [10] SDK/LIO 服务 =====
+/LIO_ENABLE [drdds/srv/StdSrvInt32]
+/SDK_MODE [drdds/srv/StdSrvInt32]
+===== [11] rl_deploy strings (SDK) =====
+-rwxr-xr-x 1 root root 77200816 Aug 25  2026 /opt/robot/share/rl_deploy/bin/rl_deploy
+__addressof<std::allocator<std::_Sp_counted_ptr_inplace<qw_m20::SdkControlState, std::allocator<qw_m20::SdkControlState>, (__gnu_cxx::_Lock_policy)2> > >
+__aligned_buffer<qw_m20::SdkControlState>
+__allocated_ptr<std::allocator<std::_Sp_counted_ptr_inplace<qw_m20::SdkControlState, std::allocator<qw_m20::SdkControlState>, (__gnu_cxx::_Lock_policy)2> > >
+__allocate_guarded<std::allocator<std::_Sp_counted_ptr_inplace<qw_m20::SdkControlState, std::allocator<qw_m20::SdkControlState>, (__gnu_cxx::_Lock_policy)2> > >
+allocate_shared<qw_m20::SdkControlState, std::allocator<qw_m20::SdkControlState>, const types::RobotName&, char const (&)[12], std::shared_ptr<ControllerData>&>
+allocator_traits<std::allocator<qw_m20::SdkControlState> >
+allocator_traits<std::allocator<std::_Sp_counted_ptr_inplace<qw_m20::SdkControlState, std::allocator<qw_m20::SdkControlState>, (__gnu_cxx::_Lock_policy)2> > >
+_Base_manager<std::_Bind<void (qw_m20::SdkControlState::*(qw_m20::SdkControlState*, std::_Placeholder<1>))(const drdds::msg::JointsDataCmd*)> >
+_Bind_check_arity<void (qw_m20::SdkControlState::*)(const drdds::msg::JointsDataCmd*), qw_m20::SdkControlState*, const std::_Placeholder<1>&>
+_Bind_helper<false, void (qw_m20::SdkControlState::*)(const drdds::msg::JointsDataCmd*), qw_m20::SdkControlState*, const std::_Placeholder<1>&>
+_Bind<qw_m20::SdkControlState*, const std::_Placeholder<1>&>
+bind<void (qw_m20::SdkControlState::*)(const drdds::msg::JointsDataCmd*), qw_m20::SdkControlState*, const std::_Placeholder<1>&>
+_Bind<void (qw_m20::SdkControlState::*(qw_m20::SdkControlState*, std::_Placeholder<1>))(const drdds::msg::JointsDataCmd*)>
+conditional<true, const std::tuple<qw_m20::SdkControlState*, std::_Placeholder<1> >&, const std::__nonesuch_no_braces&>
+conditional<true, std::tuple<qw_m20::SdkControlState*, std::_Placeholder<1> >&&, std::__nonesuch_no_braces&&>
+../conf/SDK_authority_code.toml
+construct<qw_m20::SdkControlState, const types::RobotName&, char const (&)[12], std::shared_ptr<ControllerData>&>
+destroy<qw_m20::SdkControlState>
+Enter Sdk Control State
+Exit Sdk Control State
+forward<qw_m20::SdkControlState*&>
+forward<qw_m20::SdkControlState*>
+forward<std::_Bind<void (qw_m20::SdkControlState::*(qw_m20::SdkControlState*, std::_Placeholder<1>))(const drdds::msg::JointsDataCmd*)> >
+forward<void (qw_m20::SdkControlState::*&)(const drdds::msg::JointsDataCmd*)>
+forward<void (qw_m20::SdkControlState::*)(const drdds::msg::JointsDataCmd*)>
+_Function_handler<void(const drdds::msg::JointsDataCmd*), std::_Bind<void (qw_m20::SdkControlState::*(qw_m20::SdkControlState*, std::_Placeholder<1>))(const drdds::msg::JointsDataCmd*)> >
+get<0, qw_m20::SdkControlState*, std::_Placeholder<1> >
+get<1, qw_m20::SdkControlState*, std::_Placeholder<1> >
+__get_helper<0, qw_m20::SdkControlState*, std::_Placeholder<1> >
+_Head_base<0, qw_m20::SdkControlState*, false>
+_Head_base<qw_m20::SdkControlState*>
+__invoke_impl<void, void (qw_m20::SdkControlState::*&)(const drdds::msg::JointsDataCmd*), qw_m20::SdkControlState*&, const drdds::msg::JointsDataCmd*>
+__invoke<void (qw_m20::SdkControlState::*&)(const drdds::msg::JointsDataCmd*), qw_m20::SdkControlState*&, const drdds::msg::JointsDataCmd*>
+joints_cmd_sdk_sub
+kSdkControl
+kSDKRunCPUIndex
+logger_sdk
+_M_access<const std::_Bind<void (qw_m20::SdkControlState::*(qw_m20::SdkControlState*, std::_Placeholder<1>))(const drdds::msg::JointsDataCmd*)>*>
+_M_access<std::_Bind<void (qw_m20::SdkControlState::*(qw_m20::SdkControlState*, std::_Placeholder<1>))(const drdds::msg::JointsDataCmd*)>*>
+make_shared<qw_m20::SdkControlState, const types::RobotName&, char const (&)[12], std::shared_ptr<ControllerData>&>
+make_unique<DrDDSChannel<drdds::msg::JointsDataCmdPubSubType>, std::_Bind<void (qw_m20::SdkControlState::*(qw_m20::SdkControlState*, std::_Placeholder<1>))(const drdds::msg::JointsDataCmd*)>, char const (&)[12], int>
+_M_enable_shared_from_this_with<qw_m20::SdkControlState>
+_M_not_empty_function<std::_Bind<void (qw_m20::SdkControlState::*(qw_m20::SdkControlState*, std::_Placeholder<1>))(const drdds::msg::JointsDataCmd*)> >
+move<std::_Bind<void (qw_m20::SdkControlState::*(qw_m20::SdkControlState*, std::_Placeholder<1>))(const drdds::msg::JointsDataCmd*)>&>
+move<std::shared_ptr<qw_m20::SdkControlState>&>
+move<std::__shared_ptr<qw_m20::SdkControlState, (__gnu_cxx::_Lock_policy)2>&>
+move<std::tuple<qw_m20::SdkControlState*, std::_Placeholder<1> >&>
+move<void (qw_m20::SdkControlState::*&)(const drdds::msg::JointsDataCmd*)>
+_Mu<qw_m20::SdkControlState*, false, false>
+N6qw_m2015SdkControlStateE
+===== [12] rl_deploy strings (STEER 话题) =====
+/REAL_STEER
+/STEER
+===== [13] basic_server 30000 监听 =====
+UNCONN    0         0                  0.0.0.0:30000            0.0.0.0:*                                                                                       
+===== [14] 日志目录 =====
+total 256
+drwxr-xr-x 2 root root   4096 Oct 15  2026 2026_1015
+drwxr-xr-x 2 root root   4096 Oct 14  2026 2024_0620
+drwxr-xr-x 2 root root   4096 Oct 14  2026 2024_0618
+drwxr-xr-x 2 root root   4096 Oct 14  2026 2024_0619
+drwxr-xr-x 2 root root   4096 Oct 14  2026 2026_1014
+drwxr-xr-x 2 root root   4096 Oct 14  2026 2026_0922
+drwxr-xr-x 2 root root   4096 Oct 13  2026 2026_1013
+drwxr-xr-x 2 root root   4096 Oct 12  2026 2026_1012
+drwxr-xr-x 2 root root   4096 Sep 22  2026 2026_0602
+drwxr-xr-x 2 root root   4096 Sep 22  2026 2026_0603
+drwxr-xr-x 2 root root   4096 Sep 22  2026 2026_0604
+/var/opt/robot/log/2026_1015/Basic_server.2026_1015.log
+/var/opt/robot/log/2026_1014/Basic_server.2026_1014.log
+/var/opt/robot/log/2026_1012/Basic_server.2026_1012.log
+===== [15] 当前 /MOTION_INFO 采样（6s） =====
+header:
+  frame_id: 0
+  stamp:
+    sec: 1718904071
+    nanosec: 276939055
+data:
+  vel_x: 0.05491521209478378
+  vel_y: 0.049816325306892395
+  vel_yaw: -0.0025652849581092596
+  height: 0.5719297528266907
+  motion_state:
+    state: 17
+  gait_state:
+    gait: 4097
+  payload: -0.12017083168029785
+  remain_mile: 7.359300136566162
+---
+header:
+  frame_id: 0
+  stamp:
+    sec: 1718904071
+    nanosec: 326945342
+data:
+  vel_x: 0.054774537682533264
+  vel_y: 0.049805786460638046
+  vel_yaw: 0.0007258649566210806
+  height: 0.5719286203384399
+  motion_state:
+    state: 17
+  gait_state:
+    gait: 4097
+  payload: -0.12028568238019943
+  remain_mile: 7.359300136566162
+---
+header:
+  frame_id: 0
+  stamp:
+    sec: 1718904071
+    nanosec: 376939671
+data:
+  vel_x: 0.05479341745376587
+  vel_y: 0.049820490181446075
+  vel_yaw: 0.004618088714778423
+  height: 0.5719212293624878
+  motion_state:
+    state: 17
+  gait_state:
+    gait: 4097
+  payload: -0.12038486450910568
+  remain_mile: 7.359300136566162
+===== done =====

@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# ============================================================================
+# m20monitor —— M20 Pro Web 控制台服务管理（m20pro-console.service）
+#
+#   m20monitor up           启动服务
+#   m20monitor down         停止服务
+#   m20monitor reset        重启服务
+#   m20monitor status       查看状态（不带参数时的默认动作）
+#   m20monitor log [n|f]    查看日志：默认最近 50 行；n=行数；f=持续跟踪
+#   m20monitor enable       设置开机自启
+#   m20monitor disable      取消开机自启
+#
+#   服务实况：
+#     - systemd 单元 m20pro-console.service（/etc/systemd/system/）
+#     - 代码目录 /home/djw/monitor，运行账户 user，Web 端口 8080
+#     - 页面 http://<本机IP>:8080/   健康检查 http://127.0.0.1:8080/health
+#
+#   提权说明：start/stop/restart/enable/disable 需要 root。安装脚本
+#   deploy/install_m20monitor.sh 会写入 /etc/sudoers.d/m20-monitor 精确白名单
+#   （仅对本单元这几个动作免密）；白名单缺失时自动回退交互式 sudo。
+# ============================================================================
+set -u
+
+UNIT="m20pro-console.service"
+PORT="${M20MONITOR_PORT:-8080}"
+BASE_URL="http://127.0.0.1:${PORT}"
+LOG_LINES_DEFAULT=50
+
+say() { printf '%s\n' "$*"; }
+err() { printf '%s\n' "$*" >&2; }
+
+usage() {
+    cat <<'EOF'
+m20monitor —— M20 Pro Web 控制台服务管理（m20pro-console.service）
+
+  m20monitor up            启动服务
+  m20monitor down          停止服务
+  m20monitor reset         重启服务
+  m20monitor status        查看状态（不带参数时的默认动作）
+  m20monitor log [n|f]     查看日志：默认最近 50 行；n=行数；f=持续跟踪
+  m20monitor enable        设置开机自启
+  m20monitor disable       取消开机自启
+
+服务信息：
+  单元   m20pro-console.service    目录   /home/djw/monitor
+  页面   http://<本机IP>:8080/     日志   journalctl -u m20pro-console.service
+EOF
+}
+
+# ---------------------------------------------------------------- 基础探测
+is_active()  { systemctl is-active  --quiet "$UNIT" 2>/dev/null; }
+is_enabled() { systemctl is-enabled --quiet "$UNIT" 2>/dev/null; }
+
+port_listening() { ss -tln 2>/dev/null | grep -q ":${PORT}[[:space:]]"; }
+
+http_probe() { curl -s -m 3 -o /dev/null -w '%{http_code}' "${BASE_URL}/health" 2>/dev/null; }
+
+# 优先取 192. 网段（PC/局域网可直达），否则退回第一个 IPv4
+lan_ip() {
+    local ip
+    ip="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -m1 '^192\.' || true)"
+    [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    printf '%s' "$ip"
+}
+
+# 等待 HTTP 就绪：wait_http <最多等待秒数>；进程提前消失则立即返回失败
+wait_http() {
+    local i=0 max="$1"
+    while [ "$i" -lt "$max" ]; do
+        [ "$(http_probe)" = "200" ] && return 0
+        is_active || return 1
+        sleep 1; i=$((i + 1))
+    done
+    return 1
+}
+
+# ---------------------------------------------------------------- 提权封装
+# 需要 root 的 systemctl 操作：优先走免密白名单（sudo -n），
+# 白名单缺失/未命中时回退交互式 sudo（需要输入 sudo 口令）。
+run_priv() {
+    local out rc
+    out="$(sudo -n systemctl "$@" 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ]; then
+        [ -n "$out" ] && printf '%s\n' "$out"
+        return 0
+    fi
+    case "$out" in
+        *"password is required"*|*"terminal is required"*|*"a tty is required"*)
+            say "（未配置免密白名单，改用交互式 sudo，请输入 sudo 口令）"
+            sudo systemctl "$@"
+            ;;
+        *)
+            err "$out"
+            return "$rc"
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------- 子命令
+do_status() {
+    local act en pid ip
+    act="$(systemctl is-active  "$UNIT" 2>/dev/null || true)"
+    en="$(systemctl is-enabled "$UNIT" 2>/dev/null || true)"
+    pid="$(systemctl show -p MainPID --value "$UNIT" 2>/dev/null || true)"
+    ip="$(lan_ip)"
+
+    say "=== M20 Pro Web 控制台服务状态 ==="
+    say "  服务单元 : $UNIT"
+    say "  运行状态 : ${act:-未知}（开机自启：${en:-未知}）"
+    [ -n "$pid" ] && [ "$pid" != "0" ] && say "  主进程   : PID $pid"
+    if port_listening; then
+        say "  HTTP 端口: $PORT（监听中）"
+        [ -n "$ip" ] && say "  访问地址 : http://${ip}:${PORT}/"
+    else
+        say "  HTTP 端口: $PORT（未监听）"
+    fi
+    if is_active; then
+        printf '  健康检查 : '
+        local h ok conn src up
+        h="$(curl -s -m 3 "${BASE_URL}/health" 2>/dev/null)"
+        if [ -z "$h" ]; then
+            say "无响应（进程在但 HTTP 未就绪，可 m20monitor log 查看）"
+        else
+            ok="$(printf '%s' "$h"   | sed -n 's/.*"ok":\([a-z]*\).*/\1/p')"
+            conn="$(printf '%s' "$h" | sed -n 's/.*"connected":\([a-z]*\).*/\1/p')"
+            src="$(printf '%s' "$h"  | sed -n 's/.*"data_source":"\([^"]*\)".*/\1/p')"
+            up="$(printf '%s' "$h"   | sed -n 's/.*"uptime_seconds":\([0-9.]*\).*/\1/p')"
+            say "ok=${ok:-?}  数据源=${src:-?}  已连接=${conn:-?}  运行=${up:-?}s"
+        fi
+    fi
+    say ""
+    say "  提示：服务管理 up|down|reset ；帮助 m20monitor help"
+}
+
+do_up() {
+    if is_active; then
+        say "已在运行，无需启动。"
+        do_status
+        return 0
+    fi
+    say "启动 $UNIT ..."
+    run_priv start "$UNIT" || { err "启动失败。查看日志：m20monitor log"; return 1; }
+    if wait_http 8; then
+        say "✓ 已启动：http://$(lan_ip):${PORT}/"
+    else
+        err "服务已拉起但健康检查未通过。查看日志：m20monitor log"
+        return 1
+    fi
+}
+
+do_down() {
+    if ! is_active; then
+        say "未在运行（$UNIT）。"
+        return 0
+    fi
+    say "停止 $UNIT ..."
+    run_priv stop "$UNIT" || { err "停止失败。"; return 1; }
+    local i=0
+    while port_listening && [ "$i" -lt 10 ]; do sleep 0.5; i=$((i + 1)); done
+    if is_active; then
+        err "停止命令已发出但服务仍在运行，请检查：m20monitor log"
+        return 1
+    fi
+    say "✓ 已停止（端口 $PORT 已释放）。重新启动：m20monitor up"
+}
+
+do_reset() {
+    say "重启 $UNIT ..."
+    run_priv restart "$UNIT" || { err "重启失败。查看日志：m20monitor log"; return 1; }
+    if wait_http 8; then
+        say "✓ 已重启：http://$(lan_ip):${PORT}/"
+    else
+        err "重启后健康检查未通过。查看日志：m20monitor log"
+        return 1
+    fi
+}
+
+do_log() {
+    local arg="${1:-}" n="$LOG_LINES_DEFAULT" follow=0
+    case "$arg" in
+        f|F|follow) follow=1 ;;
+        ''|*[!0-9]*) : ;;
+        *) n="$arg" ;;
+    esac
+    if [ "$follow" -eq 1 ]; then
+        say "跟踪日志（Ctrl-C 退出）..."
+        exec journalctl -u "$UNIT" -n "$n" -f --no-pager
+    else
+        journalctl -u "$UNIT" -n "$n" --no-pager
+    fi
+}
+
+do_enable() {
+    if is_enabled; then
+        say "已是开机自启状态。"
+        return 0
+    fi
+    run_priv enable "$UNIT" >/dev/null || { err "设置开机自启失败。"; return 1; }
+    say "✓ 已设置开机自启。"
+}
+
+do_disable() {
+    if ! is_enabled; then
+        say "当前已是「不开机自启」状态。"
+        return 0
+    fi
+    run_priv disable "$UNIT" >/dev/null || { err "取消开机自启失败。"; return 1; }
+    say "✓ 已取消开机自启（不影响当前运行；下次开机不再自动启动）。"
+}
+
+# ---------------------------------------------------------------- 入口
+case "${1:-status}" in
+    up|start)      do_up ;;
+    down|stop)     do_down ;;
+    reset|restart) do_reset ;;
+    status)        do_status ;;
+    log|logs)      do_log "${2:-}" ;;
+    enable)        do_enable ;;
+    disable)       do_disable ;;
+    help|-h|--help|usage) usage ;;
+    *)
+        err "未知子命令：$1"
+        err ""
+        usage >&2
+        exit 2
+        ;;
+esac

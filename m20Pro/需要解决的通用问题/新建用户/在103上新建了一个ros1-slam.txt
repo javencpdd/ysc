@@ -1,0 +1,3 @@
+赋权给 user  /home/djw 及其下所有内容拥有读写执行权限（ACL 方式）
+sudo setfacl -R -m u:user:rwx /home/djw
+sudo setfacl -R -d -m u:user:rwx /home/djw

@@ -1,0 +1,242 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+===== [1] rl_deploy 符号: sdk 相关 =====
+00000000000bbad0 W _ZN12DdsInterface15StartSdkControlEPKN5drdds3srv19StdSrvInt32_RequestEPNS1_20StdSrvInt32_ResponseE
+00000000000af048 W _ZN21CA9BHardwareInterface19SetJointCommand_sdkEN5Eigen6MatrixIfLin1ELi5ELi0ELin1ELi5EEE
+00000000000b8b74 W _ZN6qw_m2015SdkControlState16GetNextStateNameEv
+00000000000b804c W _ZN6qw_m2015SdkControlState3RunEv
+00000000000b72ac W _ZN6qw_m2015SdkControlState6OnExitEv
+00000000000b7368 W _ZN6qw_m2015SdkControlState7OnEnterEv
+00000000000b4624 W _ZN6qw_m2015SdkControlState9HandleCMDEPKN5drdds3msg13JointsDataCmdE
+00000000000a6ee4 W _ZNSt14_Function_base13_Base_managerISt5_BindIFMN6qw_m2015SdkControlStateEFvPKN5drdds3msg13JointsDataCmdEEPS3_St12_PlaceholderILi1EEEEE10_M_managerERSt9_Any_dataRKSH_St18_Manager_operation
+00000000000a5268 W _ZNSt17_Function_handlerIFvPKN5drdds3msg13JointsDataCmdEESt5_BindIFMN6qw_m2015SdkControlStateEFvS4_EPS8_St12_PlaceholderILi1EEEEE9_M_invokeERKSt9_Any_dataOS4_
+00000000000a7020 W _ZNSt23_Sp_counted_ptr_inplaceIN6qw_m2015SdkControlStateESaIS1_ELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+000000000015546c W _ZNSt23_Sp_counted_ptr_inplaceIN6qw_m2015SdkControlStateESaIS1_ELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+00000000000aaefc W _ZNSt23_Sp_counted_ptr_inplaceIN6qw_m2015SdkControlStateESaIS1_ELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+00000000000a68fc W _ZNSt23_Sp_counted_ptr_inplaceIN6qw_m2015SdkControlStateESaIS1_ELN9__gnu_cxx12_Lock_policyE2EED0Ev
+00000000000a5b3c W _ZNSt23_Sp_counted_ptr_inplaceIN6qw_m2015SdkControlStateESaIS1_ELN9__gnu_cxx12_Lock_policyE2EED1Ev
+00000000000a5b3c W _ZNSt23_Sp_counted_ptr_inplaceIN6qw_m2015SdkControlStateESaIS1_ELN9__gnu_cxx12_Lock_policyE2EED2Ev
+00000000000bf158 W _ZNSt8functionIFvPKN5drdds3msg13JointsDataCmdEEEC1ISt5_BindIFMN6qw_m2015SdkControlStateEFvS4_EPSA_St12_PlaceholderILi1EEEEvvEET_
+00000000000bf158 W _ZNSt8functionIFvPKN5drdds3msg13JointsDataCmdEEEC2ISt5_BindIFMN6qw_m2015SdkControlStateEFvS4_EPSA_St12_PlaceholderILi1EEEEvvEET_
+00000000000eb618 W _ZSt18__allocate_guardedISaISt23_Sp_counted_ptr_inplaceIN6qw_m2015SdkControlStateESaIS2_ELN9__gnu_cxx12_Lock_policyE2EEEESt15__allocated_ptrIT_ERS9_
+000000000020d388 V _ZTIN6qw_m2015SdkControlStateE
+000000000020b650 V _ZTISt17_Weak_result_typeIMN6qw_m2015SdkControlStateEFvPKN5drdds3msg13JointsDataCmdEEE
+000000000020da80 V _ZTISt23_Sp_counted_ptr_inplaceIN6qw_m2015SdkControlStateESaIS1_ELN9__gnu_cxx12_Lock_policyE2EE
+000000000020b570 V _ZTISt24_Weak_result_type_memfunIMN6qw_m2015SdkControlStateEFvPKN5drdds3msg13JointsDataCmdEELb1EE
+000000000020d6c0 V _ZTISt5_BindIFMN6qw_m2015SdkControlStateEFvPKN5drdds3msg13JointsDataCmdEEPS1_St12_PlaceholderILi1EEEE
+00000000001c8218 V _ZTSN6qw_m2015SdkControlStateE
+00000000001c1ba8 V _ZTSSt17_Weak_result_typeIMN6qw_m2015SdkControlStateEFvPKN5drdds3msg13JointsDataCmdEEE
+00000000001c9950 V _ZTSSt23_Sp_counted_ptr_inplaceIN6qw_m2015SdkControlStateESaIS1_ELN9__gnu_cxx12_Lock_policyE2EE
+00000000001c1838 V _ZTSSt24_Weak_result_type_memfunIMN6qw_m2015SdkControlStateEFvPKN5drdds3msg13JointsDataCmdEELb1EE
+00000000001c8af0 V _ZTSSt5_BindIFMN6qw_m2015SdkControlStateEFvPKN5drdds3msg13JointsDataCmdEEPS1_St12_PlaceholderILi1EEEE
+0000000000213af0 V _ZTVN6qw_m2015SdkControlStateE
+0000000000214af8 V _ZTVSt23_Sp_counted_ptr_inplaceIN6qw_m2015SdkControlStateESaIS1_ELN9__gnu_cxx12_Lock_policyE2EE
+(symbol count: 6617)
+===== [2] rl_deploy 符号: steer/State 相关 =====
+00000000000bcf60 W _ZN12DdsInterface10HandlerVelEPKN5drdds3msg5SteerE
+00000000000bd560 W _ZN12DdsInterface12HandlerSteerEPKN5drdds3msg5SteerE
+00000000000a8034 W _ZN12DdsInterface12MonitorSteerEv
+00000000000b2238 W _ZN12DrDDSChannelIN5drdds3msg15SteerPubSubTypeEE12GetPublisherEv
+00000000000b2240 W _ZN12DrDDSChannelIN5drdds3msg15SteerPubSubTypeEE13GetSubscriberEv
+                 U _ZN12DrDDSChannelIN5drdds3msg15SteerPubSubTypeEE8IsUpdateEt
+                 U _ZN12DrDDSChannelIN5drdds3msg15SteerPubSubTypeEEC1ERKSt8functionIFvPKNS1_5SteerEEENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEibSH_
+                 U _ZN14DrDDSPublisherIN5drdds3msg15SteerPubSubTypeEE11PubListener22on_publication_matchedEPN8eprosima7fastdds3dds10DataWriterERKNS7_24PublicationMatchedStatusE
+00000000000de9d4 W _ZN14DrDDSPublisherIN5drdds3msg15SteerPubSubTypeEE11PubListenerC1Ev
+00000000000de9d4 W _ZN14DrDDSPublisherIN5drdds3msg15SteerPubSubTypeEE11PubListenerC2Ev
+00000000000d401c W _ZN14DrDDSPublisherIN5drdds3msg15SteerPubSubTypeEE11PubListenerD0Ev
+00000000000d3ff8 W _ZN14DrDDSPublisherIN5drdds3msg15SteerPubSubTypeEE11PubListenerD1Ev
+00000000000d3ff8 W _ZN14DrDDSPublisherIN5drdds3msg15SteerPubSubTypeEE11PubListenerD2Ev
+                 U _ZN15DrDDSSubscriberIN5drdds3msg15SteerPubSubTypeEE11SubListener17on_data_availableEPN8eprosima7fastdds3dds10DataReaderE
+                 U _ZN15DrDDSSubscriberIN5drdds3msg15SteerPubSubTypeEE11SubListener23on_subscription_matchedEPN8eprosima7fastdds3dds10DataReaderERKNS7_25SubscriptionMatchedStatusE
+00000000000dea30 W _ZN15DrDDSSubscriberIN5drdds3msg15SteerPubSubTypeEE11SubListenerC1Ev
+00000000000dea30 W _ZN15DrDDSSubscriberIN5drdds3msg15SteerPubSubTypeEE11SubListenerC2Ev
+00000000000d407c W _ZN15DrDDSSubscriberIN5drdds3msg15SteerPubSubTypeEE11SubListenerD0Ev
+00000000000d4058 W _ZN15DrDDSSubscriberIN5drdds3msg15SteerPubSubTypeEE11SubListenerD1Ev
+00000000000d4058 W _ZN15DrDDSSubscriberIN5drdds3msg15SteerPubSubTypeEE11SubListenerD2Ev
+0000000000165e08 T _ZN4ecan8Snapshot19DDSSteerDataHandlerEPKN5drdds3msg5SteerE
+                 U _ZNK5drdds3msg10SteerValue1xEv
+                 U _ZNK5drdds3msg10SteerValue1yEv
+                 U _ZNK5drdds3msg10SteerValue1zEv
+                 U _ZNK5drdds3msg10SteerValue3yawEv
+                 U _ZNK5drdds3msg10SteerValue4rollEv
+                 U _ZNK5drdds3msg10SteerValue5pitchEv
+                 U _ZNK5drdds3msg5Steer4dataEv
+00000000000a6b84 W _ZNSt14_Function_base13_Base_managerISt5_BindIFM12DdsInterfaceFvPKN5drdds3msg5SteerEEPS2_St12_PlaceholderILi1EEEEE10_M_managerERSt9_Any_dataRKSG_St18_Manager_operation
+0000000000169ac0 W _ZNSt14_Function_base13_Base_managerISt5_BindIFMN4ecan8SnapshotEFvPKN5drdds3msg5SteerEEPS3_St12_PlaceholderILi1EEEEE10_M_managerERSt9_Any_dataRKSH_St18_Manager_operation
+00000000000a50b0 W _ZNSt17_Function_handlerIFvPKN5drdds3msg5SteerEESt5_BindIFM12DdsInterfaceFvS4_EPS7_St12_PlaceholderILi1EEEEE9_M_invokeERKSt9_Any_dataOS4_
+00000000001699e8 W _ZNSt17_Function_handlerIFvPKN5drdds3msg5SteerEESt5_BindIFMN4ecan8SnapshotEFvS4_EPS8_St12_PlaceholderILi1EEEEE9_M_invokeERKSt9_Any_dataOS4_
+00000000000bb8f8 W _ZNSt8functionIFvPKN5drdds3msg5SteerEEEC1ISt5_BindIFM12DdsInterfaceFvS4_EPS9_St12_PlaceholderILi1EEEEvvEET_
+0000000000169cb8 W _ZNSt8functionIFvPKN5drdds3msg5SteerEEEC1ISt5_BindIFMN4ecan8SnapshotEFvS4_EPSA_St12_PlaceholderILi1EEEEvvEET_
+00000000000bb8f8 W _ZNSt8functionIFvPKN5drdds3msg5SteerEEEC2ISt5_BindIFM12DdsInterfaceFvS4_EPS9_St12_PlaceholderILi1EEEEvvEET_
+0000000000169cb8 W _ZNSt8functionIFvPKN5drdds3msg5SteerEEEC2ISt5_BindIFMN4ecan8SnapshotEFvS4_EPSA_St12_PlaceholderILi1EEEEvvEET_
+000000000020c070 V _ZTIN14DrDDSPublisherIN5drdds3msg15SteerPubSubTypeEE11PubListenerE
+000000000020c088 V _ZTIN15DrDDSSubscriberIN5drdds3msg15SteerPubSubTypeEE11SubListenerE
+000000000020b5c0 V _ZTISt17_Weak_result_typeIM12DdsInterfaceFvPKN5drdds3msg5SteerEEE
+0000000000214f48 V _ZTISt17_Weak_result_typeIMN4ecan8SnapshotEFvPKN5drdds3msg5SteerEEE
+00000000000b2198 W _ZN12DrDDSChannelIN11sensor_msgs3msg20JointStatePubSubTypeEE12GetPublisherEv
+00000000000b21a0 W _ZN12DrDDSChannelIN11sensor_msgs3msg20JointStatePubSubTypeEE13GetSubscriberEv
+                 U _ZN14DrDDSPublisherIN11sensor_msgs3msg20JointStatePubSubTypeEE11PubListener22on_publication_matchedEPN8eprosima7fastdds3dds10DataWriterERKNS7_24PublicationMatchedStatusE
+00000000000de27c W _ZN14DrDDSPublisherIN11sensor_msgs3msg20JointStatePubSubTypeEE11PubListenerC1Ev
+00000000000de27c W _ZN14DrDDSPublisherIN11sensor_msgs3msg20JointStatePubSubTypeEE11PubListenerC2Ev
+00000000000d389c W _ZN14DrDDSPublisherIN11sensor_msgs3msg20JointStatePubSubTypeEE11PubListenerD0Ev
+00000000000d3878 W _ZN14DrDDSPublisherIN11sensor_msgs3msg20JointStatePubSubTypeEE11PubListenerD1Ev
+00000000000d3878 W _ZN14DrDDSPublisherIN11sensor_msgs3msg20JointStatePubSubTypeEE11PubListenerD2Ev
+                 U _ZN15DrDDSSubscriberIN11sensor_msgs3msg20JointStatePubSubTypeEE11SubListener17on_data_availableEPN8eprosima7fastdds3dds10DataReaderE
+                 U _ZN15DrDDSSubscriberIN11sensor_msgs3msg20JointStatePubSubTypeEE11SubListener23on_subscription_matchedEPN8eprosima7fastdds3dds10DataReaderERKNS7_25SubscriptionMatchedStatusE
+00000000000de2d8 W _ZN15DrDDSSubscriberIN11sensor_msgs3msg20JointStatePubSubTypeEE11SubListenerC1Ev
+00000000000de2d8 W _ZN15DrDDSSubscriberIN11sensor_msgs3msg20JointStatePubSubTypeEE11SubListenerC2Ev
+00000000000d38fc W _ZN15DrDDSSubscriberIN11sensor_msgs3msg20JointStatePubSubTypeEE11SubListenerD0Ev
+00000000000d38d8 W _ZN15DrDDSSubscriberIN11sensor_msgs3msg20JointStatePubSubTypeEE11SubListenerD1Ev
+00000000000d38d8 W _ZN15DrDDSSubscriberIN11sensor_msgs3msg20JointStatePubSubTypeEE11SubListenerD2Ev
+00000000001a4268 T _ZN16PolicyRunnerBase17update_joint_dataERKN5types15RobotBasicStateE
+00000000001a4360 T _ZN16PolicyRunnerBase21gym_update_joint_dataERKN5types15RobotBasicStateE
+0000000000186118 T _ZN17M20LeggedOdometry15UpdateJointDataERKN5types15RobotBasicStateE
+00000000000f97e0 W _ZN21EcanHardwareInterface10JointStateC1Ei
+00000000000f97e0 W _ZN21EcanHardwareInterface10JointStateC2Ei
+00000000000b3ae4 W _ZN21EcanHardwareInterface10JointStateD1Ev
+00000000000b3ae4 W _ZN21EcanHardwareInterface10JointStateD2Ev
+000000000014bf20 W _ZN6qw_m2012CarMoveStateC1ERKN5types9RobotNameERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrI14ControllerDataE
+000000000014bf20 W _ZN6qw_m2012CarMoveStateC2ERKN5types9RobotNameERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrI14ControllerDataE
+000000000014c940 W _ZN6qw_m2012LieDownStateC1ERKN5types9RobotNameERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrI14ControllerDataE
+000000000014c940 W _ZN6qw_m2012LieDownStateC2ERKN5types9RobotNameERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrI14ControllerDataE
+000000000014b384 W _ZN6qw_m2012StandUpStateC1ERKN5types9RobotNameERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrI14ControllerDataE
+000000000014b384 W _ZN6qw_m2012StandUpStateC2ERKN5types9RobotNameERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrI14ControllerDataE
+00000000000b89fc W _ZN6qw_m2014JointTestState16GetNextStateNameEv
+00000000000b32cc W _ZN6qw_m2014JointTestState18GetHipYPosByHeightEf
+00000000000b3430 W _ZN6qw_m2014JointTestState18GetKneePosByHeightEf
+00000000000ce760 W _ZN6qw_m2014JointTestState3RunEv
+00000000000a4ea0 W _ZN6qw_m2014JointTestState6OnExitEv
+00000000000af7b4 W _ZN6qw_m2014JointTestState7OnEnterEv
+000000000014d690 W _ZN6qw_m2014JointTestStateC1ERKN5types9RobotNameERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrI14ControllerDataE
+000000000014d690 W _ZN6qw_m2014JointTestStateC2ERKN5types9RobotNameERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrI14ControllerDataE
+00000000000ba1c0 W _ZN6qw_m2014RLControlState11update_gaitEv
+00000000000cfd34 W _ZN6qw_m2014RLControlState12PolicyRunnerEv
+00000000000b2edc W _ZN6qw_m2014RLControlState12wheel_lockupERN5types11RobotActionE
+00000000000c03c4 W _ZN6qw_m2014RLControlState15hangling_detectEv
+===== [3] rl_deploy strings: 话题名 =====
+/JOINTS_CMD
+/JOINTS_DATA
+/JOINTS_DATA_10HZ
+/JOINTS/POWER
+/MOTION_INFO
+/MOTION_STATE
+/MOTION_STATUS
+/REAL_STEER
+/SDK_MODE
+/STEER
+===== [4] rl_deploy strings: SDK 业务串（滤掉模板噪声） =====
+../conf/SDK_authority_code.toml
+Enter Sdk Control State
+Exit Sdk Control State
+joints_cmd_sdk_sub
+kSdkControl
+kSDKRunCPUIndex
+logger_sdk
+N6qw_m2015SdkControlStateE
+operator=<qw_m20::SdkControlState>
+remove_extent<qw_m20::SdkControlState>
+remove_reference<qw_m20::SdkControlState*&>
+remove_reference<qw_m20::SdkControlState*>
+remove_reference<void (qw_m20::SdkControlState::*&)(const drdds::msg::JointsDataCmd*)>
+remove_reference<void (qw_m20::SdkControlState::*)(const drdds::msg::JointsDataCmd*)>
+sdk_authCode
+sdk command size error!
+sdk_control
+sdk_controller_
+SdkControlMode
+~SdkControlState
+sdk_ctrl_state.hpp
+SDK_Mode
+/SDK_MODE
+SDK Server: 
+SDK Server: %d, /JOINTS_DATA: %dhz, target_mode: %d
+sdk_state
+SetJointCommand_sdk
+StartSdkControl
+: state=SdkControl safe_control_mode=%d gait=0x%x
+weak_ptr<qw_m20::SdkControlState>
+_ZN12DdsInterface15StartSdkControlEPKN5drdds3srv19StdSrvInt32_RequestEPNS1_20StdSrvInt32_ResponseE
+_ZN21CA9BHardwareInterface19SetJointCommand_sdkEN5Eigen6MatrixIfLin1ELi5ELi0ELin1ELi5EEE
+_ZN6qw_m2015SdkControlState16GetNextStateNameEv
+_ZN6qw_m2015SdkControlState3RunEv
+_ZN6qw_m2015SdkControlState6OnExitEv
+_ZN6qw_m2015SdkControlState7OnEnterEv
+_ZN6qw_m2015SdkControlState9HandleCMDEPKN5drdds3msg13JointsDataCmdE
+_ZN6qw_m2015SdkControlStateC4ERKS0_
+_ZN6qw_m2015SdkControlStateD2Ev
+_ZN6qw_m2015SdkControlStateD4Ev
+_ZN9interface14RobotInterface19SetJointCommand_sdkEN5Eigen6MatrixIfLin1ELi5ELi0ELin1ELi5EEE
+_ZNSaIN6qw_m2015SdkControlStateEEaSERKS1_
+_ZNSaIN6qw_m2015SdkControlStateEEC2ERKS1_
+_ZNSaIN6qw_m2015SdkControlStateEEC2Ev
+_ZNSaIN6qw_m2015SdkControlStateEEC4ERKS1_
+_ZNSaIN6qw_m2015SdkControlStateEEC4Ev
+_ZNSaIN6qw_m2015SdkControlStateEED2Ev
+_ZNSaIN6qw_m2015SdkControlStateEED4Ev
+_ZNSt10shared_ptrIN6qw_m2015SdkControlStateEEaSEOS2_
+_ZNSt10shared_ptrIN6qw_m2015SdkControlStateEEaSERKS2_
+_ZNSt10shared_ptrIN6qw_m2015SdkControlStateEEC4EDn
+_ZNSt10shared_ptrIN6qw_m2015SdkControlStateEEC4EOS2_
+_ZNSt10shared_ptrIN6qw_m2015SdkControlStateEEC4ERKS2_
+_ZNSt10shared_ptrIN6qw_m2015SdkControlStateEEC4ERKSt8weak_ptrIS1_ESt9nothrow_t
+_ZNSt10shared_ptrIN6qw_m2015SdkControlStateEEC4Ev
+_ZNSt10shared_ptrIN6qw_m2015SdkControlStateEED2Ev
+_ZNSt10shared_ptrIN6qw_m2015SdkControlStateEED4Ev
+_ZNSt11_Tuple_implILm0EJPN6qw_m2015SdkControlStateESt12_PlaceholderILi1EEEEaSERKS5_
+_ZNSt11_Tuple_implILm0EJPN6qw_m2015SdkControlStateESt12_PlaceholderILi1EEEEC2EOS5_
+_ZNSt11_Tuple_implILm0EJPN6qw_m2015SdkControlStateESt12_PlaceholderILi1EEEEC2IS2_JRKS4_EvEEOT_DpOT0_
+_ZNSt11_Tuple_implILm0EJPN6qw_m2015SdkControlStateESt12_PlaceholderILi1EEEEC4EOS5_
+_ZNSt11_Tuple_implILm0EJPN6qw_m2015SdkControlStateESt12_PlaceholderILi1EEEEC4ERKS2_RKS4_
+_ZNSt11_Tuple_implILm0EJPN6qw_m2015SdkControlStateESt12_PlaceholderILi1EEEEC4ERKS5_
+_ZNSt11_Tuple_implILm0EJPN6qw_m2015SdkControlStateESt12_PlaceholderILi1EEEEC4Ev
+_ZNSt11_Tuple_implILm0EJPN6qw_m2015SdkControlStateESt12_PlaceholderILi1EEEEC4IS2_JRKS4_EvEEOT_DpOT0_
+_ZSt15allocate_sharedIN6qw_m2015SdkControlStateESaIS1_EJRKN5types9RobotNameERA12_KcRSt10shared_ptrI14ControllerDataEEESA_IT_ERKT0_DpOT1_
+_ZSt4moveIRMN6qw_m2015SdkControlStateEFvPKN5drdds3msg13JointsDataCmdEEEONSt16remove_referenceIT_E4typeEOSB_
+_ZSt4moveIRSt10shared_ptrIN6qw_m2015SdkControlStateEEEONSt16remove_referenceIT_E4typeEOS6_
+_ZSt7forwardIMN6qw_m2015SdkControlStateEFvPKN5drdds3msg13JointsDataCmdEEEOT_RNSt16remove_referenceIS9_E4typeE
+_ZSt7forwardIPN6qw_m2015SdkControlStateEEOT_RNSt16remove_referenceIS3_E4typeE
+_ZSt7forwardIRMN6qw_m2015SdkControlStateEFvPKN5drdds3msg13JointsDataCmdEEEOT_RNSt16remove_referenceISA_E4typeE
+_ZSt7forwardIRPN6qw_m2015SdkControlStateEEOT_RNSt16remove_referenceIS4_E4typeE
+_ZTIN6qw_m2015SdkControlStateE
+_ZTSN6qw_m2015SdkControlStateE
+_ZTVN6qw_m2015SdkControlStateE
+===== [5] rl_deploy conf 目录 =====
+total 20
+drwxr-xr-x 2 root root 4096 Jun 20 19:59 .
+drwxr-xr-x 7 root root 4096 Jun 20 19:59 ..
+-rw-r--r-- 1 root root   64 Aug 25  2026 cmd_vel_limit.yml
+-rw-r--r-- 1 root root  181 Aug 21  2026 hanging_detection.yml
+-rw-r--r-- 1 root root  890 Apr 27  2026 log.properties
+--- SDK_authority_code.toml 前 30 行 ---
+--- cmd_vel_limit.yml ---
+vx_limit: 0.40
+vy_limit: 0.40
+vyaw_limit: 1.2
+vx_yawlimit: 0.50
+===== [6] rl_deploy 日志: Sdk/Steer 历史（全部日志目录） =====
+[2024-06-21 00:29:25.390.600] [INFO  ] [Target_State] SDK模式配置重置 
+[2024-06-21 00:35:17.271.212] [INFO  ] [Target_State] SDK模式配置重置 
+[2024-06-21 00:36:14.332.389] [INFO  ] [Target_State] SDK模式配置重置 
+[2024-06-21 00:37:46.706.561] [INFO  ] [Target_State] SDK模式配置重置 
+Binary file /var/opt/robot/log/2026_1012/rl_deploy.2026_1012.log matches
+Time s,Joint Pos 0,Joint Pos 1,Joint Pos 2,Joint Pos 3,Joint Pos 4,Joint Pos 5,Joint Pos 6,Joint Pos 7,Joint Pos 8,Joint Pos 9,Joint Pos 10,Joint Pos 11,Joint Pos 12,Joint Pos 13,Joint Pos 14,Joint Pos 15,Joint Vel 0,Joint Vel 1,Joint Vel 2,Joint Vel 3,Joint Vel 4,Joint Vel 5,Joint Vel 6,Joint Vel 7,Joint Vel 8,Joint Vel 9,Joint Vel 10,Joint Vel 11,Joint Vel 12,Joint Vel 13,Joint Vel 14,Joint Vel 15,Joint Tor 0,Joint Tor 1,Joint Tor 2,Joint Tor 3,Joint Tor 4,Joint Tor 5,Joint Tor 6,Joint Tor 7,Joint Tor 8,Joint Tor 9,Joint Tor 10,Joint Tor 11,Joint Tor 12,Joint Tor 13,Joint Tor 14,Joint Tor 15,Joint status 0,Joint status 1,Joint status 2,Joint status 3,Joint status 4,Joint status 5,Joint status 6,Joint status 7,Joint status 8,Joint status 9,Joint status 10,Joint status 11,Joint status 12,Joint status 13,Joint status 14,Joint status 15,Joint motor temp 0,Joint motor temp 1,Joint motor temp 2,Joint motor temp 3,Joint motor temp 4,Joint motor temp 5,Joint motor temp 6,Joint motor temp 7,Joint motor temp 8,Joint motor temp 9,Joint motor temp 10,Joint motor temp 11,Joint motor temp 12,Joint motor temp 13,Joint motor temp 14,Joint motor temp 15,Joint driver temp 0,Joint driver temp 1,Joint driver temp 2,Joint driver temp 3,Joint driver temp 4,Joint driver temp 5,Joint driver temp 6,Joint driver temp 7,Joint driver temp 8,Joint driver temp 9,Joint driver temp 10,Joint driver temp 11,Joint driver temp 12,Joint driver temp 13,Joint driver temp 14,Joint driver temp 15,Joint Cmd Pos 0,Joint Cmd Pos 1,Joint Cmd Pos 2,Joint Cmd Pos 3,Joint Cmd Pos 4,Joint Cmd Pos 5,Joint Cmd Pos 6,Joint Cmd Pos 7,Joint Cmd Pos 8,Joint Cmd Pos 9,Joint Cmd Pos 10,Joint Cmd Pos 11,Joint Cmd Pos 12,Joint Cmd Pos 13,Joint Cmd Pos 14,Joint Cmd Pos 15,Joint Cmd Vel 0,Joint Cmd Vel 1,Joint Cmd Vel 2,Joint Cmd Vel 3,Joint Cmd Vel 4,Joint Cmd Vel 5,Joint Cmd Vel 6,Joint Cmd Vel 7,Joint Cmd Vel 8,Joint Cmd Vel 9,Joint Cmd Vel 10,Joint Cmd Vel 11,Joint Cmd Vel 12,Joint Cmd Vel 13,Joint Cmd Vel 14,Joint Cmd Vel 15,Joint Cmd Tor 0,Joint Cmd Tor 1,Joint Cmd Tor 2,Joint Cmd Tor 3,Joint Cmd Tor 4,Joint Cmd Tor 5,Joint Cmd Tor 6,Joint Cmd Tor 7,Joint Cmd Tor 8,Joint Cmd Tor 9,Joint Cmd Tor 10,Joint Cmd Tor 11,Joint Cmd Tor 12,Joint Cmd Tor 13,Joint Cmd Tor 14,Joint Cmd Tor 15,Joint control 0,Joint control 1,Joint control 2,Joint control 3,Joint control 4,Joint control 5,Joint control 6,Joint control 7,Joint control 8,Joint control 9,Joint control 10,Joint control 11,Joint control 12,Joint control 13,Joint control 14,Joint control 15,IMU acc_x,IMU acc_y,IMU acc_z,IMU roll,IMU pitch,IMU yaw,IMU omega_x,IMU omega_y,IMU omega_z,Steer x,Steer y,Steer z,Steer roll,Steer pitch,Steer yaw,Target State,Current State,Target Gait,Current Gait
+Time s,Timestamp,Joint Pos 0,Joint Pos 1,Joint Pos 2,Joint Pos 3,Joint Pos 4,Joint Pos 5,Joint Pos 6,Joint Pos 7,Joint Pos 8,Joint Pos 9,Joint Pos 10,Joint Pos 11,Joint Pos 12,Joint Pos 13,Joint Pos 14,Joint Pos 15,Joint Vel 0,Joint Vel 1,Joint Vel 2,Joint Vel 3,Joint Vel 4,Joint Vel 5,Joint Vel 6,Joint Vel 7,Joint Vel 8,Joint Vel 9,Joint Vel 10,Joint Vel 11,Joint Vel 12,Joint Vel 13,Joint Vel 14,Joint Vel 15,Joint Tor 0,Joint Tor 1,Joint Tor 2,Joint Tor 3,Joint Tor 4,Joint Tor 5,Joint Tor 6,Joint Tor 7,Joint Tor 8,Joint Tor 9,Joint Tor 10,Joint Tor 11,Joint Tor 12,Joint Tor 13,Joint Tor 14,Joint Tor 15,Joint status 0,Joint status 1,Joint status 2,Joint status 3,Joint status 4,Joint status 5,Joint status 6,Joint status 7,Joint status 8,Joint status 9,Joint status 10,Joint status 11,Joint status 12,Joint status 13,Joint status 14,Joint status 15,Joint motor temp 0,Joint motor temp 1,Joint motor temp 2,Joint motor temp 3,Joint motor temp 4,Joint motor temp 5,Joint motor temp 6,Joint motor temp 7,Joint motor temp 8,Joint motor temp 9,Joint motor temp 10,Joint motor temp 11,Joint motor temp 12,Joint motor temp 13,Joint motor temp 14,Joint motor temp 15,Joint driver temp 0,Joint driver temp 1,Joint driver temp 2,Joint driver temp 3,Joint driver temp 4,Joint driver temp 5,Joint driver temp 6,Joint driver temp 7,Joint driver temp 8,Joint driver temp 9,Joint driver temp 10,Joint driver temp 11,Joint driver temp 12,Joint driver temp 13,Joint driver temp 14,Joint driver temp 15,Joint Cmd Pos 0,Joint Cmd Pos 1,Joint Cmd Pos 2,Joint Cmd Pos 3,Joint Cmd Pos 4,Joint Cmd Pos 5,Joint Cmd Pos 6,Joint Cmd Pos 7,Joint Cmd Pos 8,Joint Cmd Pos 9,Joint Cmd Pos 10,Joint Cmd Pos 11,Joint Cmd Pos 12,Joint Cmd Pos 13,Joint Cmd Pos 14,Joint Cmd Pos 15,Joint Cmd Vel 0,Joint Cmd Vel 1,Joint Cmd Vel 2,Joint Cmd Vel 3,Joint Cmd Vel 4,Joint Cmd Vel 5,Joint Cmd Vel 6,Joint Cmd Vel 7,Joint Cmd Vel 8,Joint Cmd Vel 9,Joint Cmd Vel 10,Joint Cmd Vel 11,Joint Cmd Vel 12,Joint Cmd Vel 13,Joint Cmd Vel 14,Joint Cmd Vel 15,Joint Cmd Tor 0,Joint Cmd Tor 1,Joint Cmd Tor 2,Joint Cmd Tor 3,Joint Cmd Tor 4,Joint Cmd Tor 5,Joint Cmd Tor 6,Joint Cmd Tor 7,Joint Cmd Tor 8,Joint Cmd Tor 9,Joint Cmd Tor 10,Joint Cmd Tor 11,Joint Cmd Tor 12,Joint Cmd Tor 13,Joint Cmd Tor 14,Joint Cmd Tor 15,Joint control 0,Joint control 1,Joint control 2,Joint control 3,Joint control 4,Joint control 5,Joint control 6,Joint control 7,Joint control 8,Joint control 9,Joint control 10,Joint control 11,Joint control 12,Joint control 13,Joint control 14,Joint control 15,IMU acc_x,IMU acc_y,IMU acc_z,IMU roll,IMU pitch,IMU yaw,IMU omega_x,IMU omega_y,IMU omega_z,Steer x,Steer y,Steer z,Steer roll,Steer pitch,Steer yaw,Target State,Current State,Target Gait,Current Gait
+===== [7] rl_deploy change_log 全文 =====
+# Change Log
+
+## v.1.5.55
+===== [8] basic_server authority_code.toml =====
+[authority]
+authCode = ""
+===== [9] rl_deploy 顶层目录 =====
+total 32
+drwxr-xr-x  7 root root 4096 Jun 20 19:59 .
+drwxr-xr-x 13 root root 4096 Jun 20 19:59 ..
+drwxr-xr-x  2 root root 4096 Jun 20 19:59 bin
+-rw-r--r--  1 root root   26 Aug 25  2026 change_log.md
+drwxr-xr-x  2 root root 4096 Jun 20 19:59 conf
+drwxr-xr-x  2 root root 4096 Jun 20 19:59 config
+drwxr-xr-x  3 root root 4096 Jun  2  2026 lib
+drwxr-xr-x  2 root root 4096 Jun 20 19:59 scripts
+===== done =====

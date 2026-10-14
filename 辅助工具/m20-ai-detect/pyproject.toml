@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "m20-ai-detect"
+version = "0.2.0"
+description = "M20 Pro 视频流 → 外部 AI 识别服务：抽帧、推理、结构化落库（零第三方依赖）"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "djw" }]
+keywords = ["robotics", "rtsp", "rtmp", "ai-inference", "m20pro"]
+
+# 刻意留空：项目只用标准库，部署时不需要 pip install（见 docs/ADR-002）
+dependencies = []
+
+[project.optional-dependencies]
+dev = []
+
+[project.scripts]
+m20-ai-detect = "m20_ai_detect.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.unittest]
+# 说明：测试用标准库 unittest，无需 pytest

@@ -1,0 +1,157 @@
+总条目数: 500
+时间范围: +4.1s ~ +55.8s (相对 02:12:16)
+
+=== 全量非 axis / 特殊条目 ===
+{"ts": 1718907142.434937, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "user_release"}
+{"ts": 1718907146.724453, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "user_release"}
+{"ts": 1718907151.5194058, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "user_release"}
+{"ts": 1718907158.1028383, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "feed_stale"}
+{"ts": 1718907159.896826, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "feed_stale"}
+{"ts": 1718907160.2067113, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "feed_stale"}
+{"ts": 1718907160.6877367, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "user_release"}
+{"ts": 1718907167.0491247, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "user_release"}
+{"ts": 1718907175.1863008, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "user_release"}
+{"ts": 1718907178.1000347, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "user_release"}
+{"ts": 1718907181.4691236, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "feed_stale"}
+{"ts": 1718907191.5000756, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "feed_stale_escalated"}
+{"ts": 1718907191.500662, "command": "soft_estop", "params": {}, "result": "ok", "actor": "web", "confirmed": false, "forced": true, "reason": ""}
+{"ts": 1718907191.7799454, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "user_release"}
+{"ts": 1718907191.8022566, "command": "axis", "params": {"x": -0.02, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.2}, "result": "rejected", "actor": "watchdog", "confirmed": false, "forced": false, "reason": "CONTROL_DISABLED"}
+{"ts": 1718907191.8343353, "command": "axis", "params": {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}, "result": "ok", "actor": "watchdog", "confirmed": false, "forced": true, "reason": "user_release"}
+
+=== 时间线（全部条目，连续相同 axis 值折叠为 xN） ===
++  4.124s axis       x= 0.000 y=-0.150 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x32
++  5.833s axis       x=-0.050 y=-0.050 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++  5.885s axis       x=-0.030 y= 0.150 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++  5.936s axis       x=-0.010 y= 0.150 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x9
++  6.435s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=user_release FORCED
++  9.370s axis       x= 0.000 y= 0.020 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x2
++  9.523s axis       x= 0.000 y= 0.040 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++  9.575s axis       x=-0.010 y= 0.120 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++  9.627s axis       x=-0.010 y= 0.180 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++  9.678s axis       x=-0.010 y= 0.200 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x20
++ 10.724s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=user_release FORCED
++ 13.423s axis       x= 0.000 y= 0.060 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x3
++ 13.631s axis       x= 0.000 y= 0.140 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 13.683s axis       x= 0.000 y= 0.150 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 13.786s axis       x=-0.010 y= 0.190 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 13.839s axis       x=-0.010 y= 0.270 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 13.890s axis       x=-0.010 y= 0.300 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 13.993s axis       x=-0.020 y= 0.300 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x29
++ 15.519s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=user_release FORCED
++ 18.810s axis       x=-0.010 y= 0.050 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x5
++ 19.124s axis       x=-0.020 y= 0.110 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 19.175s axis       x=-0.030 y= 0.180 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 19.227s axis       x=-0.050 y= 0.260 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 19.278s axis       x=-0.060 y= 0.340 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 19.329s axis       x=-0.080 y= 0.390 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x2
++ 19.484s axis       x=-0.070 y= 0.390 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x30
++ 21.105s axis       x=-0.110 y= 0.390 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 21.156s axis       x=-0.110 y= 0.320 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 21.208s axis       x=-0.040 y=-0.400 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 21.259s axis       x=-0.030 y=-0.400 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 21.365s axis       x=-0.020 y=-0.400 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x4
++ 21.632s axis       x=-0.010 y=-0.400 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x8
++ 22.103s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=feed_stale FORCED
++ 22.607s axis       x=-0.010 y=-0.400 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x24
++ 23.897s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=feed_stale FORCED
++ 23.949s axis       x=-0.010 y=-0.400 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x4
++ 24.207s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=feed_stale FORCED
++ 24.688s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=user_release FORCED
++ 25.162s axis       x=-0.040 y=-0.030 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 25.214s axis       x=-0.040 y=-0.040 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 25.317s axis       x=-0.040 y=-0.280 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 25.368s axis       x=-0.040 y=-0.400 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 25.471s axis       x=-0.020 y=-0.400 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 25.523s axis       x=-0.010 y=-0.400 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 25.574s axis       x= 0.000 y=-0.400 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x105
++ 31.049s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=user_release FORCED
++ 33.590s axis       x= 0.040 y= 0.000 yaw=-0.030 z= 0.000 | ok       actor=watchdog 
++ 33.641s axis       x= 0.040 y= 0.000 yaw=-0.050 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 33.744s axis       x= 0.070 y= 0.000 yaw=-0.250 z= 0.000 | ok       actor=watchdog 
++ 33.798s axis       x= 0.080 y= 0.000 yaw=-0.390 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x26
++ 35.192s axis       x= 0.100 y= 0.000 yaw=-0.390 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 35.299s axis       x= 0.180 y= 0.000 yaw=-0.220 z= 0.000 | ok       actor=watchdog 
++ 35.350s axis       x= 0.130 y= 0.000 yaw= 0.230 z= 0.000 | ok       actor=watchdog 
++ 35.402s axis       x= 0.060 y= 0.000 yaw= 0.400 z= 0.000 | ok       actor=watchdog 
++ 35.453s axis       x= 0.040 y= 0.000 yaw= 0.400 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 35.556s axis       x= 0.030 y= 0.000 yaw= 0.400 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x69
++ 39.186s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=user_release FORCED
++ 40.123s axis       x= 0.060 y= 0.000 yaw=-0.010 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x3
++ 40.328s axis       x= 0.120 y= 0.000 yaw=-0.010 z= 0.000 | ok       actor=watchdog 
++ 40.380s axis       x= 0.160 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 40.431s axis       x= 0.240 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
++ 40.483s axis       x= 0.350 y= 0.000 yaw=-0.010 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 40.585s axis       x= 0.400 y= 0.000 yaw=-0.010 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 40.688s axis       x= 0.400 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x3
++ 40.895s axis       x= 0.400 y= 0.000 yaw= 0.010 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 40.998s axis       x= 0.380 y= 0.000 yaw= 0.020 z= 0.000 | ok       actor=watchdog 
++ 41.049s axis       x= 0.050 y= 0.000 yaw= 0.030 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x2
++ 41.204s axis       x=-0.340 y= 0.000 yaw= 0.020 z= 0.000 | ok       actor=watchdog 
++ 41.256s axis       x=-0.400 y= 0.000 yaw= 0.020 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 41.360s axis       x=-0.400 y= 0.000 yaw= 0.010 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x5
++ 41.669s axis       x=-0.400 y= 0.000 yaw=-0.010 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x5
++ 41.983s axis       x=-0.340 y= 0.000 yaw=-0.030 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 42.086s axis       x=-0.160 y= 0.000 yaw=-0.030 z= 0.000 | ok       actor=watchdog 
++ 42.100s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=user_release FORCED
++ 44.594s axis       x= 0.010 y= 0.000 yaw= 0.030 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 44.698s axis       x= 0.020 y= 0.000 yaw= 0.030 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x5
++ 45.007s axis       x= 0.020 y= 0.000 yaw= 0.050 z= 0.000 | ok       actor=watchdog 
++ 45.059s axis       x=-0.010 y= 0.000 yaw= 0.150 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x1
++ 45.161s axis       x=-0.020 y= 0.000 yaw= 0.190 z= 0.000 | ok       actor=watchdog 
++ 45.213s axis       x=-0.020 y= 0.000 yaw= 0.200 z= 0.000 | ok       actor=watchdog 
+        ... 上一行重复 x4
++ 45.469s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=feed_stale FORCED
++ 55.500s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=feed_stale_escalated FORCED
++ 55.501s soft_estop x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=web       FORCED
++ 55.780s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=user_release FORCED
++ 55.802s axis       x=-0.020 y= 0.000 yaw= 0.200 z= 0.000 | rejected actor=watchdog reason=CONTROL_DISABLED
++ 55.834s axis       x= 0.000 y= 0.000 yaw= 0.000 z= 0.000 | ok       actor=watchdog reason=user_release FORCED
+
+=== 统计 ===
+axis 条目: 499  |x|>0: 335 max=0.400 |y|>0: 320 max=0.400 |yaw|>0: 159 max=0.400
+
+=== STATUS ===
+===STATUS===
+{"control":{"enabled":true,"estop":true,"lease_active":false,"lease_remaining":0.0,"axis_hz":20,"sent_packets":1182,"rejected_packets":48,"last_error":"急停已激活，需先解除急停锁定","last_command":"axis"},"watchdog":{"running":true,"paused":true,"tripped":false,"stale":false,"escalate_pending":false,"hz":20,"timeout_ms":250,"stale_estop_ms":10000,"sent_frames":1229,"trip_count":1,"values":{"x":-0.02,"y":0.0,"z":0.0,"roll":0.0,"pitch":0.0,"yaw":0.2}}}
+
+=== STATE ===
+===STATE===
+{"schema_version":"1.0","type":"snapshot","server_time":1718907416.1193633,"connected":true,"since_last_update_ms":45.2,"topics":{"ack":{"ts":1718907415.9348793,"age_ms":184.2,"stale":false,"data":{"error_code":0}},"motion":{"ts":1718907416.0725622,"age_ms":46.5,"stale":false,"data":{"roll":-0.009359147399663925,"pitch":0.0157561507076025,"yaw":-1.15046226978302,"omega_z":0.0022119779605418444,"linear_x":0.0,"linear_y":0.0,"height":0.079580157995224,"payload":0.0,"remain_mile":5.4365997314453125,"joints":[0.002484302269294858,1.0604093074798584,0.008229821920394897,-0.006829650606960058,0.000532994803506881,-1.0619721412658691,-0.010641856119036674,0.030911579728126526,9.936400601873174e-05,-1.0597046613693237,-0.004372375085949898,0.05437460169196129,0.007633584085851908,1.0560097694396973,0.006423064041882753,-0.02133883908390999],"joint_count":16,"joint_names":["LF_hip_x","LF_hip_y","LF_knee","LF_wheel","RF_hip_x","RF_hip_y","RF_knee","RF_wheel","LB_hip_x","LB_hip_y","LB_knee","LB_wheel","RB_hip_x","RB_hip_y","RB_knee","RB_wheel"]}},"device":{"ts":1718907416.0735872,"age_ms":45.5,"stale":false,"data":{"batteries":[{"voltage":69,"level":25,"temperature":40.09999847412

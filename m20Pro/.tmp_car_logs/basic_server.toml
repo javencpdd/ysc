@@ -1,0 +1,258 @@
+
+[DataCollect]
+Topic = [
+'/image_raw','/fibo_fusion_ecef','/turn_mark','/LIO_ODOM',
+'/NAV_POINTS','/grid_map_3d','/target_goal_baselink',
+'/track_path_baselink','/LIDAR/POINTS','/IMU','/GPS',
+'/accumulate_cloud/cloud_base','/passable_area','/impassable_area',
+'/grid_map','/traversal_cost',
+]
+recordEnable = false
+aMapEnable = false
+
+[VelControl]
+autoResetJointsZero = false
+
+[FibocomGPS]
+ifFibocomGPS = {ifFibocomGPS=false}
+
+[Device]
+gpsUtcSyncIntervel = 720
+gpsUtcSyncFlag = false
+supportFollowControlMode = false
+videoPower = [1,1]
+lidarPower = [0,0]
+
+[Nav]
+Monitor = {accumulateCloud=true,passableArea=true,globalPlanner=true}
+
+[Nav.ConinuesWarn]
+relocationToleranceTime = 5
+relocationLossTime = 600
+locationLossTime = 30
+obstructionTime = 30
+
+[Nav.ServerTimeout]
+setParamTimeout = 5
+cancelGoalTimeout = 5
+sendGoalTimeout = 5
+mapSwitchTimeout = 10
+retryTimes = 3
+
+[Nav.Loop]
+LoopCnt = 5
+waitTime = 1
+LoopEnable = false
+
+[Nav.Go2Piont]
+distance = 0.5
+time = 30
+enable = false
+
+[Nav.Charge]
+charge_high = 100
+charge_low = 0
+stop_force_charge = ""
+waitTime = 5
+star_force_charge = ""
+charge_mode = "normal"
+waitEnable = false
+
+[Nav.DIRECTLINE]
+
+[Nav.DIRECTLINE.ORIENTEER]
+
+[Nav.DIRECTLINE.ORIENTEER.HIGH_SPEED]
+dl_line_yaw_min = 0.25
+dl_min_x = 0.25
+stop_distance = 1.5
+dl_min_y = 0.3
+barking_deceleration = 1.3
+dl_min_yaw = 0.7
+maxSpeedX = 2.0
+
+[Nav.DIRECTLINE.ORIENTEER.NORMAL_SPEED]
+dl_line_yaw_min = 0.25
+dl_min_x = 0.25
+stop_distance = 0.85
+dl_min_y = 0.3
+barking_deceleration = 1.5
+dl_min_yaw = 0.7
+maxSpeedX = 1.2
+
+[Nav.DIRECTLINE.ORIENTEER.LOW_SPEED]
+dl_line_yaw_min = 0.25
+dl_min_x = 0.25
+stop_distance = 0.6
+dl_min_y = 0.3
+barking_deceleration = 2.0
+dl_min_yaw = 0.7
+maxSpeedX = 0.5
+
+[Nav.DIRECTLINE.STAIR]
+
+[Nav.DIRECTLINE.STAIR.HIGH_SPEED]
+dl_line_yaw_min = 0.25
+dl_min_x = 0.3
+stop_distance = 1.2
+dl_min_y = 0.4
+barking_deceleration = 2.0
+dl_min_yaw = 0.7
+maxSpeedX = 1.2
+
+[Nav.DIRECTLINE.STAIR.NORMAL_SPEED]
+dl_line_yaw_min = 0.25
+dl_min_x = 0.25
+stop_distance = 1.2
+dl_min_y = 0.4
+barking_deceleration = 2.0
+dl_min_yaw = 0.7
+maxSpeedX = 1.0
+
+[Nav.DIRECTLINE.STAIR.LOW_SPEED]
+dl_line_yaw_min = 0.25
+dl_min_x = 0.25
+stop_distance = 1.2
+dl_min_y = 0.45
+barking_deceleration = 2.0
+dl_min_yaw = 0.7
+maxSpeedX = 0.8
+
+
+[Nav.DIRECTLINE.FLAT]
+
+[Nav.DIRECTLINE.FLAT.HIGH_SPEED]
+dl_line_yaw_min = 0.2
+dl_min_x = 0.1
+stop_distance = 2.5
+dl_min_y = 0.2
+barking_deceleration = 1.3
+dl_min_yaw = 0.6
+maxSpeedX = 2.0
+
+[Nav.DIRECTLINE.FLAT.NORMAL_SPEED]
+dl_line_yaw_min = 0.15
+dl_min_x = 0.1
+stop_distance = 1.2
+dl_min_y = 0.2
+barking_deceleration = 2.0
+dl_min_yaw = 0.6
+maxSpeedX = 1.2
+
+[Nav.DIRECTLINE.FLAT.LOW_SPEED]
+dl_line_yaw_min = 0.25
+dl_min_x = 0.1
+stop_distance = 0.8
+dl_min_y = 0.2
+barking_deceleration = 2.0
+dl_min_yaw = 0.6
+maxSpeedX = 0.5
+
+
+
+[Nav.AUTO]
+
+[Nav.AUTO.ORIENTEER]
+
+[Nav.AUTO.ORIENTEER.HIGH_SPEED]
+dl_line_yaw_min = 0.35
+dl_min_x = 0.25
+stop_distance = 1.3
+dl_min_y = 0.3
+barking_deceleration = 1.5
+dl_min_yaw = 0.7
+maxSpeedX = 1.5
+
+[Nav.AUTO.ORIENTEER.NORMAL_SPEED]
+dl_line_yaw_min = 0.35
+dl_min_x = 0.25
+stop_distance = 0.6
+dl_min_y = 0.3
+barking_deceleration = 2.0
+dl_min_yaw = 0.7
+maxSpeedX = 1.0
+
+[Nav.AUTO.ORIENTEER.LOW_SPEED]
+dl_line_yaw_min = 0.35
+dl_min_x = 0.25
+stop_distance = 0.6
+dl_min_y = 0.3
+barking_deceleration = 2.0
+dl_min_yaw = 0.7
+maxSpeedX = 0.5
+
+[Nav.AUTO.STAIR]
+
+[Nav.AUTO.STAIR.HIGH_SPEED]
+dl_line_yaw_min = 0.35
+dl_min_x = 0.25
+stop_distance = 1.3
+dl_min_y = 0.3
+barking_deceleration = 1.5
+dl_min_yaw = 0.7
+maxSpeedX = 1.5
+
+[Nav.AUTO.STAIR.NORMAL_SPEED]
+dl_line_yaw_min = 0.35
+dl_min_x = 0.25
+stop_distance = 0.6
+dl_min_y = 0.3
+barking_deceleration = 2.0
+dl_min_yaw = 0.7
+maxSpeedX = 1.0
+
+[Nav.AUTO.STAIR.LOW_SPEED]
+dl_line_yaw_min = 0.35
+dl_min_x = 0.25
+stop_distance = 0.6
+dl_min_y = 0.3
+barking_deceleration = 2.0
+dl_min_yaw = 0.7
+maxSpeedX = 0.5
+
+
+[Nav.AUTO.FLAT]
+
+[Nav.AUTO.FLAT.HIGH_SPEED]
+dl_line_yaw_min = 0.35
+dl_min_x = 0.25
+stop_distance = 1.3
+dl_min_y = 0.3
+barking_deceleration = 1.5
+dl_min_yaw = 0.7
+maxSpeedX = 1.5
+
+[Nav.AUTO.FLAT.NORMAL_SPEED]
+dl_line_yaw_min = 0.35
+dl_min_x = 0.25
+stop_distance = 0.85
+dl_min_y = 0.3
+barking_deceleration = 2.0
+dl_min_yaw = 0.7
+maxSpeedX = 1.0
+
+[Nav.AUTO.FLAT.LOW_SPEED]
+dl_line_yaw_min = 0.35
+dl_min_x = 0.25
+stop_distance = 0.6
+dl_min_y = 0.3
+barking_deceleration = 2.0
+dl_min_yaw = 0.7
+maxSpeedX = 0.5
+
+
+
+[Nav.COMMON]
+xy_tolerance = 0.1
+yaw_tolerance = 0.1
+maxTheta = 1.0
+maxSpeedY = 1.0
+
+
+[PowerManagement]
+Battery = {sigleBatteryMode=true}
+Sleep = {auto=true,time=5}
+
+[Base]
+Version = "1.1.2"
+

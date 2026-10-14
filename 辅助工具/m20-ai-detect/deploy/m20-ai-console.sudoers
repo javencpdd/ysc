@@ -1,0 +1,6 @@
+# m20-ai-console 提权白名单（root 所有，440）
+# 精确到完整命令行，无通配符自由参数；req 文件内的值由 helper 二次校验。
+# 装入：sudo install -m 440 deploy/m20-ai-console.sudoers /etc/sudoers.d/m20-ai-console
+#      sudo visudo -c   （校验语法，失败则不入库）
+# 2026-10-15 扩充：新增 console-start/stop/restart（供 aiDetect 终端命令与管理动作），共 9 条。
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-ai-console-helper svc-start, /usr/local/sbin/m20-ai-console-helper svc-stop, /usr/local/sbin/m20-ai-console-helper svc-restart, /usr/local/sbin/m20-ai-console-helper console-start, /usr/local/sbin/m20-ai-console-helper console-stop, /usr/local/sbin/m20-ai-console-helper console-restart, /usr/local/sbin/m20-ai-console-helper journal-vacuum, /usr/local/sbin/m20-ai-console-helper journald-limits, /usr/local/sbin/m20-ai-console-helper logrotate-rotate
