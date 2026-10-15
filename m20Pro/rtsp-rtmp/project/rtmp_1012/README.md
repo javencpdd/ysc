@@ -44,6 +44,18 @@ H.265 进 `flvmux` 依赖 **GStreamer 1.24+ 的 Enhanced RTMP**，1.16.3 完全�
 a=rtpmap:96 H265/90000
 ```
 
+> ### ⚠️ 120 主机（Lite3）实际部署状态 · 2026-10-16 现场核查
+> 上面把 120 描述为「纯 remux 直推 172.31.68.227:1936」是**概念正确**的，但**实际由两套独立 systemd 服务拼成**，且上游推送那套**默认不随开机自启**：
+>
+> | 服务 | 作用 | 当前状态 |
+> |---|---|---|
+> | `rtsp_stream.service`（`enabled`） | 起本地 MediaMTX（:8554/:1935）＋ 相机经 `push_video.sh` 发布到 `rtsp://127.0.0.1:8554/test` | active（相机→本地 RTSP 正常） |
+> | `streaming.service`（**`disabled`**） | 经 `/home/ysc/.zetton/streaming.sh` → `rtmp_forward.sh`，把本地 RTSP **转推上游** `rtmp://172.31.68.227:1936/live/lite3` | **inactive（上游推送没在跑）** |
+>
+> - **「Lite3 推流停了」= `streaming.service` 没启动**，本地相机流本身没问题。
+> - **重启不会自动恢复上游推送**：120 上没有 `crontab`/`@reboot`/`rc.local` 兜底，且 `streaming.service` 是 `disabled`。要让重启后自动推，需先 `sudo systemctl enable streaming.service`。
+> - **120 上的 `rtmp-conn-guard` 看门狗当前盯的是 `rtsp_stream.service`**（它根本不产生 `:1936` 连接），对上游僵尸**不生效**；应改盯 `streaming.service` 才能真正自愈 Lite3 推送。
+
 ## 2. 本项目的做法
 
 `config.env` 的 `SOURCE_CODEC` 决定走哪条链：
