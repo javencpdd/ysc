@@ -1,0 +1,11 @@
+[Unit]
+Description=Run RTMP connection guard periodically
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=RTMP relay connection health guard (restart on zombie upstream stall)
+Documentation=file:/usr/local/sbin/rtmp-conn-guard.sh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 以 root 运行：需读取 ss 并重启中继服务
+ExecStart=/usr/local/sbin/rtmp-conn-guard.sh
