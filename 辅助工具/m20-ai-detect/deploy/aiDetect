@@ -3,10 +3,10 @@
 # aiDetect —— m20-ai-detect 的终端运维命令（在 GOS 10.21.31.104 上以 user 执行）
 #
 # 提权模型（与 ADR-005 / ADR-007 一致）：
-#   * 服务动作（启停/重启）一律经 sudoers 精确白名单调 root helper
+#   * 服务动作（启停/重启/开机自启开关）一律经 sudoers 精确白名单调 root helper
 #     （NOPASSWD、无自由参数），本脚本不引入任何其它提权路径；
-#   * 清 spool/ 积压帧不提权——文件归 user（与网页端「清空积压帧」同款操作）；
-#   * reset = 停采样器 → 删 spool/*.jpg → 起采样器。
+#   * 清 spool/ 积压帧不提权——文件归 user（与网页端「清理数据」勾 spool 同款操作）；
+#   * reset = 停采集（仅运行中）→ 删 spool/*.jpg → 恢复采集原状态（ADR-011）。
 #
 # 装入（console-bootstrap.sh 会自动执行；手动亦可）：
 #   sudo install -m 755 deploy/aiDetect /usr/local/bin/aiDetect
@@ -34,6 +34,7 @@ die() { printf 'aiDetect: %s\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- 基础件
 state_of() { systemctl is-active "$1" 2>/dev/null || true; }
+enabled_of() { local s; s="$(systemctl is-enabled "$1" 2>/dev/null || true)"; printf '%s' "${s:-unknown}"; }
 pid_of()   { systemctl show "$1" -p MainPID --value 2>/dev/null || true; }
 since_of() {
   local s
@@ -43,7 +44,7 @@ since_of() {
 
 helper() { sudo -n "$HELPER" "$@"; }
 
-svc_action() {  # $1=sampler|console  $2=start|stop|restart
+svc_action() {  # $1=sampler|console  $2=start|stop|restart|enable|disable
   local target="$1" verb="$2" sub
   if [[ "$target" == "console" ]]; then sub="console-$verb"; else sub="svc-$verb"; fi
   helper "$sub"
@@ -96,97 +97,126 @@ print("  %s  cam=%s  检出 %s 个%s%s" % (
 }
 
 # ---------------------------------------------------------------- 子命令
-cmd_up() {
-  local all=0 a
-  for a in "$@"; do
-    case "$a" in
-      --all|-a) all=1 ;;
-      *) die "up 未知参数：$a（用法：aiDetect up [--all]）" ;;
-    esac
-  done
+# 启动行为（ADR-010）：up/down/restart/enable/disable 只作用于**控制台**；
+# 采集（采样器抽帧并调 AI）默认关闭，由「控制台网页采集开关」或 `aiDetect collect on|off` 控制。
 
+collect_hint() {  # 采集当前状态一行提示
   if [[ "$(state_of "$SAMPLER")" == "active" ]]; then
-    echo "采样器 $SAMPLER 已是 active（PID $(pid_of "$SAMPLER")），无需操作"
+    echo "采集：运行中（采样器 PID $(pid_of "$SAMPLER")）"
   else
-    echo "启动采样器 $SAMPLER …"
-    svc_action sampler start || act_hint "$SAMPLER" "启动采样器"
-    sleep 1
-    echo "  → $(state_of "$SAMPLER")（PID $(pid_of "$SAMPLER")）"
-  fi
-
-  if [[ $all -eq 1 ]]; then
-    if [[ "$(state_of "$CONSOLE")" == "active" ]]; then
-      echo "控制台 $CONSOLE 已是 active（PID $(pid_of "$CONSOLE")），无需操作"
-    else
-      echo "启动控制台 $CONSOLE …"
-      svc_action console start || act_hint "$CONSOLE" "启动控制台"
-      sleep 1
-      echo "  → $(state_of "$CONSOLE")（PID $(pid_of "$CONSOLE")）"
-    fi
+    echo "采集：已关闭（默认）。开启：控制台网页「采集开关」或 aiDetect collect on"
   fi
 }
 
-cmd_down() {
-  local all=0 a
-  for a in "$@"; do
-    case "$a" in
-      --all|-a) all=1 ;;
-      *) die "down 未知参数：$a（用法：aiDetect down [--all]）" ;;
-    esac
-  done
-
-  if [[ "$(state_of "$SAMPLER")" != "active" ]]; then
-    echo "采样器 $SAMPLER 已是 inactive，无需操作"
+cmd_up() {
+  [[ $# -eq 0 ]] || die "up 不接受参数（要开采集：aiDetect collect on）"
+  if [[ "$(state_of "$CONSOLE")" == "active" ]]; then
+    echo "控制台 $CONSOLE 已是 active（PID $(pid_of "$CONSOLE")），无需操作"
   else
-    echo "停止采样器 $SAMPLER …"
-    svc_action sampler stop || act_hint "$SAMPLER" "停止采样器"
-    echo "  → $(state_of "$SAMPLER")"
+    echo "启动控制台 $CONSOLE …"
+    svc_action console start || act_hint "$CONSOLE" "启动控制台"
+    sleep 1
+    echo "  → $(state_of "$CONSOLE")（PID $(pid_of "$CONSOLE")）"
   fi
+  collect_hint
+}
 
-  if [[ $all -eq 1 ]]; then
-    if [[ "$(state_of "$CONSOLE")" != "active" ]]; then
-      echo "控制台 $CONSOLE 已是 inactive，无需操作"
-    else
-      echo "停止控制台 $CONSOLE …"
-      svc_action console stop || act_hint "$CONSOLE" "停止控制台"
-      echo "  → $(state_of "$CONSOLE")"
-    fi
+cmd_down() {
+  [[ $# -eq 0 ]] || die "down 不接受参数（要停采集：aiDetect collect off）"
+  if [[ "$(state_of "$CONSOLE")" != "active" ]]; then
+    echo "控制台 $CONSOLE 已是 inactive，无需操作"
   else
-    echo "提示：控制台仍在运行（网页 http://<GOS-IP>:5050 可继续用）；要全停：aiDetect down --all"
+    echo "停止控制台 $CONSOLE …"
+    svc_action console stop || act_hint "$CONSOLE" "停止控制台"
+    echo "  → $(state_of "$CONSOLE")"
+  fi
+  if [[ "$(state_of "$SAMPLER")" == "active" ]]; then
+    echo "提示：采集仍在运行（不受影响）。停止采集：aiDetect collect off"
   fi
 }
 
 cmd_restart() {
-  local all=0 a
-  for a in "$@"; do
-    case "$a" in
-      --all|-a) all=1 ;;
-      *) die "restart 未知参数：$a（用法：aiDetect restart [--all]）" ;;
-    esac
-  done
-
-  echo "重启采样器 $SAMPLER …"
-  svc_action sampler restart || act_hint "$SAMPLER" "重启采样器"
+  [[ $# -eq 0 ]] || die "restart 不接受参数（要重启采样器：aiDetect collect restart）"
+  echo "重启控制台 $CONSOLE …"
+  svc_action console restart || act_hint "$CONSOLE" "重启控制台"
   sleep 1
-  echo "  → $(state_of "$SAMPLER")（PID $(pid_of "$SAMPLER")）"
+  echo "  → $(state_of "$CONSOLE")（PID $(pid_of "$CONSOLE")）"
+  echo "提示：改过 env 后要重启的是采样器：aiDetect collect restart"
+}
 
-  if [[ $all -eq 1 ]]; then
-    echo "重启控制台 $CONSOLE …"
-    svc_action console restart || act_hint "$CONSOLE" "重启控制台"
-    sleep 1
-    echo "  → $(state_of "$CONSOLE")（PID $(pid_of "$CONSOLE")）"
+cmd_collect() {  # $1=on|off|restart|status
+  [[ $# -le 1 ]] || die "collect 只接受一个参数（用法：aiDetect collect on|off|restart|status）"
+  local a="${1:-status}"
+  case "$a" in
+    on)
+      if [[ "$(state_of "$SAMPLER")" == "active" ]]; then
+        echo "采集已是运行中（采样器 PID $(pid_of "$SAMPLER")），无需操作"
+      else
+        echo "开启采集（启动采样器 $SAMPLER）…"
+        svc_action sampler start || act_hint "$SAMPLER" "启动采样器"
+        sleep 1
+        echo "  → $(state_of "$SAMPLER")（PID $(pid_of "$SAMPLER")）"
+      fi
+      ;;
+    off)
+      if [[ "$(state_of "$SAMPLER")" != "active" ]]; then
+        echo "采集已是关闭状态，无需操作"
+      else
+        echo "关闭采集（停止采样器 $SAMPLER）…"
+        svc_action sampler stop || act_hint "$SAMPLER" "停止采样器"
+        echo "  → $(state_of "$SAMPLER")"
+      fi
+      echo "提示：控制台网页仍可访问（历史数据/时间轴/文件浏览不受影响）"
+      ;;
+    restart)
+      echo "重启采样器 $SAMPLER …"
+      svc_action sampler restart || act_hint "$SAMPLER" "重启采样器"
+      sleep 1
+      echo "  → $(state_of "$SAMPLER")（PID $(pid_of "$SAMPLER")）"
+      ;;
+    status)
+      if [[ "$(state_of "$SAMPLER")" == "active" ]]; then
+        echo "采集：运行中（采样器 PID $(pid_of "$SAMPLER")，since $(since_of "$SAMPLER")）"
+      else
+        echo "采集：已关闭（默认）"
+      fi
+      ;;
+    *) die "collect 未知参数：$a（用法：aiDetect collect on|off|restart|status）" ;;
+  esac
+}
+
+cmd_autostart() {  # $1=enable|disable —— 只作用于控制台（采集自启默认且保持关闭）
+  local verb="$1"
+  local word want_state cur
+  if [[ "$verb" == "enable" ]]; then word="开启"; want_state="enabled"; else word="关闭"; want_state="disabled"; fi
+  echo "aiDetect $verb —— ${word}控制台开机自启（systemctl $verb；不影响当前运行/停止状态）"
+  cur="$(enabled_of "$CONSOLE")"
+  if [[ "$cur" == "$want_state" ]]; then
+    echo "  控制台 $CONSOLE：已是 $cur，无需操作"
+  else
+    echo "  控制台 $CONSOLE：$cur → $want_state …"
+    svc_action console "$verb" || act_hint "$CONSOLE" "${word}开机自启"
+    echo "    → $(enabled_of "$CONSOLE")"
   fi
+  echo "说明：采集（采样器）不设开机自启——重启后默认关闭，按需在控制台网页或 aiDetect collect on 开启。"
 }
 
 cmd_reset() {
   [[ $# -eq 0 ]] || die "reset 不接受参数（用法：aiDetect reset）"
   [[ -d "$BASE/spool" ]] || die "找不到 $BASE/spool（BASE 是否正确？）"
-
   echo "aiDetect reset —— 清空积压帧，以实时为准（只动 spool/）"
 
-  echo "  [1/3] 停止采样器 $SAMPLER …"
-  if ! svc_action sampler stop; then
-    die "停采样器失败，未清空任何帧（检查 sudoers 白名单：重跑 deploy/console-bootstrap.sh）"
+  # ADR-011：清空类操作不改变采集开关状态——仅在运行时停、清完恢复；原本关着不拉起
+  local was_active=0
+  [[ "$(state_of "$SAMPLER")" == "active" ]] && was_active=1
+
+  if [[ "$was_active" == "1" ]]; then
+    echo "  [1/3] 停止采集器 $SAMPLER …"
+    if ! svc_action sampler stop; then
+      die "停采集器失败，未清空任何帧（检查 sudoers 白名单：重跑 deploy/console-bootstrap.sh）"
+    fi
+  else
+    echo "  [1/3] 采集未运行，跳过停止步骤（清完也不会启动）"
   fi
 
   echo "  [2/3] 清空 spool/ 待推理帧 …"
@@ -202,13 +232,18 @@ cmd_reset() {
     echo "        已删 $frames 帧（$mb MB）"
   fi
 
-  echo "  [3/3] 启动采样器 $SAMPLER …"
-  if ! svc_action sampler start; then
-    die "清空已完成，但重启采样器失败！手动检查：journalctl -u $SAMPLER -n 30"
+  if [[ "$was_active" == "1" ]]; then
+    echo "  [3/3] 恢复启动采集器 $SAMPLER …"
+    if ! svc_action sampler start; then
+      die "清空已完成，但重启采集器失败！手动检查：journalctl -u $SAMPLER -n 30"
+    fi
+    sleep 1
+    echo "  → $(state_of "$SAMPLER")（PID $(pid_of "$SAMPLER")）"
+    echo "完成：之后按实时 1 fps 消费；raw/ 环形缓冲与 results/ 记录未动。"
+  else
+    echo "  [3/3] 采集原本未运行，保持关闭（要开始采集：aiDetect collect on）"
+    echo "完成：spool/ 已清空；raw/ 环形缓冲与 results/ 记录未动。"
   fi
-  sleep 1
-  echo "  → $(state_of "$SAMPLER")（PID $(pid_of "$SAMPLER")）"
-  echo "完成：之后按实时 1 fps 消费；raw/ 环形缓冲与 results/ 记录未动。"
 }
 
 cmd_status() {
@@ -220,8 +255,10 @@ cmd_status() {
   echo
 
   echo "服务"
-  report_svc "$SAMPLER" "采样器"
   report_svc "$CONSOLE" "控制台"
+  report_svc "$SAMPLER" "采集器"
+  echo "        采集开关  $(if [[ "$(state_of "$SAMPLER")" == "active" ]]; then echo 运行中; else echo 已关闭（默认）; fi)（切换：aiDetect collect on|off 或控制台网页）"
+  echo "        开机自启 控制台 $(enabled_of "$CONSOLE") · 采集器不设自启（手动启动：aiDetect up）"
   ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
   port="$(sed -n 's/^M20AIC_PORT=//p' "$BASE/m20-ai-console.env" 2>/dev/null | head -1 || true)"
   port="${port:-5050}"
@@ -313,11 +350,15 @@ aiDetect —— m20-ai-detect 终端运维命令（GOS 10.21.31.104）
 
 用法：aiDetect <子命令> [参数]
 
-  up [--all]                 启动采样器（--all 连控制台一起）
-  down [--all]               停止采样器（--all 连控制台一起）
-  restart [--all]            重启采样器（--all 连控制台一起）
-  reset                      清空积压帧 + 重启采样器（实时优先；只动 spool/）
-  status                     状态总览（服务 / 版本 / 积压 / 磁盘 / 最近检测）
+  up                         启动控制台（网页 5050；**不启动采集**，ADR-010）
+  down                       停止控制台
+  restart                    重启控制台（改 env 后要重启采样器用 collect restart）
+  collect on|off|status|restart
+                             采集开关：控制采样器是否抽帧并调 AI（默认关闭）
+  enable                     控制台开机自启：开启
+  disable                    控制台开机自启：关闭（采集不设自启，重启后默认关闭）
+  reset                      清空积压帧（spool/）：停采集仅当运行中，清完恢复原状态
+  status                     状态总览（服务 / 采集 / 自启 / 版本 / 积压 / 磁盘 / 最近检测）
   log [-n 行数] [-f] [-g 关键词] [--console]
                              看运行日志（默认采样器；-f 跟踪、Ctrl-C 退出）
   doctor                     上线前门禁检查（ffmpeg/AI 服务/时钟/视频源/磁盘）
@@ -325,15 +366,18 @@ aiDetect —— m20-ai-detect 终端运维命令（GOS 10.21.31.104）
 
 示例：
   aiDetect status                巡检一眼看全
-  aiDetect down                  AI 服务劣化时先停下（机器人动作不受影响）
+  aiDetect up                    机器人重启后：先起控制台网页
+  aiDetect collect on            再按需开采集（或网页「采集开关」一键切换）
+  aiDetect collect off           停采集（历史数据/时间轴/文件浏览不受影响）
   aiDetect reset                 积压太多：清空并以实时为准
   aiDetect log -g FAIL -n 300    在最近 300 行里找失败记录
 
 说明：
-  * 服务动作经 sudoers 白名单（/usr/local/sbin/m20-ai-console-helper）免密执行；
-  * reset 与网页「清空积压帧」等价：停采样器 → 删 spool/*.jpg → 起采样器；
-    只清未推理的待办帧，raw/ 环形缓冲与 results/ 记录不动；
-  * down 默认只停采样器（控制台网页仍可用）；全停用 down --all。
+  * 服务动作与自启开关经 sudoers 白名单（/usr/local/sbin/m20-ai-console-helper）免密执行；
+  * up/down/restart/enable/disable 只作用于**控制台**；采集（采样器）由 collect 或网页开关控制，
+    默认关闭（ADR-010）——不再有 --all 参数；
+  * reset 与网页「清理数据」勾 spool 等价：仅当采集在运行时 停采集 → 删 spool/*.jpg → 恢复启动；
+    采集原本关着则只清不启（ADR-010/011）；只清未推理的待办帧，raw/ 与 results/ 不动。
 EOF
 }
 
@@ -342,7 +386,7 @@ CMD="${1:-help}"
 if [[ $# -gt 0 ]]; then shift; fi
 
 case "$CMD" in
-  up|down|restart|reset|status|st|log|logs|doctor)
+  up|down|restart|reset|status|st|log|logs|doctor|enable|disable|collect)
     [[ -d "$BASE" ]] || die "工程目录不存在：$BASE（可用 M20AI_BASE_DIR 覆盖）"
     ;;
 esac
@@ -351,6 +395,9 @@ case "$CMD" in
   up)              cmd_up "$@" ;;
   down)            cmd_down "$@" ;;
   restart)         cmd_restart "$@" ;;
+  collect)         cmd_collect "$@" ;;
+  enable)          cmd_autostart enable "$@" ;;
+  disable)         cmd_autostart disable "$@" ;;
   reset)           cmd_reset "$@" ;;
   status|st)       cmd_status "$@" ;;
   log|logs)        cmd_log "$@" ;;

@@ -1,0 +1,11 @@
+[Unit]
+Description=Camera push liveness guard (kill dead-but-alive gst pipelines)
+Documentation=file:/usr/local/sbin/camera-liveness-guard.sh
+After=network.target start.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/camera-liveness-guard.sh
+# 只读探测 + 必要时杀进程，不需要网络对外访问
+PrivateTmp=yes
+NoNewPrivileges=no

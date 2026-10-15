@@ -158,3 +158,98 @@ def test_status_has_no_escalation_fields():
     for gone in ("tripped", "escalate_pending", "stale_estop_ms", "trip_count"):
         assert gone not in st
     assert st["stale"] is False
+
+
+# ---------------------------------------------------------------- 定时移动（2026-10-16）
+def test_feed_timed_runs_until_deadline_then_auto_stops():
+    """定时到点 → 自动零位停发（正常结束路径），绝不软急停。"""
+    from ingestion import asdu_parser
+
+    wd, sink, clock, gw = _watchdog(state={"motion_state": 1, "control_usage_mode": 0})
+    wd.feed_timed({"y": 0.4}, 1.0, channel="real")
+    st = wd.status()
+    assert st["timed_active"] is True
+    assert st["timed_remaining"] == 1.0
+    assert st["timed_total"] == 1.0
+    assert st["channel"] == "real"
+
+    assert wd.tick() == "axis_timed"
+    decoded = asdu_parser.decode_frame(sink.sent[-1])
+    assert decoded["command"] == 25                      # 走实时通道
+    assert decoded["items"]["Y"] == 0.4
+
+    clock.advance(0.5)
+    assert wd.tick() == "axis_timed"                     # 未到点：继续发
+    clock.advance(0.6)                                   # 越过 1.0s
+    n = len(sink.sent)
+    assert wd.tick() == "timed_done"
+    assert len(sink.sent) == n + 1                       # 零位一帧
+    decoded_zero = asdu_parser.decode_frame(sink.sent[-1])
+    assert decoded_zero["command"] == 25                 # 零位跟随通道
+    assert decoded_zero["items"]["Y"] == 0.0
+    assert gw.estop is False                             # 绝不软急停
+    assert wd.status()["timed_active"] is False
+    assert wd.tick() is None                             # 到点后停发
+
+
+def test_feed_timed_ignores_feed_staleness():
+    """定时模式不依赖 feed：跑 5s（远超 250ms 停更阈值）也不走 stale 分支。"""
+    wd, sink, clock, gw = _watchdog(state={"motion_state": 1, "control_usage_mode": 0})
+    wd.feed_timed({"x": 0.2}, 5.0)
+    for _ in range(3):
+        clock.advance(1.0)
+        assert wd.tick() == "axis_timed"
+    assert wd.status()["stale"] is False
+    assert gw.estop is False
+
+
+def test_feed_timed_abort_via_pause_cancels_and_never_estop():
+    """中止（pause）后：定时作废 + 零位停发；原 deadline 过了也不再发。"""
+    wd, sink, clock, gw = _watchdog(state={"motion_state": 1, "control_usage_mode": 0})
+    wd.feed_timed({"x": 0.3}, 10.0)
+    assert wd.tick() == "axis_timed"
+    wd.pause("timed_aborted")
+    assert wd.status()["timed_active"] is False
+    n = len(sink.sent)
+    clock.advance(20.0)
+    assert wd.tick() is None
+    assert len(sink.sent) == n
+    assert gw.estop is False
+
+
+def test_feed_timed_restart_replaces_previous():
+    """重复开始 = 以新值/新时长重启（旧 deadline 作废）。"""
+    wd, sink, clock, gw = _watchdog(state={"motion_state": 1, "control_usage_mode": 0})
+    wd.feed_timed({"x": 0.3}, 10.0)
+    wd.tick()
+    clock.advance(1.0)
+    wd.feed_timed({"y": 0.2}, 2.0, channel="steer")
+    st = wd.status()
+    assert st["timed_total"] == 2.0
+    assert st["timed_remaining"] == 2.0
+    assert st["channel"] == "steer"
+
+
+def test_manual_feed_overrides_timed_and_returns_to_steer():
+    """人抢回控制权：手动 feed 作废定时，且通道回默认主通道。"""
+    from ingestion import asdu_parser
+
+    wd, sink, clock, gw = _watchdog(state={"motion_state": 1, "control_usage_mode": 0})
+    wd.feed_timed({"x": 0.3}, 10.0, channel="real")
+    wd.tick()
+    wd.feed({"x": 0.1})
+    st = wd.status()
+    assert st["timed_active"] is False
+    assert st["channel"] == "steer"
+    assert wd.tick() == "axis"
+    assert asdu_parser.decode_frame(sink.sent[-1])["command"] == 21
+
+
+def test_feed_timed_channel_defaults_to_steer_and_bad_key_falls_back():
+    from ingestion import asdu_parser
+
+    wd, sink, clock, gw = _watchdog(state={"motion_state": 1, "control_usage_mode": 0})
+    wd.feed_timed({"x": 0.2}, 3.0, channel="banana")     # 非法通道：回退主通道
+    assert wd.status()["channel"] == "steer"
+    wd.tick()
+    assert asdu_parser.decode_frame(sink.sent[-1])["command"] == 21

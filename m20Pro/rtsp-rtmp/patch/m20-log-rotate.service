@@ -1,0 +1,10 @@
+[Unit]
+Description=Scan and rotate oversized logs (rtmp_1012)
+Documentation=file:/usr/local/sbin/m20-log-rotate.sh
+After=network.target m20video.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/m20-log-rotate.sh
+# 只做本地文件操作
+PrivateTmp=yes

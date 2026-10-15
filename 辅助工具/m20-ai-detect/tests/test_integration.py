@@ -138,12 +138,16 @@ class TestEndToEnd(unittest.TestCase):
 
     def test_health_and_clock(self):
         import tempfile
+        from datetime import datetime, timezone
 
         cfg = self._cfg(tempfile.mkdtemp(prefix="m20ai-e2e-"))
         ok, info = Detector(cfg).health()
         self.assertTrue(ok)
         self.assertEqual(info["ready_capability_count"], 33)
-        self.assertIn("2026-10-14", info["server_time"])
+        # server_time 取响应 Date 头：http.server 会自动生成"当前时间"，
+        # 盖过 handler 里手工设的 Date —— 用"接近当前 UTC 时刻"判断，避免跨日失效。
+        got = datetime.fromisoformat(info["server_time"])
+        self.assertLess(abs((datetime.now(timezone.utc) - got).total_seconds()), 2 * 86400)
 
     def test_full_pipeline_without_ffmpeg(self):
         """直接往 spool 写帧，跑 _process_camera：验证 HTTP→JSONL→raw 全链路。"""

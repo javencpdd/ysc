@@ -11,6 +11,8 @@ export function useRobotState () {
   const snapshot = ref(null)
   const wsConnected = ref(false)
   const control = ref({})
+  //: 看门狗状态（含定时移动倒计时；2026-10-16 加）
+  const watchdog = ref({})
   const socket = ref(null)
   /** 距最后一帧的展示用计时（秒），仅用于横幅文案 */
   const sinceSeconds = ref(0)
@@ -71,6 +73,7 @@ export function useRobotState () {
     try {
       const res = await getJson('/api/v1/control/status')
       control.value = res.control || {}
+      watchdog.value = res.watchdog || {}
     } catch (err) {
       console.warn('读取控制状态失败', err)
     }
@@ -89,13 +92,30 @@ export function useRobotState () {
   async function renewLease () {
     return postJson('/api/v1/control/lease')
   }
+  /** 暂停 / 恢复心跳（2026-10-16 加，遥测让渡）。
+   *  paused=true 需 confirmed=true（停心跳 = 放弃遥视，车可能仍在动）；
+   *  paused=false（恢复视野）是安全动作，不需确认。
+   *  暂停期间驱动类指令会被服务端闸拒绝（TELEMETRY_PAUSED），软急停除外。 */
+  async function sendHeartbeat (paused, confirmed = false) {
+    const res = await postJson('/api/v1/link/heartbeat', { paused, confirmed })
+    await refreshControl()
+    return res
+  }
   async function sendCommand (name, params = {}, confirmed = true) {
     const res = await postJson('/api/v1/control/command', { name, params, confirmed })
     await refreshControl()
     return res
   }
-  async function sendAxis (values, continuous = false) {
-    return postJson('/api/v1/control/axis', { ...values, continuous })
+  async function sendAxis (values, continuous = false, channel = 'steer') {
+    return postJson('/api/v1/control/axis', { ...values, continuous, channel })
+  }
+  /** 定时移动（2026-10-16 加）：后端计时 durationS 秒后自动零位停止。
+   *  channel: 'steer'（2/21 主通道）| 'real'（2/25 实时通道） */
+  async function sendTimedAxis (values, durationS, channel = 'steer') {
+    const res = await postJson('/api/v1/control/axis/timed',
+      { ...values, duration_s: durationS, channel })
+    await refreshControl()
+    return res
   }
   async function stopAxis () {
     return postJson('/api/v1/control/axis/stop')
@@ -113,8 +133,8 @@ export function useRobotState () {
 
   return {
     snapshot, topics, connected, wsConnected, degraded, staleTopics, sinceSeconds,
-    control, topic, isStale,
-    enableControl, disableControl, renewLease, sendCommand, sendAxis, stopAxis,
-    estop, clearEstop, refreshControl
+    control, watchdog, topic, isStale,
+    enableControl, disableControl, renewLease, sendCommand, sendAxis, sendTimedAxis,
+    stopAxis, estop, clearEstop, refreshControl, sendHeartbeat
   }
 }

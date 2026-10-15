@@ -15,15 +15,21 @@ from .config import FORBIDDEN_TOKENS, Camera, Config
 Log = Callable[[str], None]
 
 
-def build_ffmpeg_cmd(cam: Camera, cfg: Config, out_pattern: str) -> List[str]:
-    """拼出抽帧命令。按协议自动补输入参数，并对命令行做安全自检。"""
-    cmd: List[str] = [cfg.ffmpeg_bin, "-loglevel", "error", "-hide_banner"]
+def _input_args(cam: Camera) -> List[str]:
+    """按源协议补输入参数：RTSP 强制 TCP；RTMP 声明 flv；mjpeg over http 声明封装。"""
     if cam.src.startswith("rtsp://"):
-        cmd += ["-rtsp_transport", "tcp"]
-    elif cam.src.startswith("rtmp://"):
-        cmd += ["-f", "flv"]  # RTMP 必须显式声明封装，否则 ffmpeg 认不出
-    elif cam.src.startswith(("http://", "https://")):
-        cmd += ["-f", "mjpeg"] if cam.src.endswith((".mjpg", ".mjpeg")) else []
+        return ["-rtsp_transport", "tcp"]
+    if cam.src.startswith("rtmp://"):
+        return ["-f", "flv"]  # RTMP 必须显式声明封装，否则 ffmpeg 认不出
+    if cam.src.startswith(("http://", "https://")) and cam.src.endswith((".mjpg", ".mjpeg")):
+        return ["-f", "mjpeg"]
+    return []
+
+
+def build_ffmpeg_cmd(cam: Camera, cfg: Config, out_pattern: str) -> List[str]:
+    """拼出常驻抽帧命令。按协议自动补输入参数，并对命令行做安全自检。"""
+    cmd: List[str] = [cfg.ffmpeg_bin, "-loglevel", "error", "-hide_banner"]
+    cmd += _input_args(cam)
     cmd += list(cfg.ffmpeg_extra)
     cmd += [
         "-i", cam.src,
@@ -32,6 +38,27 @@ def build_ffmpeg_cmd(cam: Camera, cfg: Config, out_pattern: str) -> List[str]:
         "-strftime", "1",
         "-f", "image2",
         out_pattern,
+    ]
+    _assert_safe(cmd)
+    return cmd
+
+
+def build_snapshot_cmd(cam: Camera, cfg: Config) -> List[str]:
+    """单次抓拍命令（控制台「相机画面」，ADR-012）：一次握手抓 1 帧、mjpeg 输出到 stdout。
+
+    与常驻抽帧的差异：不做 fps 过滤、不落盘、抓完即退。RTSP 单次握手实测
+    1.6~2.0 s（2026-10-14 AOS），调用方必须带超时与短缓存（见 snapshot.py）。
+    """
+    cmd: List[str] = [cfg.ffmpeg_bin, "-loglevel", "error", "-hide_banner"]
+    cmd += _input_args(cam)
+    cmd += list(cfg.ffmpeg_extra)
+    cmd += [
+        "-i", cam.src,
+        "-frames:v", "1",
+        "-q:v", str(cfg.jpeg_q),
+        "-f", "image2pipe",
+        "-vcodec", "mjpeg",
+        "pipe:1",
     ]
     _assert_safe(cmd)
     return cmd

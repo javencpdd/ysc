@@ -21,7 +21,8 @@ from typing import Any, Callable, Deque, Dict, List, Optional
 
 from control import patrol_codec
 from errors import (ControlBlacklistError, ControlDisabledError, ControlError,
-                    ControlLeaseError, ControlPreconditionError)
+                    ControlLeaseError, ControlPreconditionError,
+                    ControlTelemetryError)
 from logging_setup import get_logger
 
 logger = get_logger("control.gateway")
@@ -95,6 +96,7 @@ class ControlGateway:
                  lease_seconds: float = 5.0, audit_size: int = 500,
                  axis_min: float = -0.40, axis_max: float = 0.40,
                  state_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+                 telemetry_provider: Optional[Callable[[], bool]] = None,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self._sink = sink
         self._enabled = bool(enabled)
@@ -102,6 +104,8 @@ class ControlGateway:
         # 轴值安全上限（2026-10-15 真机实测：0.25 舒适 / 0.40 上限 / ≥0.70 危险）
         self._axis_limits = {"min": axis_min, "max": axis_max}
         self._state_provider = state_provider
+        #: 遥测是否暂停（心跳停发）—— 返回 True 时禁止驱动（见 _check_telemetry）
+        self._telemetry_provider = telemetry_provider
         self._clock = clock
 
         self._lease_until = 0.0
@@ -159,19 +163,48 @@ class ControlGateway:
         self._audit_append("soft_estop", {}, "ok" if ok else "send_failed", forced=True)
         return {"ok": ok, "estop": True}
 
-    def send_safety_zero(self, actor: str = "watchdog", reason: str = "") -> bool:
+    def send_safety_zero(self, actor: str = "watchdog", reason: str = "",
+                         command: str = "axis") -> bool:
         """安全零位帧（全轴 0）—— **豁免全部四道闸**（内部专用，不暴露 HTTP）。
 
         零位在任何车体状态下都是安全操作（速度清零），与 soft_estop 同理念
         "安全手段优先"：不能因为租约过期 / 开关关闭 / 前置不满足就把机器人
         留在运动中。2026-10-15 实测发现：看门狗零位兜底被租约闸拦截
         （``控制指令 axis -> rejected``）→ 兜底形同虚设，特设本通道。
+
+        ``command``：零位走哪条轴通道（"axis" 主 / "axis_real" 实时）——
+        与正在控制的通道一致，确保同一订阅方立刻看到零位。
         """
         params = {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}
-        ok = self._send_raw(patrol_codec.encode("axis", params))
-        self._audit_append("axis", params, "ok" if ok else "send_failed",
+        ok = self._send_raw(patrol_codec.encode(command, params))
+        self._audit_append(command, params, "ok" if ok else "send_failed",
                            actor=actor, forced=True, reason=reason or "safety_zero")
         return ok
+
+    def precheck(self, name: str, params: Optional[Dict[str, Any]] = None
+                 ) -> Optional[Dict[str, Any]]:
+        """仅过闸、不发送（供"先验后行"场景：定时移动等需要即时反馈的入口）。
+
+        返回 ``None`` = 通过；否则返回与 ``execute()`` 同构的拒绝信息。
+        只保证"起步可行"——时序性闸（租约）在执行期间仍会逐帧复检；
+        被拒同样计入审计与 rejected 计数（前端"点了没反应"可查审计定位）。
+        """
+        params = dict(params or {})
+        try:
+            self._check_blacklist(name, params)
+            self._check_enabled(name)
+            self._check_estop(name)
+            self._check_telemetry(name)
+            self._check_lease(name)
+            self._check_precondition(name)
+            return None
+        except ControlError as exc:
+            self.rejected_packets += 1
+            self.last_error = str(exc)
+            self._audit_append(name, params, "rejected",
+                               reason=getattr(exc, "reason", "rejected"))
+            return {"ok": False, "command": name, "reason": getattr(exc, "reason", "rejected"),
+                    "detail": str(exc), "status": getattr(exc, "status", 403)}
 
     # ------------------------------------------------------ 指令执行
     def execute(self, name: str, params: Optional[Dict[str, Any]] = None,
@@ -182,6 +215,7 @@ class ControlGateway:
             self._check_blacklist(name, params)
             self._check_enabled(name)
             self._check_estop(name)
+            self._check_telemetry(name)
             self._check_lease(name)
             self._check_precondition(name)
             params = self._clamp_params(name, params)
@@ -220,6 +254,27 @@ class ControlGateway:
         if self._estop and name not in ("soft_estop", "clear_estop"):
             raise ControlDisabledError("急停已激活，需先解除急停锁定")
 
+    def _check_telemetry(self, name: str) -> None:
+        """闸 3.5：遥测暂停时禁止驱动（2026-10-16 加，"蒙眼不开车"）。
+
+        停发心跳后我们**看不到车**（basic_server 会清除本客户端、停止状态推送），
+        但指令链路是另一个独立 UDP socket、照旧可达 —— 此时任何驱动指令都是
+        "蒙眼开车"，一律拒绝。
+
+        豁免：``heartbeat``（恢复遥视的路径本身，否则"停心跳→想恢复"会被自己
+        的闸锁死）、``soft_estop``（``always_allowed``，安全手段优先）。
+        """
+        if self._telemetry_provider is None:
+            return
+        if name in ("heartbeat", "soft_estop"):
+            return
+        try:
+            paused = bool(self._telemetry_provider())
+        except Exception:  # noqa: BLE001 - 探针异常不拖死指令链路
+            return
+        if paused:
+            raise ControlTelemetryError()
+
     def _check_lease(self, name: str) -> None:
         """闸 1：租约（WS 断开即失效）。"""
         always = patrol_codec.COMMANDS.get(name, {}).get("always_allowed", False)
@@ -249,8 +304,8 @@ class ControlGateway:
                 "轴指令仅支持常规模式（ControlUsageMode=0），当前=%s" % mode)
 
     def _clamp_params(self, name: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """闸 3：值域钳制（服务端二次截断）。"""
-        if name == "axis":
+        """闸 3：值域钳制（服务端二次截断）——两条轴通道同构，都要钳。"""
+        if name in ("axis", "axis_real"):
             limits = self._axis_limits
             for key, field in (("x", "X"), ("y", "Y"), ("z", "Z"),
                                ("roll", "Roll"), ("pitch", "Pitch"), ("yaw", "Yaw")):

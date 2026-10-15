@@ -7,4 +7,4 @@
   * 不干扰机器人：命令行与命名刻意避开上游 pkill 的关键词（见 capture.FORBIDDEN_TOKENS）。
 """
 
-__version__ = "0.4.0"
+__version__ = "0.7.0"

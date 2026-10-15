@@ -101,7 +101,18 @@ class ControlSettings(BaseSettings):
 
 
 class VideoSettings(BaseSettings):
-    """视频代理（M3，本期默认关）。"""
+    """视频（M3，本期默认关）。
+
+    **链路（2026-10-16 改造为「浏览器直连 MediaMTX」）**：
+      1. WebRTC / WHEP  ``http://<host>:8889/<path>/whep``        主链路 ~0.3s
+      2. MediaMTX HLS   ``http://<host>:8888/<path>/index.m3u8``  兜底 ~2–3s
+      3. 后端 ffmpeg 代理 ``/hls/live.m3u8``                       第三层兜底（可选）
+
+    196 上是 MediaMTX **v1.4.2**（`webrtc: yes` / `webrtcAddress: :8889` /
+    `webrtcAllowOrigin: '*'` / ICE UDP `:8189`），两路都已验证可出图
+    （video1 前 / video2 后，均 H.264 800×600）。因此**后端不再中转视频流**——
+    既省一路 ffmpeg，又能前后双路同时看（旧的单路 ffmpeg 中继做不到）。
+    """
 
     model_config = SettingsConfigDict(env_prefix="M20_VIDEO__")
 
@@ -114,6 +125,18 @@ class VideoSettings(BaseSettings):
     hls_dir: str = "/tmp/m20-hls"
     #: 预留：若需独立端口提供 HLS（实现默认挂在主应用 /hls 路径下）
     hls_port: int = 8081
+    #: ---- 直连 MediaMTX（WebRTC 主 + HLS 兜底）----
+    #: 是否启用 WebRTC 主链路（浏览器原生 RTCPeerConnection + WHEP 拉流）
+    webrtc_enabled: bool = True
+    #: MediaMTX 的 WebRTC HTTP 端口（其配置 webrtcAddress: :8889）
+    webrtc_port: int = 8889
+    #: MediaMTX 自带 HLS 端口（其配置 hlsAddress: :8888；与后端代理的 /hls 不同）
+    mediamtx_hls_port: int = 8888
+    #: 前后两路（MediaMTX path 名），label 供前端显示
+    front_path: str = "video1"
+    front_label: str = "前相机"
+    back_path: str = "video2"
+    back_label: str = "后相机"
 
 
 class Settings(BaseSettings):

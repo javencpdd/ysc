@@ -9,12 +9,19 @@
   GET  /api/logs            ?level=&q=&n=   过滤后的 journal 行
   POST /api/detect          单帧检测（body 为 JPEG，?cap=&include_image=1&save=1）
   GET  /api/recent          ?n=    今日 JSONL 尾部真实检测记录（解析后）
+  GET  /api/snapshot        ?cam=   相机画面单帧（raw 最新帧优先/即时抓帧兜底，ADR-012）
+  GET  /api/saved           ?n=&cam=   目标图片时间轴（saved/ 成对文件汇总，ADR-008）
+  GET  /api/saved/img       ?cam=&frame=  单张留存图片（JPEG 二进制）
   GET  /api/response        ?frame=&cam=&redetect=1   单帧响应详情（已留存直读/原帧重测）
-  GET  /api/retention       当前留存策略
-  POST /api/retention       混合保存（env 级 + root helper 级 + spool 清空）
+  GET  /api/retention       当前留存策略（含「关注目标」与今日检出标签统计）
+  POST /api/retention       混合保存（env 级 + root helper 级 + 数据清空 + 按需重启采集）
+  GET  /api/files           ?dir=&n=&match=  只读文件浏览（限白名单根，ADR-009）
+  GET  /api/file            ?path=&tail=&dl=1 单文件只读（文本可 tail 末尾 N 行）
 
 提权与安全见 sysactions 模块 docstring 与 docs/ADR-005。
-响应留存与查看见 docs/ADR-006。
+响应留存与查看见 docs/ADR-006；时间轴与 saved/ 清理见 docs/ADR-008；
+受限只读文件浏览见 docs/ADR-009；关注目标与数据清空见 docs/ADR-011；
+相机画面预览见 docs/ADR-012。
 """
 from __future__ import annotations
 
@@ -139,11 +146,13 @@ def detect_single_frame(
     cap: str = "",
     include_image: bool = True,
     save: bool = False,
+    clock_offset: Optional[float] = None,
 ) -> Dict[str, Any]:
     """单帧检测：直接调 AI 接口，不落库不进环形缓冲。
 
     save=True 时（ADR-006）把标注结果图 + 原始响应对落 saved/console/，
-    与采样器的条件留存同一格式，便于控制台「单帧检测」也能留证据。
+    与采样器的条件留存同一格式，便于控制台「单帧检测」也能留证据；
+    留存 JSON 带 ``_saved_at``（真实时钟，来自 clock_offset）供时间轴显示（ADR-008）。
     """
     from datetime import datetime
 
@@ -176,9 +185,20 @@ def detect_single_frame(
         if img:
             out["result_image"] = "data:image/jpeg;base64," + base64.b64encode(img).decode()
     if save:
+        from datetime import datetime, timedelta
+
         stem = "console_%s" % datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = ""
+        if clock_offset is not None:
+            ts = (datetime.now() + timedelta(seconds=clock_offset)).isoformat(
+                timespec="milliseconds"
+            )
         img_rel, json_rel = Store(cfg).save_pair(
-            "console", stem, det.decode_result_image(payload), payload
+            "console",
+            stem,
+            det.decode_result_image(payload),
+            payload,
+            meta={"_saved_at": ts},
         )
         if img_rel:
             out["saved_image"] = img_rel
@@ -187,43 +207,83 @@ def detect_single_frame(
     return out
 
 
-# ---------------------------------------------------------------- 清空积压帧
-def clear_spool_with_restart(
-    cfg: ConsoleConfig, runner=sysactions.default_runner
+# ---------------------------------------------------------------- 数据清空（ADR-011）
+#: purge 字段可接受的类别（与 Store.PURGE_KINDS 一致）。
+PURGE_SCOPES = ("saved", "raw", "results", "spool")
+
+_PURGE_SCOPE_LABEL = {
+    "saved": "saved/ 留存图片",
+    "raw": "raw/ 原始帧",
+    "results": "results/ 检测记录",
+    "spool": "spool/ 积压帧",
+}
+
+
+def _fmt_bytes(nbytes: int) -> str:
+    if nbytes < 1024:
+        return "%d B" % nbytes
+    if nbytes < 1048576:
+        return "%.1f KB" % (nbytes / 1024.0)
+    return "%.1f MB" % (nbytes / 1048576.0)
+
+
+def _purge_with_restart(
+    cfg: ConsoleConfig, kinds: List[str], runner=sysactions.default_runner
 ) -> Tuple[bool, str]:
-    """清空 spool/ 积压帧（2026-10-15 新增）：停采样器 → 删帧 → 起采样器。
+    """清空所选数据（2026-10-16 新增，ADR-011）：停采集（仅当在运行）→ 清空 → 恢复采集。
 
     提权模型（与 ADR-005 一致）：
       * 启停走 sudoers 白名单里的 svc-stop/svc-start（root helper）；
-      * 删帧本身**不提权**——spool/ 归 user 所有，控制台与采样器同 user；
-      * 停失败即中止（运行中删帧会与抽帧/推理竞争，且删除期间会有新帧写入）；
-      * 全程 logger 留痕。
-    只清 spool/（未推理的待办帧）；raw/ 环形缓冲与 results/ JSONL 不动。
+      * 删文件本身**不提权**——spool/raw/results/saved 归 user，控制台与采样器同 user；
+      * 采集**原本未运行则不启动**（ADR-010：采集开关由用户掌握，清数据不改变它）；
+      * 采集状态无法确认（无 systemctl / 超时）时不碰服务直接清——各写入点均为
+        短 open/write/close 或整文件写入，与运行中采集的竞争最坏损失极少量新记录；
+      * 停采集失败即中止（未清任何数据，避免与写入竞争、保证"清得干净"）。
+    返回 (ok, note)；note 含每类删除统计与采集恢复结果。全程 logger 留痕。
     """
-    ok, msg = sysactions.service_action("stop", cfg.helper, runner)
-    if not ok:
-        return False, "停采样器失败：%s" % msg
-    try:
-        from m20_ai_detect.store import Store
+    from m20_ai_detect.store import Store
 
-        frames, nbytes = Store(cfg.sampler_cfg).clear_spool()
-    except OSError as exc:
-        sysactions.service_action("start", cfg.helper, runner)  # 别把服务落在停止态
-        return False, "清空失败：%s（采样器已尝试恢复启动）" % exc
-    note = "已清空积压 %d 帧（%.1f MB），采样器已重启，以实时为主" % (
-        frames,
-        nbytes / 1048576.0,
-    )
-    ok2, msg2 = sysactions.service_action("start", cfg.helper, runner)
-    if not ok2:
-        return False, note + "；但重启采样器失败：%s" % msg2
+    was_active = sysactions.service_is_active(runner)
+    if was_active is True:
+        ok, msg = sysactions.service_action("stop", cfg.helper, runner)
+        if not ok:
+            return False, "停采集失败，未清任何数据：%s" % msg
+    try:
+        stats = Store(cfg.sampler_cfg).purge(kinds)
+    except (OSError, ValueError) as exc:
+        if was_active is True:
+            sysactions.service_action("start", cfg.helper, runner)  # 别把采集落在停止态
+            return False, "清空失败：%s（采集已尝试恢复启动）" % exc
+        return False, "清空失败：%s" % exc
+
+    parts = []
+    total_files = 0
+    total_bytes = 0
+    for kind in kinds:
+        files, nbytes = stats.get(kind, (0, 0))
+        total_files += files
+        total_bytes += nbytes
+        parts.append(
+            "%s %d 个文件（%s）" % (_PURGE_SCOPE_LABEL[kind], files, _fmt_bytes(nbytes))
+        )
+    note = "已清空：" + "、".join(parts)
+    if was_active is True:
+        ok2, msg2 = sysactions.service_action("start", cfg.helper, runner)
+        if ok2:
+            note += "；采集已重启恢复"
+        else:
+            note += "；⚠ 恢复采集失败：%s（请手动开启：aiDetect collect on）" % msg2
+    elif was_active is False:
+        note += "；采集未运行，未做启停"
+    else:
+        note += "；未能确认采集状态，未做启停"
     try:
         runner(
             [
                 "logger",
                 "-t",
                 "m20-ai-console",
-                "spool cleared: %d frames, %.1f MB" % (frames, nbytes / 1048576.0),
+                "purge %s: %d file(s), %d bytes" % (",".join(kinds), total_files, total_bytes),
             ],
             10,
         )
@@ -270,9 +330,291 @@ def _recent_records(base_dir: str, n: int = 12) -> List[Dict[str, Any]]:
     return out
 
 
+# ---------------------------------------------------------------- 关注目标（ADR-011）
+#: 标签合法性：英文字母/数字与 . _ -（覆盖 YOLO 标签集），单个最长 40 字符。
+_LABEL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
+
+#: 单次接受的标签数上限
+_LABEL_MAX = 32
+
+#: 今日检出标签统计缓存（60s TTL；清空 results/ 后由 _post_retention 主动失效）。
+_label_stats_cache: Dict[str, Any] = {"t": 0.0, "base": "", "data": []}
+
+
+def _label_stats(
+    base_dir: str, max_bytes: int = 4 * 1024 * 1024, top: int = 20
+) -> List[Dict[str, Any]]:
+    """今日 JSONL 尾部按 label 聚合计数（降序 top N）——网页「关注目标」的备选清单。
+
+    只读尾部 max_bytes（防 any 模式大文件拖慢页面）；首行可能被截断，丢弃。
+    60s 内重复调用走缓存；解析失败的行静默跳过（与 _recent_records 一致）。
+    """
+    cache = _label_stats_cache
+    now = time.time()
+    if cache["base"] == base_dir and now - cache["t"] < 60.0:
+        return cache["data"]  # type: ignore[return-value]
+
+    from datetime import datetime
+
+    path = os.path.join(base_dir, "results", datetime.now().strftime("%Y%m%d") + ".jsonl")
+    data = b""
+    truncated = False
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            truncated = size > max_bytes
+            if truncated:
+                fh.seek(size - max_bytes)
+            else:
+                fh.seek(0)  # 不截断时必须回到文件头，否则 read() 从 EOF 读到空
+            data = fh.read()
+    except OSError:
+        data = b""
+    lines = data.decode("utf-8", errors="ignore").splitlines()
+    if truncated and lines:
+        lines = lines[1:]  # 首行可能被截断
+    counts: Dict[str, int] = {}
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rec = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        for it in rec.get("items") or []:
+            label = it.get("label")
+            if label:
+                key = str(label)
+                counts[key] = counts.get(key, 0) + 1
+    out = [
+        {"label": k, "count": v}
+        for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
+    ]
+    cache.update(t=now, base=base_dir, data=out)
+    return out
+
+
 def _safe_component(s: str) -> bool:
     """帧名/相机名只允许安全字符（防路径穿越）。"""
     return bool(re.fullmatch(r"[A-Za-z0-9._-]+", s or "")) and ".." not in s
+
+
+# ---------------------------------------------------------------- 受限只读文件浏览（ADR-009）
+#: 只读浏览允许进入的**一级目录**。工程代码、env 文件、systemd 配置一律不在列。
+FILE_ROOTS = ("saved", "raw", "results", "spool", "log")
+
+#: 单文件整读上限（超过必须改用 tail=N，避免把 200MB 的 jpg/大 jsonl 灌进内存）
+FILE_MAX_BYTES = 32 * 1024 * 1024
+
+#: tail 最大行数
+FILE_TAIL_MAX = 5000
+
+_FILE_EXT_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".json": "application/json; charset=utf-8",
+    ".jsonl": "text/plain; charset=utf-8",
+    ".log": "text/plain; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".md": "text/plain; charset=utf-8",
+    ".yml": "text/plain; charset=utf-8",
+    ".yaml": "text/plain; charset=utf-8",
+}
+
+
+def _safe_rel_path(rel: str) -> bool:
+    """只读浏览的相对路径校验：逐级检查字符、禁止 ..、首段必须落在白名单根。"""
+    if not rel or rel.startswith("/") or "\\" in rel or ".." in rel:
+        return False
+    parts = [p for p in rel.split("/") if p]
+    if not parts or len(parts) > 8:
+        return False
+    for p in parts:
+        if not _safe_component(p):
+            return False
+    return parts[0] in FILE_ROOTS
+
+
+def _resolve_under(base_dir: str, rel: str) -> Optional[str]:
+    """把 rel 解析成 base_dir 下的绝对路径；越界/穿越一律返回 None。
+
+    除字符校验外再补一次 realpath 前缀比对，堵住符号链接指向工程外的可能。
+    """
+    if not _safe_rel_path(rel):
+        return None
+    root = os.path.realpath(base_dir)
+    full = os.path.realpath(os.path.join(root, rel))
+    if full != root and not full.startswith(root + os.sep):
+        return None
+    return full
+
+
+def _tail_bytes(path: str, n: int) -> bytes:
+    """取文本文件末尾 n 行：只回读尾部若干块，不整读大文件。"""
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        pos = fh.tell()
+        chunk = 65536
+        buf = b""
+        while pos > 0 and buf.count(b"\n") <= n:
+            start = max(0, pos - chunk)
+            fh.seek(start)
+            buf = fh.read(pos - start) + buf
+            pos = start
+    lines = buf.splitlines()
+    return b"\n".join(lines[-n:]) + (b"\n" if lines else b"")
+
+
+def _file_list(base_dir: str, rel: str = "", limit: int = 300, match: str = "") -> Dict[str, Any]:
+    """列出只读目录内容（ADR-009）。rel 为空时只列出白名单根。"""
+    limit = max(1, min(int(limit), 2000))
+    if rel:
+        target = _resolve_under(base_dir, rel)
+        if target is None:
+            return {"ok": False, "error": "路径不在只读白名单内"}
+        if not os.path.isdir(target):
+            return {"ok": False, "error": "不是目录"}
+        cur = rel.strip("/")
+    else:
+        target, cur = os.path.realpath(base_dir), ""
+    try:
+        names = sorted(os.listdir(target))
+    except OSError as exc:
+        return {"ok": False, "error": "目录不可读：%s" % exc}
+    if not cur:
+        names = [n for n in names if n in FILE_ROOTS]
+    dirs: List[Dict[str, Any]] = []
+    files: List[Dict[str, Any]] = []
+    for name in names:
+        if match and match.lower() not in name.lower():
+            continue
+        p = os.path.join(target, name)
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        node = {
+            "name": name,
+            "path": ("%s/%s" % (cur, name)) if cur else name,
+            "type": "dir" if os.path.isdir(p) else "file",
+            "ts": _iso_from_epoch(st.st_mtime),
+        }
+        if node["type"] == "dir":
+            dirs.append(node)
+        else:
+            node["size"] = st.st_size
+            files.append(node)
+    files.sort(key=lambda e: e["ts"], reverse=True)  # 新文件在前
+    ordered = dirs + files
+    return {
+        "ok": True,
+        "dir": cur,
+        "parent": "/".join(cur.split("/")[:-1]) if cur else "",
+        "roots": list(FILE_ROOTS),
+        "entries": ordered[:limit],
+        "count": len(ordered),
+        "truncated": len(ordered) > limit,
+    }
+
+
+# ---------------------------------------------------------------- 目标图片时间轴
+def _iso_from_epoch(epoch: float) -> str:
+    from datetime import datetime
+
+    return datetime.fromtimestamp(epoch).isoformat(timespec="milliseconds")
+
+
+def _saved_gallery(
+    base_dir: str,
+    limit: int = 1000,
+    cam: str = "",
+    offset_sec: Optional[float] = None,
+) -> Dict[str, Any]:
+    """目标图片时间轴（ADR-008）：汇总 saved/<cam>/ 成对文件，最新 limit 条倒序返回。
+
+    * 以 .jpg 为驱动（时间轴只展示图片；只有 .json 的留存不算条目）；
+    * ts 优先取留存 JSON 的 ``_saved_at``（采样时写入的真实时钟，含偏移修正）；
+      老文件没有该字段时退化为 文件 mtime + 时钟偏移(offset_sec)；
+    * 只读操作，不修改任何文件；单个文件读取失败跳过（清理竞态下属正常）。
+    """
+    saved_root = os.path.join(base_dir, "saved")
+    limit = max(1, min(int(limit), 5000))
+    off = offset_sec or 0.0
+    try:
+        cams = sorted(
+            n for n in os.listdir(saved_root) if os.path.isdir(os.path.join(saved_root, n))
+        )
+    except OSError:
+        cams = []
+    entries = []  # (mtime, cam, stem, jpg_path, json_path)
+    for cname in cams:
+        if not _safe_component(cname):
+            continue
+        d = os.path.join(saved_root, cname)
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for name in names:
+            if not name.endswith(".jpg"):
+                continue
+            jpg = os.path.join(d, name)
+            try:
+                mtime = os.stat(jpg).st_mtime
+            except OSError:
+                continue
+            stem = name[:-4]
+            entries.append((mtime, cname, stem, jpg, os.path.join(d, stem + ".json")))
+    cams_present = sorted({e[1] for e in entries})
+    total = len(entries)
+    if cam:
+        entries = [e for e in entries if e[1] == cam]
+    entries.sort(key=lambda e: e[0], reverse=True)  # 最新在前；ts 缺失时以其为排序依据
+    records: List[Dict[str, Any]] = []
+    for mtime, cname, stem, _jpg, js in entries[:limit]:
+        ts = ""
+        items: List[Dict[str, Any]] = []
+        alert = False
+        try:
+            with open(js, encoding="utf-8") as fh:
+                doc = json.load(fh)
+            ts = str(doc.get("_saved_at") or "")
+            alert = bool(doc.get("_alert"))
+            raw_items = ((doc.get("results") or {}).get("items")) or []
+            items = [
+                {"label": it.get("label"), "score": it.get("score")}
+                for it in raw_items
+                if isinstance(it, dict)
+            ][:6]
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
+        if not ts:
+            ts = _iso_from_epoch(mtime + off)
+        records.append(
+            {
+                "cam": cname,
+                "stem": stem,
+                "frame": stem + ".jpg",  # 与 /api/response 的 frame 约定一致
+                "ts": ts,
+                "n_items": len(items),
+                "items": items,
+                "alert": alert,
+                "url": "/api/saved/img?cam=%s&frame=%s" % (cname, stem + ".jpg"),
+            }
+        )
+    records.sort(key=lambda r: r["ts"], reverse=True)  # ISO 串字典序 = 时间序
+    return {
+        "records": records,
+        "cams": cams_present,
+        "total": total,
+        "scanned": len(entries),
+        "oldest": records[-1]["ts"] if records else "",
+        "newest": records[0]["ts"] if records else "",
+    }
 
 
 # ---------------------------------------------------------------- 响应详情
@@ -440,10 +782,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._get_logs()
             if path == "/api/recent":
                 return self._get_recent()
+            if path == "/api/snapshot":
+                return self._get_snapshot()
+            if path == "/api/saved/img":
+                return self._get_saved_img()
+            if path == "/api/saved":
+                return self._get_saved()
             if path == "/api/response":
                 return self._get_response()
             if path == "/api/retention":
                 return self._get_retention()
+            if path == "/api/files":
+                return self._get_files()
+            if path == "/api/file":
+                return self._get_file()
             self._err(404, "not found")
         except Exception as exc:  # 全局兜底：任何异常都不许打爆服务
             self._err(500, "%s: %s" % (type(exc).__name__, exc))
@@ -556,6 +908,102 @@ class Handler(BaseHTTPRequestHandler):
             }
         )
 
+    def _get_saved(self) -> None:
+        cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
+        q = self._query()
+        try:
+            n = int(q.get("n", "1000"))
+        except ValueError:
+            n = 1000
+        scfg = cfg.sampler_cfg
+        offset = self.server.cached_offset()  # type: ignore[attr-defined]
+        if offset is None:
+            offset = scfg.ts_offset_sec
+        out = _saved_gallery(scfg.base_dir, n, q.get("cam", ""), offset)
+        out["ok"] = True
+        out["save_mode"] = scfg.save_mode
+        self._send_json(out)
+
+    def _get_saved_img(self) -> None:
+        cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
+        q = self._query()
+        cam, frame = q.get("cam", ""), q.get("frame", "")
+        if not _safe_component(cam) or not _safe_component(frame):
+            return self._err(400, "cam/frame 含非法字符")
+        stem = os.path.splitext(frame)[0]
+        path = os.path.join(cfg.sampler_cfg.base_dir, "saved", cam, stem + ".jpg")
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            return self._err(404, "图片不存在或已被留存清理删除")
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "private, max-age=3600")  # 留存文件不改写，可缓存
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _get_files(self) -> None:
+        """只读目录列表（ADR-009）。"""
+        cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
+        q = self._query()
+        try:
+            n = int(q.get("n", "300") or 300)
+        except ValueError:
+            return self._err(400, "n 必须是整数")
+        out = _file_list(
+            cfg.sampler_cfg.base_dir, q.get("dir", ""), n, q.get("match", "")
+        )
+        self._send_json(out, 200 if out.get("ok") else 400)
+
+    def _get_file(self) -> None:
+        """单文件只读（ADR-009）：图片/JSON 直出，大文本用 tail=N 读末尾。"""
+        cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
+        q = self._query()
+        rel = q.get("path", "")
+        if not rel:
+            return self._err(400, "缺少 path 参数")
+        full = _resolve_under(cfg.sampler_cfg.base_dir, rel)
+        if full is None:
+            return self._err(400, "路径不在只读白名单内（允许根：%s）" % ", ".join(FILE_ROOTS))
+        if not os.path.isfile(full):
+            return self._err(404, "文件不存在或不是普通文件")
+        try:
+            size = os.path.getsize(full)
+            tail = int(q.get("tail", "0") or 0)
+        except (OSError, ValueError):
+            return self._err(400, "参数非法")
+        try:
+            if tail > 0:
+                if tail > FILE_TAIL_MAX:
+                    return self._err(400, "tail 不得超过 %d 行" % FILE_TAIL_MAX)
+                data = _tail_bytes(full, tail)
+            else:
+                if size > FILE_MAX_BYTES:
+                    return self._err(
+                        413,
+                        "文件 %.1f MB 超过直读上限 %.0f MB，请改用 tail=N 读末尾"
+                        % (size / 1048576.0, FILE_MAX_BYTES / 1048576.0),
+                    )
+                with open(full, "rb") as fh:
+                    data = fh.read()
+        except OSError as exc:
+            return self._err(500, "读取失败：%s" % exc)
+        ctype = _FILE_EXT_TYPES.get(
+            os.path.splitext(full)[1].lower(), "application/octet-stream"
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        if q.get("dl", "0") == "1":
+            self.send_header(
+                "Content-Disposition", 'attachment; filename="%s"' % os.path.basename(full)
+            )
+        self.end_headers()
+        self.wfile.write(data)
+
     def _get_response(self) -> None:
         cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
         q = self._query()
@@ -570,6 +1018,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(status, out.get("error", "查询失败"))
         self._send_json(out)
 
+    def _get_snapshot(self) -> None:
+        """相机画面：raw/ 最新帧优先，ffmpeg 单次抓帧兜底（ADR-012）。"""
+        from m20_ai_detect.snapshot import snapshot_frame
+
+        cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
+        cam = (self._query().get("cam") or "").strip()
+        out = snapshot_frame(cfg.sampler_cfg, cam or None)
+        if not out.get("ok"):
+            code = 400 if out.get("bad_request") else 502
+            return self._err(code, out.get("error") or "抓帧失败")
+        self._send_json(out)
+
     def _get_retention(self) -> None:
         cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
         scfg = cfg.sampler_cfg
@@ -579,6 +1039,11 @@ class Handler(BaseHTTPRequestHandler):
                 "ring_max_mb": round(scfg.ring_max_bytes / 1048576.0, 1),
                 "results_keep_days": scfg.results_keep_days,
                 "save_mode": scfg.save_mode,
+                "alert_labels": list(scfg.alert_labels),
+                "alert_score": scfg.alert_score,
+                "label_stats": _label_stats(cfg.base_dir),
+                "saved_max_mb": round(scfg.saved_max_bytes / 1048576.0, 1),
+                "saved_keep_days": scfg.saved_keep_days,
                 "journal_usage": sysactions.journal_disk_usage(),
                 "journald_managed": _read_journald_block(),
                 "logrotate_rotate": _read_logrotate_rotate(),
@@ -620,10 +1085,18 @@ class Handler(BaseHTTPRequestHandler):
         restart = bool(body.get("restart", True))
         detail = "已写入 env"
         if restart:
-            ok, msg = sysactions.service_action("restart", cfg.helper)
-            detail += "；已重启" if ok else "；重启失败：%s" % msg
+            # ADR-010：采集开关由用户掌握——配置改动只在采集运行时重启使其生效，
+            # 采集关着时**不拉起**（旧行为会无条件 restart，把停着的采集启动）。
+            active = sysactions.service_is_active()
+            if active is True:
+                ok, msg = sysactions.service_action("restart", cfg.helper)
+                detail += "；已重启采集，改动生效" if ok else "；重启采集失败：%s" % msg
+            elif active is False:
+                detail += "；采集未运行（不自动拉起），改动将在下次开启采集时生效"
+            else:
+                detail += "；未能确认采集状态，请手动重启采集使改动生效"
         else:
-            detail += "；未重启（重启后生效）"
+            detail += "；未重启（重启采集后生效）"
         self._send_json({"ok": True, "detail": detail, "applied": sorted(clean)})
 
     def _post_detect(self) -> None:
@@ -643,6 +1116,7 @@ class Handler(BaseHTTPRequestHandler):
                 cap=q.get("cap", ""),
                 include_image=q.get("include_image", "1") != "0",
                 save=q.get("save", "0") == "1",
+                clock_offset=self.server.cached_offset(),  # type: ignore[attr-defined]
             )
         except Exception as exc:
             return self._err(500, "检测失败：%s" % exc)
@@ -656,18 +1130,47 @@ class Handler(BaseHTTPRequestHandler):
         if err:
             return self._err(400, err)
         notes: List[str] = []
+        restart_collect = bool(body.get("restart_collect"))
 
-        # ---- env 级（ring / results keep / save mode）----
+        # ---- env 级（ring / results keep / save mode / 关注目标）----
         env_updates = {}
         if "ring_max_mb" in body:
             env_updates["M20AI_RING_MAX_MB"] = str(body["ring_max_mb"])
         if "results_keep_days" in body:
             env_updates["M20AI_RESULTS_KEEP_DAYS"] = str(body["results_keep_days"])
+        if "saved_max_mb" in body:
+            env_updates["M20AI_SAVED_MAX_MB"] = str(body["saved_max_mb"])
+        if "saved_keep_days" in body:
+            env_updates["M20AI_SAVED_KEEP_DAYS"] = str(body["saved_keep_days"])
         if "save_mode" in body:
             mode = str(body["save_mode"]).strip().lower()
             if mode not in ("off", "alert", "any", "all"):
                 return self._err(400, "save_mode 必须是 off/alert/any/all 之一")
             env_updates["M20AI_SAVE_MODE"] = mode
+        if "alert_labels" in body:
+            raw = body["alert_labels"]
+            if isinstance(raw, (list, tuple)):
+                labels = [str(x).strip() for x in raw]
+            else:
+                labels = [s.strip() for s in str(raw).split(",")]
+            uniq: List[str] = []
+            for s in labels:
+                if s and s not in uniq:
+                    uniq.append(s)
+            if len(uniq) > _LABEL_MAX:
+                return self._err(
+                    400, "关注目标最多 %d 个（当前填了 %d 个）" % (_LABEL_MAX, len(uniq))
+                )
+            bad = [s for s in uniq if not _LABEL_RE.match(s)]
+            if bad:
+                return self._err(
+                    400,
+                    "标签只允许英文字母/数字/. _ -（最长 40 字符），非法：%s"
+                    % "、".join(bad[:5]),
+                )
+            env_updates["M20AI_ALERT_LABELS"] = ",".join(uniq)
+        if "alert_score" in body:
+            env_updates["M20AI_ALERT_SCORE"] = str(body["alert_score"]).strip()
         if env_updates:
             current = envfile.read_env(cfg.env_file)
             ok, errors = envfile.validate_env(current, env_updates)
@@ -677,7 +1180,8 @@ class Handler(BaseHTTPRequestHandler):
                 envfile.set_env_keys(cfg.env_file, env_updates)
             except (OSError, ValueError) as exc:
                 return self._err(500, "写入 env 失败：%s" % exc)
-            notes.append("env 级已写入（重启采样器后生效）")
+            if not restart_collect:
+                notes.append("env 级已写入（重启采集后生效）")
 
         # ---- root 级（helper）----
         if "journal_vacuum" in body:
@@ -708,11 +1212,49 @@ class Handler(BaseHTTPRequestHandler):
             )
             notes.append(("logrotate 轮转数已更新" if ok else "logrotate 更新失败：%s" % msg))
 
-        if body.get("spool_clear"):
-            ok, msg = clear_spool_with_restart(cfg)
+        # ---- 数据清空（停采集 → 清空 → 恢复原状态；ADR-011）----
+        kinds: List[str] = []
+        if "purge" in body:
+            raw_kinds = body["purge"]
+            if not isinstance(raw_kinds, list) or not raw_kinds:
+                return self._err(
+                    400, "purge 必须是非空数组（可选：%s）" % "/".join(PURGE_SCOPES)
+                )
+            badk = [str(k) for k in raw_kinds if str(k) not in PURGE_SCOPES]
+            if badk:
+                return self._err(
+                    400,
+                    "purge 含未知类别：%s（可选：%s）" % ("、".join(badk), "/".join(PURGE_SCOPES)),
+                )
+            for k in raw_kinds:
+                if str(k) not in kinds:
+                    kinds.append(str(k))
+        if body.get("spool_clear") and "spool" not in kinds:  # 兼容旧字段
+            kinds.append("spool")
+        purged = False
+        if kinds:
+            ok, msg = _purge_with_restart(cfg, kinds)
             if not ok:
                 return self._err(500, msg)
             notes.append(msg)
+            purged = True
+            _label_stats_cache["base"] = ""  # 今日标签统计缓存立即失效
+
+        # ---- 采集重启（让 env 级改动即时生效；purge 已恢复过采集则跳过）----
+        if restart_collect and not purged:
+            active = sysactions.service_is_active()
+            if active is True:
+                ok, msg = sysactions.service_action("restart", cfg.helper)
+                if ok:
+                    notes.append(
+                        "已重启采集，env 级改动即时生效" if env_updates else "已重启采集"
+                    )
+                else:
+                    notes.append("重启采集失败：%s（改动将在下次开启采集时生效）" % msg)
+            elif active is False:
+                notes.append("采集未运行；env 级改动将在下次开启采集时生效")
+            else:
+                notes.append("未能确认采集状态；请用上方「采集开关」重启采集使改动生效")
 
         if not notes:
             return self._err(400, "没有可保存的项")

@@ -314,6 +314,71 @@ class TestPruneHook(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class TestPruneSavedHook(unittest.TestCase):
+    """_maybe_prune_saved：10 分钟一次、上限与天数都为 0 时不动作（ADR-008）。"""
+
+    def setUp(self):
+        import tempfile
+
+        self.tmp = tempfile.mkdtemp(prefix="m20ai-savedhook-")
+        env = {
+            "M20AI_ENABLE_F": "1",
+            "M20AI_SRC_F": "rtsp://127.0.0.1:8554/video1",
+            "M20AI_BASE_DIR": self.tmp,
+            "M20AI_SAVED_MAX_MB": "200",
+        }
+        self.cfg = Config.from_env(env)
+        self.store = Store(self.cfg)
+        self.sampler = Sampler(self.cfg, self.store, detector=FakeDetector([]), log=lambda m: None)
+
+    def test_both_zero_skips(self):
+        cfg = Config.from_env(
+            {
+                "M20AI_ENABLE_F": "1",
+                "M20AI_SRC_F": "rtsp://127.0.0.1:8554/video1",
+                "M20AI_BASE_DIR": self.tmp,
+                "M20AI_SAVED_MAX_MB": "0",
+                "M20AI_SAVED_KEEP_DAYS": "0",
+            }
+        )
+        s = Sampler(cfg, self.store, detector=FakeDetector([]), log=lambda m: None)
+        calls = []
+        self.store.clean_saved = lambda mb, kd: calls.append((mb, kd)) or (0, 0)
+        s._maybe_prune_saved()
+        self.assertEqual(calls, [])
+
+    def test_runs_only_keep_days(self):
+        """max=0 但 keep_days>0 时也要跑（只用年龄维度）。"""
+        cfg = Config.from_env(
+            {
+                "M20AI_ENABLE_F": "1",
+                "M20AI_SRC_F": "rtsp://127.0.0.1:8554/video1",
+                "M20AI_BASE_DIR": self.tmp,
+                "M20AI_SAVED_MAX_MB": "0",
+                "M20AI_SAVED_KEEP_DAYS": "3",
+            }
+        )
+        s = Sampler(cfg, self.store, detector=FakeDetector([]), log=lambda m: None)
+        calls = []
+        self.store.clean_saved = lambda mb, kd: calls.append((mb, kd)) or (0, 0)
+        s._maybe_prune_saved()
+        self.assertEqual(calls, [(0, 3.0)])
+
+    def test_runs_when_due(self):
+        self.sampler._last_saved_prune = 0.0
+        calls = []
+        self.store.clean_saved = lambda mb, kd: calls.append((mb, kd)) or (0, 0)
+        self.sampler._maybe_prune_saved()
+        self.assertEqual(calls, [(200 * 1024 * 1024, 0.0)])
+
+    def test_skips_within_interval(self):
+        self.sampler._last_saved_prune = time.time()
+        calls = []
+        self.store.clean_saved = lambda mb, kd: calls.append((mb, kd)) or (0, 0)
+        self.sampler._maybe_prune_saved()
+        self.assertEqual(calls, [])
+
+
 class TestSaveTrigger(unittest.TestCase):
     """ADR-006：SAVE_MODE 四值触发矩阵（off/alert/any/all → saved/ 成对留存）。"""
 
@@ -377,6 +442,23 @@ class TestSaveTrigger(unittest.TestCase):
         self.assertTrue(
             os.path.exists(os.path.join(cfg.base_dir, "saved", "front", stem + ".json"))
         )
+
+    def test_saved_json_carries_real_time(self):
+        """ADR-008：留存 JSON 带 _saved_at（真实时钟 = 与 JSONL 的 ts 一致）。"""
+        cfg, store, s = self._sampler(M20AI_SAVE_MODE="any", M20AI_TS_OFFSET_SEC="3600")
+        s.calibrate_clock()
+        rec = self._run_one(s, store, [{"label": "chair", "score": 0.9}])
+        with open(os.path.join(cfg.base_dir, rec["resp_path"]), encoding="utf-8") as fh:
+            doc = json.load(fh)
+        self.assertEqual(doc["_saved_at"], rec["ts"])
+        self.assertNotIn("_alert", doc)  # chair 不在告警标签里
+
+    def test_saved_json_marks_alert(self):
+        cfg, store, s = self._sampler(M20AI_SAVE_MODE="any")
+        rec = self._run_one(s, store, [{"label": "person", "score": 0.9}])
+        with open(os.path.join(cfg.base_dir, rec["resp_path"]), encoding="utf-8") as fh:
+            doc = json.load(fh)
+        self.assertTrue(doc["_alert"])
 
     def test_alert_mode_miss_saves_nothing(self):
         cfg, store, s = self._sampler(M20AI_SAVE_MODE="alert")

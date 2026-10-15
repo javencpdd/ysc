@@ -66,8 +66,10 @@ fi
 say "安装 systemd unit（需要 sudo）..."
 printf "'\n" | sudo -S cp "$BASE/deploy/m20-ai-detect.service" /etc/systemd/system/
 printf "'\n" | sudo -S systemctl daemon-reload
-printf "'\n" | sudo -S systemctl enable m20-ai-detect.service
-say "unit 已安装并 enable（enable != start，启动见下一步）"
+# 开机自启默认不开启（ADR-008：用户要求重启后手动启动，aiDetect up --all）。
+# 本脚本不再自动 enable，也不触碰既有状态——曾 enable 过的保留 enabled。
+en="$(systemctl is-enabled m20-ai-detect.service 2>/dev/null || true)"
+say "unit 已安装。开机自启：${en:-disabled}（不再自动 enable；需要时：sudo systemctl enable m20-ai-detect）"
 
 # ---- 5. logrotate（文件日志 + journal 双轨，防 raw/ 打爆 eMMC） -----------
 cat > /tmp/m20-ai-detect.logrotate <<'EOF'

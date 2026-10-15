@@ -65,6 +65,7 @@ button.sm{font-size:12px;padding:3px 10px}
 .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;background:var(--warnbg);color:var(--warntx)}
 .tag.ok{background:var(--okbg);color:var(--oktx)}
 .tag.err{background:var(--errbg);color:var(--errtx)}
+#snap-img{display:none;width:100%;max-width:600px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2)}
 .statusline{font-size:12px;color:var(--text2);margin-top:10px;min-height:18px}
 .statusline.ok{color:var(--oktx)}
 .statusline.err{color:var(--errtx)}
@@ -80,6 +81,26 @@ button.sm{font-size:12px;padding:3px 10px}
 .kv{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:0.5px solid var(--border)}
 .kv:last-child{border-bottom:none}
 .kv .k{color:var(--text2)}
+#tl-range{width:100%;accent-color:var(--oktx)}
+#tl-imgwrap{background:var(--surface2);border-radius:8px;min-height:280px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#tl-img{display:none;max-width:100%;max-height:420px;border-radius:8px;cursor:pointer}
+#tl-empty{padding:80px 16px;text-align:center}
+.fbrow{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;padding:6px 8px;border-bottom:0.5px solid var(--border);flex-wrap:wrap}
+.fbrow:last-child{border-bottom:none}
+.fbrow .nm{font-family:var(--mono);font-size:12px;word-break:break-all;flex:1;min-width:120px}
+.fbrow .meta{font-size:11px;color:var(--text2);white-space:nowrap}
+.fbrow.dir .nm{cursor:pointer;color:var(--infotx);font-weight:500}
+#fb-list{max-height:340px;overflow:auto;border:0.5px solid var(--border);border-radius:8px;margin-top:10px}
+#fb-preview{background:var(--surface2);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:12px;line-height:1.7;max-height:360px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-top:10px}
+#fb-imgwrap{background:var(--surface2);border-radius:8px;margin-top:10px;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:8px}
+#fb-img{max-width:100%;max-height:420px;border-radius:8px}
+.ghead{grid-column:1/-1;font-size:12px;font-weight:500;letter-spacing:.3px;margin-top:8px;padding:6px 10px;background:var(--surface2);border-left:3px solid var(--border2);border-radius:0 6px 6px 0;color:var(--text2)}
+.ghead.journal{border-left-color:var(--infotx);color:var(--infotx)}
+.ghead.data{border-left-color:var(--oktx);color:var(--oktx)}
+.lchip{display:inline-block;font-size:11px;padding:1px 8px;margin:2px 4px 2px 0;border:0.5px solid var(--border2);border-radius:999px;cursor:pointer;color:var(--text2);user-select:none}
+.lchip:hover{background:var(--surface2)}
+.lchip.on{background:var(--okbg);color:var(--oktx);border-color:var(--oktx)}
+.pgn{font-size:11px;color:var(--text2)}
 </style>
 </head>
 <body>
@@ -111,13 +132,13 @@ button.sm{font-size:12px;padding:3px 10px}
 
   <div class="grid">
     <div class="card">
-      <h2>服务控制</h2>
+      <h2>采集开关 <span class="tag" id="capture-tag">检测中…</span></h2>
       <div class="row">
-        <button onclick="svc('start')">启动</button>
-        <button onclick="svc('stop')">停止</button>
-        <button onclick="svc('restart')">重启</button>
+        <button class="primary" onclick="svc('start')">开启采集</button>
+        <button class="danger" onclick="svc('stop')">停止采集</button>
+        <button onclick="svc('restart')">重启采集</button>
       </div>
-      <div class="note" style="margin-top:10px">systemd m20-ai-detect · 经 sudoers 白名单执行（仅放行 start/stop/restart）</div>
+      <div class="note" style="margin-top:10px"><b>默认关闭</b>（ADR-010）：开启后才抽帧并调 AI（写 raw/、results/、saved/）；关闭后网页的历史数据、时间轴、文件浏览仍可用。等效命令：<code>aiDetect collect on|off</code>。systemd m20-ai-detect · 经 sudoers 白名单执行。</div>
       <div class="statusline" id="svc-status"></div>
     </div>
 
@@ -125,6 +146,66 @@ button.sm{font-size:12px;padding:3px 10px}
       <h2>最近检测 <span class="note" id="recent-sub">点任一帧看完整响应</span></h2>
       <div id="recent"><div class="note">加载中…</div></div>
       <div class="statusline" id="recent-status"></div>
+    </div>
+
+    <div class="card wide" id="snap-card">
+      <h2><span>相机画面 <span class="tag" id="snap-tag">加载中…</span></span><span class="note" id="snap-src"></span></h2>
+      <div class="row" style="margin-bottom:10px">
+        <select id="snap-cam" onchange="snapLoad()" style="width:150px"></select>
+        <label class="check" style="margin:0"><input type="checkbox" id="snap-auto" checked> 自动刷新（3 秒）</label>
+        <button class="sm" onclick="snapLoad()">立即刷新</button>
+        <span class="note">采集运行中 = 采样器当前帧（检测器所见）；未运行 = 从同一路 RTSP 即时抓帧</span>
+      </div>
+      <img id="snap-img" alt="相机画面">
+      <div class="statusline" id="snap-status"></div>
+    </div>
+
+    <div class="card wide">
+      <h2>目标图片时间轴 <span class="note" id="tl-sum"></span><span class="row" id="tl-cams"></span></h2>
+      <div class="grid">
+        <div>
+          <div id="tl-imgwrap">
+            <img id="tl-img" alt="检测结果图" title="点击查看该帧的完整响应" onclick="timelineDetail()">
+            <div class="note" id="tl-empty">加载中…</div>
+          </div>
+        </div>
+        <div>
+          <div class="kv"><span class="k">时间（真实时钟）</span><span id="tl-ts">–</span></div>
+          <div class="kv"><span class="k">相机 / 帧</span><span id="tl-cam" style="word-break:break-all">–</span></div>
+          <div class="kv"><span class="k">检出目标</span><span id="tl-items">–</span></div>
+          <label class="f" for="tl-range">时间条（左 = 更早，右 = 更新）</label>
+          <input type="range" id="tl-range" min="0" max="0" value="0" step="1" oninput="tlUserSlide(+this.value)">
+          <div class="row" style="justify-content:space-between;margin-top:4px">
+            <span class="note" id="tl-oldest">–</span>
+            <span class="note" id="tl-pos">0 / 0</span>
+            <span class="note" id="tl-newest">–</span>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <label class="check" style="margin:0"><input type="checkbox" id="tl-follow" checked> 跟随最新</label>
+            <button class="sm" onclick="loadTimeline()">刷新</button>
+            <span class="note">滑动即暂停跟随；留存图超上限时从最旧自动清理</span>
+          </div>
+          <div class="statusline" id="tl-status"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card wide">
+      <h2>数据文件（只读浏览） <span class="note">仅限 saved/ raw/ results/ spool/ log/ 五个目录</span></h2>
+      <div class="row">
+        <button class="sm" onclick="fbGo(fbParent)">↑ 上一级</button>
+        <span class="note" id="fb-path" style="word-break:break-all">/</span>
+        <input type="text" id="fb-match" placeholder="名称过滤" oninput="fbLoad()" style="width:130px">
+        <button class="sm" onclick="fbLoad()">刷新</button>
+      </div>
+      <div id="fb-list"><div class="note" style="padding:12px">加载中…</div></div>
+      <div class="row" style="margin-top:12px">
+        <label class="f" style="margin:0">文本预览行数（末尾）</label>
+        <input type="number" id="fb-tail" value="200" min="1" max="5000" step="100" style="width:100px">
+      </div>
+      <div id="fb-imgwrap" style="display:none"><img id="fb-img" alt="图片预览"></div>
+      <pre id="fb-preview" style="display:none"></pre>
+      <div class="statusline" id="fb-status"></div>
     </div>
 
     <div class="card wide">
@@ -149,8 +230,8 @@ button.sm{font-size:12px;padding:3px 10px}
         </div>
       </div>
       <div class="row end" style="margin-top:14px">
-        <span class="note">写入 m20-ai-detect.env 后自动重启，与 CLI 配置同源</span>
-        <button class="primary" onclick="saveConfig()">保存并重启服务</button>
+        <span class="note">写入 m20-ai-detect.env；采集运行中会自动重启生效，未运行则下次开启时生效</span>
+        <button class="primary" onclick="saveConfig()">保存并应用</button>
       </div>
       <div class="statusline" id="cfg-status"></div>
     </div>
@@ -161,17 +242,19 @@ button.sm{font-size:12px;padding:3px 10px}
       <label class="check"><input type="checkbox" id="en-b"> 后视 video2</label>
       <label class="f" for="fps">抽帧速率（fps）</label>
       <input type="number" id="fps" value="1" min="0.2" max="5" step="0.5" style="width:100px">
-      <div class="row end" style="margin-top:12px"><button onclick="saveCameras()">保存并重启</button></div>
+      <div class="row end" style="margin-top:12px"><button onclick="saveCameras()">保存并应用</button></div>
       <div class="statusline" id="cam-status"></div>
     </div>
 
     <div class="card">
-      <h2>告警规则</h2>
-      <label class="f" for="labels">标签（逗号分隔）</label>
-      <input type="text" id="labels" value="person,fire,smoke">
-      <label class="f" for="score">触发阈值：<span id="score-v">0.60</span></label>
+      <h2>关注目标</h2>
+      <label class="f" for="labels">关注目标（英文标签，逗号分隔；留空 = 不保存任何图片）</label>
+      <input type="text" id="labels" placeholder="person, car, fire" value="">
+      <div class="note" id="label-stats" style="margin-top:6px">今日检出：加载中…</div>
+      <label class="f" for="score">触发阈值：<span id="score-v">0.60</span>（分值 ≥ 阈值的检出才计入）</label>
       <input type="range" id="score" min="0.1" max="0.95" step="0.05" value="0.6" oninput="document.getElementById('score-v').textContent=this.value">
-      <div class="row end" style="margin-top:12px"><button onclick="saveAlerts()">保存并重启</button></div>
+      <div class="note" style="margin:8px 0 0">命中任一关注目标的帧：<b>①</b> 计入「告警次数」；<b>②</b> 当「日志与数据留存策略」的<b>响应留存条件 = alert</b> 时，把标注结果图保存到 saved/（时间轴可回看）。<br>想"只保存检测到人的图片"：把这里设为 <span class="lchip on">person</span>、留存条件选 alert、保存并应用即可。</div>
+      <div class="row end" style="margin-top:12px"><button onclick="saveAlerts()">保存并应用</button></div>
       <div class="statusline" id="alert-status"></div>
     </div>
 
@@ -225,52 +308,65 @@ button.sm{font-size:12px;padding:3px 10px}
         </span>
       </h2>
       <div class="logbox" id="logbox"><div class="note">加载中…</div></div>
-      <div class="note" style="margin-top:8px">来源 journalctl -u m20-ai-detect（时间戳为本机时钟，钉在 2024 属正常，权威时间以 JSONL 的 ts 为准）</div>
+      <div class="note" style="margin-top:8px">来源 journalctl -u m20-ai-detect（时间戳为本机时钟；若见 2024 时间说明系统时钟又被车队 PTP 拖回，权威时间以 JSONL 的 ts 为准）</div>
     </div>
 
     <div class="card wide">
       <h2>日志与数据留存策略</h2>
       <div class="grid">
+        <div class="ghead journal">journal 日志 —— systemd 服务运行日志（「运行日志」卡的来源）</div>
         <div>
-          <label class="f" for="vac-size">journal 立即清理 — 空间上限（如 200M / 1G）</label>
+          <label class="f" for="vac-size">立即清理一次 — 只留最新 200M / 1G 空间</label>
           <div class="row"><input type="text" id="vac-size" placeholder="200M" style="flex:1"><button onclick="vacuum('size')">执行</button></div>
-          <label class="f" for="vac-time">或按时间清理（如 7d / 24h）</label>
+          <label class="f" for="vac-time">或立即清理一次 — 只留最近 7d / 24h</label>
           <div class="row"><input type="text" id="vac-time" placeholder="7d" style="flex:1"><button onclick="vacuum('time')">执行</button></div>
+          <div class="note" style="margin:6px 0 0"><b>一次性动作，不是持续配置</b>：从最旧的日志开始删，删到满足限额即止（二选一），执行后 journal 仍会继续增长；作用于整机所有单元的 journal，不止本服务。<br><b>单位</b>：体积默认 MB（200=200MB），可写 K/M/G/T；时长默认<b>天</b>（7=7天），可写 s/m/h/d/w。</div>
         </div>
         <div>
-          <label class="f" for="max-use">journald 空间上限（SystemMaxUse）</label>
+          <label class="f" for="max-use">持续生效 — journald 空间上限（SystemMaxUse，如 200M）</label>
           <input type="text" id="max-use" placeholder="200M">
-          <label class="f" for="max-sec">journald 保留时长（MaxRetentionSec，如 7d）</label>
+          <label class="f" for="max-sec">持续生效 — 保留时长（MaxRetentionSec，如 7d）</label>
           <input type="text" id="max-sec" placeholder="留空=不限">
           <div class="row end" style="margin-top:10px"><button onclick="saveJournald()">保存并重启 journald</button></div>
-        </div>
-        <div>
-          <label class="f" for="ring-mb">raw/ 环形缓冲上限（MB，env 级）</label>
-          <input type="text" id="ring-mb" value="200">
-          <label class="f" for="keep-days">results/ 保留天数（0 = 永不删，env 级）</label>
-          <input type="text" id="keep-days" value="0">
-          <label class="f" for="save-mode">响应留存条件（SAVE_MODE，env 级）</label>
-          <select id="save-mode">
-            <option value="off">off — 只写 JSONL，不存图/响应</option>
-            <option value="alert">alert — 命中告警规则时存</option>
-            <option value="any">any — 检出任意目标时存</option>
-            <option value="all">all — 每帧都存</option>
-          </select>
-          <div class="note" style="margin:6px 0">触发时成对落 saved/&lt;cam&gt;/：标注结果图 .jpg + 原始响应 .json（已剥离 base64 大图）。1fps 磁盘参考：all ≈100MB/天、any ≈20MB/天、alert 通常 KB 级。</div>
-          <div class="row end" style="margin-top:10px">
-            <button onclick="saveEnvRetention()">保存 ring/保留天数（重启后生效）</button>
-            <button onclick="saveSaveMode()">保存留存条件（重启后生效）</button>
-          </div>
-        </div>
-        <div>
-          <label class="f">清空积压帧（spool/，待推理的陈旧帧）</label>
-          <div class="note" style="margin:2px 0 8px">AI 服务劣化后 spool/ 可能积压大量陈旧帧。此操作<b>停采集 → 删除 spool/ 内全部待推理帧 → 重启采集</b>，之后以实时（1fps）为准。raw/ 环形缓冲与 results/ 记录不动。</div>
-          <div class="row end"><button class="danger" onclick="clearSpool()">清空积压帧</button></div>
+          <div class="note" style="margin:6px 0 0">写入 /etc/systemd/journald.conf，<b>长期生效（重启后仍有效）</b>。想"永远只留最近 200M / 7 天"，用这里，而不是上面的立即清理。<br><b>单位</b>：与左侧相同（体积默认 MB、时长默认<b>天</b>，均可带 K/M/G/T 与 s/m/h/d/w）。</div>
         </div>
         <div>
           <label class="f" for="lr-rotate">文件日志轮转份数（logrotate rotate）</label>
           <input type="text" id="lr-rotate" value="7">
           <div class="row end" style="margin-top:10px"><button onclick="saveLogrotate()">保存</button></div>
+          <div class="note" style="margin:6px 0 0"><b>单位：份（整数 1–365，无单位后缀）</b>，每份=一天的日志文件。只作用于 log/*.log 文件日志（<b>不影响 journal</b>）：每天切一份、保留最近 7 份（≈ 最近 7 天）、旧份 gzip 压缩、超出 7 份的最旧自动删除。</div>
+        </div>
+        <div class="ghead data">检测数据与图片 —— saved/ 留存图、raw/ 原始帧、results/ 记录、spool/ 积压</div>
+        <div>
+          <label class="f" for="ring-mb">raw/ 环形缓冲上限（默认 200；范围 ≥10）</label>
+          <input type="text" id="ring-mb" value="200">
+          <label class="f" for="keep-days">results/ 保留天数（默认 0 = 永不删）</label>
+          <input type="text" id="keep-days" value="0">
+          <label class="f" for="saved-max">saved/ 图片总量上限（默认 500；0 = 不按体积清理）</label>
+          <input type="text" id="saved-max" value="500">
+          <label class="f" for="saved-days">saved/ 图片保留天数（默认 0 = 不按年龄清理）</label>
+          <input type="text" id="saved-days" value="0">
+          <label class="f" for="save-mode">响应留存条件（SAVE_MODE，env 级）</label>
+          <select id="save-mode">
+            <option value="off">off — 只写 JSONL，不存图/响应</option>
+            <option value="alert">alert — 只存出现「关注目标」的帧（推荐）</option>
+            <option value="any">any — 检出任意目标都存（含误检，占用大）</option>
+            <option value="all">all — 每帧都存（最大）</option>
+          </select>
+          <div class="note" style="margin:6px 0"><b>单位（四个数值框通用）</b>：体积类（ring/saved 上限）默认 <b>MB</b>，可写 200 / 200M / 1G；时长类（keep/days）默认<b>天</b>，可写 7 / 7d / 24h / 2w。带不带单位都行，非法单位会明确报错。<br>触发时成对落 saved/&lt;cam&gt;/：标注结果图 .jpg（~85KB） + 原始响应 .json（已剥离 base64 大图）。<b>时间轴卡片即读这里</b>：超出总量上限或保留天数后，从最旧的成对文件开始自动清理（采样器每 10 分钟检查一次）。<br><b>alert 模式</b>只保存命中「关注目标」的帧（清单在「关注目标」卡配置；清单为空 = 不保存）；<br>磁盘参考（1 路 1fps，单对 ≈0.1MB，实测）：<b>any ≈7GB/天</b>（检出率高时几乎逐帧 → 500MB ≈ 最近 1~2 小时）；<b>alert ≈0.3GB/天</b>（视命中率 → 500MB ≈ 1~2 天）。想回看更久就调大上限（注意磁盘余量）。</div>
+          <div class="row end" style="margin-top:10px">
+            <button onclick="saveEnvRetention()">保存存储留存（重启后生效）</button>
+            <button onclick="saveSaveMode()">保存留存条件（重启后生效）</button>
+          </div>
+        </div>
+        <div>
+          <label class="f">清理数据（一次性删除所选类别）</label>
+          <label class="check"><input type="checkbox" id="pg-saved"> saved/ 留存图片与响应 <span class="pgn" id="pg-saved-n">（–）</span></label>
+          <label class="check"><input type="checkbox" id="pg-results"> results/ 检测记录（权威数据，删后不可恢复） <span class="pgn" id="pg-results-n">（–）</span></label>
+          <label class="check"><input type="checkbox" id="pg-raw"> raw/ 原始帧缓冲 <span class="pgn" id="pg-raw-n">（–）</span></label>
+          <label class="check"><input type="checkbox" id="pg-spool"> spool/ 积压帧 <span class="pgn" id="pg-spool-n">（–）</span></label>
+          <div class="note" style="margin:2px 0 8px">流程：<b>停采集（仅当运行中）→ 删除所选 → 恢复采集原状态</b>（采集原本关着就不会被拉起）。清 results/ 会重置「最近检测」与今日统计；清 saved/ 会清空时间轴。</div>
+          <div class="row end"><button class="danger" onclick="purgeSelected()">清空所选数据</button></div>
         </div>
       </div>
       <div class="statusline" id="ret-status"></div>
@@ -326,17 +422,34 @@ el("token-save").onclick = function(){
 
 /* ---------- 状态 ---------- */
 var aiSamples = [];
+function fmtMB(mb){
+  if (mb == null) return "–";
+  if (mb >= 1024) return (mb / 1024).toFixed(1) + " GB";
+  if (mb >= 1) return mb.toFixed(1) + " MB";
+  return Math.round(mb * 1024) + " KB";
+}
 function loadStatus(){
   api("/api/status").then(function(d){
     var on = d.service === "active";
     var pill = el("svc-pill");
     pill.className = "pill" + (on ? " ok" : (d.service === "unknown" ? "" : " err"));
-    setText("svc-text", d.service === "active" ? "服务运行中" : d.service === "unknown" ? "状态未知" : "服务已停止");
+    setText("svc-text", d.service === "active" ? "采集运行中" : d.service === "unknown" ? "状态未知" : "采集已关闭");
+    var tag = el("capture-tag");
+    if (tag) {
+      tag.className = "tag" + (on ? " ok" : " err");
+      tag.textContent = on ? "运行中" : "已关闭（默认）";
+    }
     setText("m-frames", d.frames_today == null ? "–" : d.frames_today);
     setText("m-alerts", d.alerts_today == null ? "–" : d.alerts_today);
     setText("m-disk", d.disk && d.disk.disk_free_gb != null ? d.disk.disk_free_gb + " GB" : "–");
     setText("m-journal", d.journal_usage || "–");
     if (d.clock_offset_sec != null) setText("m-ai", Math.round(d.clock_offset_sec) + " s 偏移");
+    if (d.disk){
+      setText("pg-saved-n", "（当前 " + fmtMB(d.disk.saved_mb) + "）");
+      setText("pg-results-n", "（当前 " + fmtMB(d.disk.results_mb) + "）");
+      setText("pg-raw-n", "（当前 " + fmtMB(d.disk.raw_mb) + "）");
+      setText("pg-spool-n", "（当前 " + fmtMB(d.disk.spool_mb) + "）");
+    }
   }).catch(function(e){ setText("svc-text", "连接失败"); });
 }
 function svc(action){
@@ -372,11 +485,13 @@ function loadConfig(){
     el("nms-v").textContent = el("nms").value;
     el("fps").value = d.effective.fps;
     var names = d.effective.cameras.map(function(c){ return c.name; });
+    snapFillCams(names);
     el("en-f").checked = names.indexOf("front") >= 0;
     el("en-b").checked = names.indexOf("back") >= 0;
     el("labels").value = d.effective.alert_labels.join(",");
     el("score").value = d.effective.alert_score;
     el("score-v").textContent = d.effective.alert_score;
+    renderLabelStats(LABEL_STATS);
     loadRecent();
   }).catch(function(e){ /* 401 等由全局处理 */ });
 }
@@ -403,21 +518,38 @@ function saveCameras(){
   }).catch(function(e){ statusLine("cam-status", String(e), false); });
 }
 function saveAlerts(){
-  var updates = {M20AI_ALERT_LABELS: el("labels").value, M20AI_ALERT_SCORE: el("score").value};
+  var updates = {M20AI_ALERT_LABELS: el("labels").value.trim(), M20AI_ALERT_SCORE: el("score").value};
   jpost("/api/config", {updates: updates}).then(function(d){
-    statusLine("alert-status", d.detail, true); loadConfig();
+    statusLine("alert-status", d.detail, true); loadConfig(); loadRetention();
   }).catch(function(e){ statusLine("alert-status", String(e), false); });
 }
 
 /* ---------- 最近检测（真实 JSONL 记录，ADR-006） ---------- */
 function fmtTs(ts){ return (ts || "").replace("T", " ").slice(0, 19); }
+function humanAge(ms){
+  var s = Math.round(ms / 1000);
+  if (s < 90) return s + " 秒";
+  var m = Math.round(s / 60);
+  if (m < 90) return m + " 分钟";
+  return Math.round(m / 60) + " 小时";
+}
 function loadRecent(){
   api("/api/recent?n=12").then(function(d){
     var box = el("recent");
     box.innerHTML = "";
-    setText("recent-sub", d.save_mode && d.save_mode !== "off"
+    var sub = d.save_mode && d.save_mode !== "off"
       ? ("留存条件 " + d.save_mode + " · 点任一帧看完整响应")
-      : "留存关闭（SAVE_MODE=off）· 点帧可重新检测");
+      : "留存关闭（SAVE_MODE=off）· 点帧可重新检测";
+    /* 数据新鲜度：最近检测是 JSONL 尾部（历史），服务停止后定格而非清空，
+       不标出"几秒前"的话，用户容易把定格时间误读成"现在还在检测"。 */
+    if (d.records.length && d.records[0].ts) {
+      var age = Date.now() - new Date(d.records[0].ts).getTime();
+      if (!isNaN(age) && age > 60000) {
+        sub += " · 最新记录 " + humanAge(age) + "前";
+        if (age > 150000) sub += " · 数据已定格（服务可能已停止）";
+      }
+    }
+    setText("recent-sub", sub);
     if (!d.records.length){ box.innerHTML = '<div class="note">今日暂无检测记录</div>'; return; }
     d.records.forEach(function(r){
       var div = document.createElement("div");
@@ -442,6 +574,95 @@ function loadRecent(){
   }).catch(function(){});
 }
 
+/* ---------- 目标图片时间轴（ADR-008） ---------- */
+var tlData = [];    /* 旧 → 新（滑块 0 = 最旧，最右 = 最新） */
+var tlIdx = -1;
+var tlCam = "";     /* 相机筛选，"" = 全部 */
+var tlImgSrc = "";
+function tlImgURL(r){
+  return r.url + (token() ? "&token=" + encodeURIComponent(token()) : "");
+}
+function loadTimeline(){
+  var url = "/api/saved?n=1000" + (tlCam ? "&cam=" + encodeURIComponent(tlCam) : "");
+  api(url).then(function(d){
+    var prevKey = tlData[tlIdx] ? (tlData[tlIdx].cam + "/" + tlData[tlIdx].frame) : null;
+    tlData = (d.records || []).slice().reverse();
+    renderTlCams(d.cams || []);
+    var sum = "saved/ 共 " + (d.total || 0) + " 张";
+    if (d.total > tlData.length) sum += "，时间条覆盖最新 " + tlData.length + " 张";
+    if (d.save_mode && d.save_mode !== "off") sum += " · SAVE_MODE=" + d.save_mode;
+    setText("tl-sum", sum);
+    var idx;
+    if (el("tl-follow").checked || !prevKey || tlIdx < 0){
+      idx = tlData.length - 1;
+    } else {
+      idx = -1;
+      for (var k = 0; k < tlData.length; k++){
+        if (tlData[k].cam + "/" + tlData[k].frame === prevKey){ idx = k; break; }
+      }
+      if (idx < 0) idx = Math.min(tlIdx, tlData.length - 1);
+    }
+    tlRender(idx, d);
+  }).catch(function(e){ statusLine("tl-status", String(e), false); });
+}
+function renderTlCams(cams){
+  var box = el("tl-cams");
+  box.innerHTML = "";
+  if (!cams || cams.length <= 1) return;
+  var items = [{v: "", t: "全部"}].concat(cams.map(function(c){ return {v: c, t: c}; }));
+  items.forEach(function(it){
+    var b = document.createElement("button");
+    b.className = "sm" + (tlCam === it.v ? " primary" : "");
+    b.textContent = it.t;
+    b.onclick = function(){ tlCam = it.v; loadTimeline(); };
+    box.appendChild(b);
+  });
+}
+function tlUserSlide(idx){
+  el("tl-follow").checked = false;   /* 手动滑动 = 暂停跟随最新 */
+  tlRender(idx);
+}
+function tlRender(idx, d){
+  d = d || {};
+  if (!tlData.length){
+    el("tl-img").style.display = "none";
+    tlImgSrc = "";
+    el("tl-empty").style.display = "block";
+    el("tl-empty").textContent = (d.save_mode && d.save_mode !== "off")
+      ? "尚无留存图片（SAVE_MODE=" + d.save_mode + " 已开启，等待检出目标…）"
+      : "暂无留存图片。先在下方「日志与数据留存策略」把响应留存条件（SAVE_MODE）设为 any 或 alert：检出目标的图片会自动带时间戳落 saved/，这里就能滑动查看。";
+    setText("tl-ts", "–"); setText("tl-cam", "–"); setText("tl-items", "–");
+    setText("tl-pos", "0 / 0"); setText("tl-oldest", "–"); setText("tl-newest", "–");
+    el("tl-range").max = 0; el("tl-range").value = 0;
+    statusLine("tl-status", d.total ? ("saved/ 共 " + d.total + " 张，当前筛选无结果") : "");
+    return;
+  }
+  tlIdx = Math.max(0, Math.min(idx, tlData.length - 1));
+  el("tl-empty").style.display = "none";
+  var r = tlData[tlIdx];
+  var img = el("tl-img");
+  var src = tlImgURL(r);
+  if (src !== tlImgSrc){ img.src = src; tlImgSrc = src; }  /* 相同帧不重复请求 */
+  img.style.display = "block";
+  setText("tl-ts", fmtTs(r.ts));
+  setText("tl-cam", (r.cam || "") + " · " + (r.frame || ""));
+  var parts = (r.items || []).slice(0, 6).map(function(it){
+    return it.label + (it.score != null ? " " + Number(it.score).toFixed(2) : "");
+  });
+  setText("tl-items", (r.n_items > 0 ? (r.n_items + " 个：" + parts.join("、")) : "未检出") + (r.alert ? " · 告警" : ""));
+  el("tl-range").max = tlData.length - 1;
+  el("tl-range").value = tlIdx;
+  setText("tl-pos", (tlIdx + 1) + " / " + tlData.length + " 张");
+  setText("tl-oldest", "最早 " + fmtTs(tlData[0].ts).slice(5, 16));
+  setText("tl-newest", "最新 " + fmtTs(tlData[tlData.length - 1].ts).slice(5, 16));
+  statusLine("tl-status", "");
+}
+function timelineDetail(){
+  if (tlIdx < 0 || !tlData[tlIdx]) return;
+  var r = tlData[tlIdx];
+  openDetail({frame: r.frame, cam: r.cam, ts: r.ts, items: r.items, n_items: r.n_items, alert: r.alert});
+}
+
 /* ---------- 响应详情 ---------- */
 var currentRec = null;
 function openDetail(r){
@@ -450,8 +671,9 @@ function openDetail(r){
   el("detail-card").scrollIntoView({behavior:"smooth", block:"start"});
   setText("d-frame", r.frame || "");
   setText("d-cam", (r.cam || "") + " · " + fmtTs(r.ts));
-  setText("d-ms", "端到端 " + Math.round(r.e2e_ms || 0) + "ms" +
-    (r.elapsed_ms != null ? " · 服务端 " + Math.round(r.elapsed_ms) + "ms" : ""));
+  setText("d-ms", r.e2e_ms != null
+    ? ("端到端 " + Math.round(r.e2e_ms) + "ms" + (r.elapsed_ms != null ? " · 服务端 " + Math.round(r.elapsed_ms) + "ms" : ""))
+    : "–");
   loadDetail(false);
 }
 function loadDetail(redetect){
@@ -573,16 +795,54 @@ function loadRetention(){
   api("/api/retention").then(function(d){
     el("ring-mb").value = d.ring_max_mb;
     el("keep-days").value = d.results_keep_days;
+    if (d.saved_max_mb != null) el("saved-max").value = d.saved_max_mb;
+    if (d.saved_keep_days != null) el("saved-days").value = d.saved_keep_days;
     el("save-mode").value = d.save_mode || "off";
+    renderLabelStats(d.label_stats || []);
     if (d.journald_managed.SystemMaxUse) el("max-use").value = d.journald_managed.SystemMaxUse;
     if (d.journald_managed.MaxRetentionSec) el("max-sec").value = d.journald_managed.MaxRetentionSec;
     if (d.logrotate_rotate != null) el("lr-rotate").value = d.logrotate_rotate;
   }).catch(function(){});
 }
-function saveRetention(body, okMsg){
+/* ---------- 关注目标（今日检出标签 chips，点击加入/移出） ---------- */
+var LABEL_STATS = [];
+function renderLabelStats(stats){
+  LABEL_STATS = stats || [];
+  var box = el("label-stats");
+  if (!box) return;
+  var cur = el("labels").value.split(",").map(function(s){ return s.trim(); }).filter(Boolean);
+  if (!LABEL_STATS.length){
+    box.innerHTML = "今日检出：暂无记录（开启采集并产生检测后，这里会出现可点选的标签）";
+    return;
+  }
+  var frag = document.createDocumentFragment();
+  frag.appendChild(document.createTextNode("今日检出（点击加入/移出关注目标）："));
+  LABEL_STATS.forEach(function(it){
+    var s = document.createElement("span");
+    var on = cur.indexOf(it.label) >= 0;
+    s.className = "lchip" + (on ? " on" : "");
+    s.textContent = it.label + "×" + it.count;
+    s.title = (on ? "移出" : "加入") + "关注目标：" + it.label;
+    s.onclick = function(){ toggleLabel(it.label); };
+    frag.appendChild(s);
+  });
+  box.innerHTML = "";
+  box.appendChild(frag);
+}
+function toggleLabel(label){
+  var inp = el("labels");
+  var arr = inp.value.split(",").map(function(s){ return s.trim(); }).filter(Boolean);
+  var i = arr.indexOf(label);
+  if (i >= 0) arr.splice(i, 1); else arr.push(label);
+  inp.value = arr.join(",");
+  renderLabelStats(LABEL_STATS);
+}
+function saveRetention(body, okMsg, done){
   jpost("/api/retention", body).then(function(d){
     statusLine("ret-status", (d.notes || [okMsg]).join("；"), true);
     loadRetention();
+    loadStatus();
+    if (done) done();
   }).catch(function(e){ statusLine("ret-status", String(e), false); });
 }
 function vacuum(kind){
@@ -597,7 +857,12 @@ function saveJournald(){
   }});
 }
 function saveEnvRetention(){
-  saveRetention({ring_max_mb: el("ring-mb").value.trim(), results_keep_days: el("keep-days").value.trim()});
+  saveRetention({
+    ring_max_mb: el("ring-mb").value.trim(),
+    results_keep_days: el("keep-days").value.trim(),
+    saved_max_mb: el("saved-max").value.trim(),
+    saved_keep_days: el("saved-days").value.trim()
+  });
 }
 function saveSaveMode(){
   saveRetention({save_mode: el("save-mode").value});
@@ -605,17 +870,177 @@ function saveSaveMode(){
 function saveLogrotate(){
   saveRetention({logrotate_rotate: el("lr-rotate").value.trim()});
 }
-function clearSpool(){
-  if (!confirm("确定清空 spool/ 全部待推理帧？\n\n将：停采集 → 删除积压帧 → 重启采集（以实时 1fps 为主）。\nraw/ 环形缓冲与 results/ 检测记录不受影响。")) return;
-  statusLine("ret-status", "正在清空积压并重启采样器…");
-  saveRetention({spool_clear: true});
+function purgeSelected(){
+  var sel = [];
+  if (el("pg-saved").checked) sel.push("saved");
+  if (el("pg-results").checked) sel.push("results");
+  if (el("pg-raw").checked) sel.push("raw");
+  if (el("pg-spool").checked) sel.push("spool");
+  if (!sel.length){ statusLine("ret-status", "先勾选要清空的数据类别（saved/results/raw/spool）", false); return; }
+  var names = {saved:"saved/ 留存图片", results:"results/ 检测记录", raw:"raw/ 原始帧", spool:"spool/ 积压帧"};
+  var txt = sel.map(function(k){ return names[k]; }).join("、");
+  if (!confirm("确定清空：" + txt + "？\n\n流程：停采集（仅当运行中）→ 删除所选数据 → 恢复采集原状态（原本关着不会被拉起）。\nresults/ 属权威数据，删除后不可恢复。")) return;
+  statusLine("ret-status", "正在清空并处理采集状态…");
+  saveRetention({purge: sel}, null, function(){ loadTimeline(); loadRecent(); });
 }
 
 /* ---------- 轮询 ---------- */
-function refreshAll(){ loadStatus(); loadConfig(); loadRetention(); loadLogs(); loadRecent(); }
+/* ---------- 数据文件只读浏览（ADR-009） ---------- */
+var fbDir = "", fbParent = "", fbN = 500;
+function fbURL(u){ return u + (token() ? (u.indexOf("?") < 0 ? "?" : "&") + "token=" + encodeURIComponent(token()) : ""); }
+function fbText(u){
+  /* /api/file 可能是 text/plain，不能用 api()（它强制 r.json()） */
+  var opts = {};
+  if (token()) opts.headers = {"X-Console-Token": token()};
+  return fetch(u, opts).then(function(r){
+    if (r.status === 401){ document.getElementById("tokenbar").style.display = "flex"; throw new Error("token 不符"); }
+    return r.text().then(function(t){
+      if (!r.ok) throw new Error(t || ("HTTP " + r.status));
+      return t;
+    });
+  });
+}
+function fbSize(b){
+  if (b == null) return "";
+  if (b < 1024) return b + " B";
+  if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+  return (b / 1048576).toFixed(1) + " MB";
+}
+function fbGo(dir){
+  fbDir = dir || "";
+  document.getElementById("fb-match").value = "";
+  fbLoad();
+}
+function fbLoad(){
+  var m = document.getElementById("fb-match").value.trim();
+  var u = "/api/files?n=" + fbN + (fbDir ? "&dir=" + encodeURIComponent(fbDir) : "") +
+          (m ? "&match=" + encodeURIComponent(m) : "");
+  api(u).then(function(d){
+    if (!d || !d.ok) { fbStatus(d && d.error ? d.error : "目录读取失败", true); return; }
+    fbParent = d.parent || "";
+    setText("fb-path", fbDir ? ("/" + fbDir) : "/（选择目录）");
+    var box = document.getElementById("fb-list");
+    box.innerHTML = "";
+    (d.entries || []).forEach(function(e){
+      var row = document.createElement("div");
+      row.className = "fbrow" + (e.type === "dir" ? " dir" : "");
+      var nm = document.createElement("span");
+      nm.className = "nm";
+      nm.textContent = (e.type === "dir" ? "▸ " : "") + e.name;
+      if (e.type === "dir") {
+        nm.onclick = function(){ fbGo(e.path); };
+      } else {
+        nm.style.cursor = "pointer";
+        nm.onclick = function(){ fbOpen(e.path, e.size); };
+      }
+      var meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = (e.type === "dir" ? "目录" : fbSize(e.size)) + " · " + (e.ts || "").replace("T", " ").slice(0, 19);
+      var acts = document.createElement("span");
+      if (e.type === "file") {
+        var dl = document.createElement("a");
+        dl.href = fbURL("/api/file?path=" + encodeURIComponent(e.path) + "&dl=1");
+        dl.textContent = "下载";
+        dl.style.fontSize = "12px";
+        dl.style.marginLeft = "8px";
+        acts.appendChild(dl);
+      }
+      row.appendChild(nm); row.appendChild(meta); row.appendChild(acts);
+      box.appendChild(row);
+    });
+    if (!d.entries || !d.entries.length) {
+      box.innerHTML = '<div class="note" style="padding:12px">空目录或没有匹配项</div>';
+    }
+    var s = (d.count || 0) + " 项";
+    if (d.truncated) s += "（仅显示前 " + fbN + " 项，可用过滤缩小范围）";
+    fbStatus(s, false);
+  }).catch(function(e){ fbStatus("请求失败：" + e, true); });
+}
+function fbOpen(path, size){
+  var ext = (path.split(".").pop() || "").toLowerCase();
+  var img = document.getElementById("fb-img"), wrap = document.getElementById("fb-imgwrap");
+  var pre = document.getElementById("fb-preview");
+  if (ext === "jpg" || ext === "jpeg" || ext === "png" || ext === "gif") {
+    img.src = fbURL("/api/file?path=" + encodeURIComponent(path));
+    wrap.style.display = "flex"; pre.style.display = "none";
+    fbStatus(path + " · " + fbSize(size), false);
+    return;
+  }
+  wrap.style.display = "none";
+  var tail = Math.max(1, parseInt(document.getElementById("fb-tail").value, 10) || 200);
+  var u = "/api/file?path=" + encodeURIComponent(path) + "&tail=" + tail;
+  fbText(u).then(function(t){
+    pre.textContent = t;
+    pre.style.display = "block";
+    fbStatus(path + " · 末尾 " + tail + " 行 · " + fbSize(size), false);
+  }).catch(function(e){
+    pre.style.display = "none";
+    fbStatus("读取失败：" + e, true);
+  });
+}
+function fbStatus(msg, isErr){
+  var el = document.getElementById("fb-status");
+  el.textContent = msg;
+  el.className = "statusline" + (isErr ? " err" : "");
+}
+
+/* ---------- 相机画面（ADR-012：raw 最新帧优先，ffmpeg 即时抓帧兜底） ---------- */
+var SNAP_BUSY = false;
+function snapFillCams(names){
+  var sel = el("snap-cam");
+  if (!sel || sel.dataset.names === names.join(",")) return;
+  sel.dataset.names = names.join(",");
+  sel.innerHTML = "";
+  names.forEach(function(n){
+    var o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  });
+}
+function snapTag(text, cls){
+  var t = el("snap-tag");
+  t.textContent = text;
+  t.className = "tag" + (cls ? " " + cls : "");
+}
+function snapLoad(){
+  if (SNAP_BUSY) return;
+  SNAP_BUSY = true;
+  var cam = el("snap-cam").value || "";
+  snapTag("刷新中…", "");
+  api("/api/snapshot" + (cam ? "?cam=" + encodeURIComponent(cam) : "")).then(function(d){
+    SNAP_BUSY = false;
+    if (!d || !d.ok){
+      snapTag("抓帧失败", "err");
+      statusLine("snap-status", (d && d.error) || "未知错误", false);
+      return;
+    }
+    var img = el("snap-img");
+    img.src = d.image;
+    img.style.display = "block";
+    el("snap-src").textContent = d.cam + " · " + d.src + (d.frame ? " · " + d.frame : "");
+    if (d.source === "ring"){
+      snapTag("实时", "ok");
+      statusLine("snap-status", "采样器当前帧 · " + humanAge((d.age_s || 0) * 1000) + "前（采集运行中，即检测器输入）", true);
+    } else if (d.source === "live"){
+      snapTag("即时抓帧", "ok");
+      statusLine("snap-status", "采集未运行——已从同一路 RTSP 即时抓帧（约 1~2 秒握手）", true);
+    } else {
+      snapTag("已定格", "");
+      statusLine("snap-status", "采集未运行且即时抓帧失败，显示最近一帧（" + humanAge((d.age_s || 0) * 1000) + "前）", false);
+    }
+  }).catch(function(e){
+    SNAP_BUSY = false;
+    snapTag("抓帧失败", "err");
+    statusLine("snap-status", String(e && e.message || e), false);
+  });
+}
+
+function refreshAll(){ loadStatus(); loadConfig(); loadRetention(); loadLogs(); loadRecent(); loadTimeline(); fbLoad(); snapLoad(); }
 refreshAll();
 setInterval(function(){ loadStatus(); loadRecent(); }, 5000);
+setInterval(function(){ if (!document.hidden) loadTimeline(); }, 15000);
 setInterval(function(){ if (el("auto-refresh").checked) loadLogs(); }, 4000);
+setInterval(function(){ if (!document.hidden && el("snap-auto").checked) snapLoad(); }, 3000);
 </script>
 </body>
 </html>

@@ -41,6 +41,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from config import Settings, load_settings  # noqa: E402
+from control import patrol_codec  # noqa: E402
 from control.axis_watchdog import AxisWatchdog  # noqa: E402
 from control.control_gateway import ControlGateway, UdpControlSink  # noqa: E402
 from errors import ConfigError, ProtocolError  # noqa: E402
@@ -66,6 +67,23 @@ class AxisRequest(BaseModel):
     yaw: float = 0.0
     #: 是否持续（走看门狗 20Hz 循环）；False = 一次性指令
     continuous: bool = False
+    #: 轴指令通道："steer"（2/21 主通道，默认）/ "real"（2/25 实时通道）
+    channel: str = "steer"
+
+
+class TimedAxisRequest(BaseModel):
+    """定时移动：按给定轴值持续 duration_s 秒后自动零位停止（后端计时）。"""
+
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+    #: 持续秒数（0.5 ~ 30s；上限防"长按无人看管"）
+    duration_s: float = Field(default=2.0, ge=0.5, le=30.0)
+    #: 轴指令通道："steer"（默认）/ "real"
+    channel: str = "steer"
 
 
 class MotionRequest(BaseModel):
@@ -85,6 +103,17 @@ class CommandRequest(BaseModel):
 class ControlToggle(BaseModel):
     enable: bool = True
     confirmed: bool = False
+
+
+class HeartbeatToggle(BaseModel):
+    """暂停 / 恢复心跳（遥测让渡）。"""
+    paused: bool = True
+    confirmed: bool = False
+
+
+#: 服务自状态降级原因码（写入 ``ServiceSnapshot.degraded_reason``，前端分色展示）。
+#: 与 ``connected=False``（链路故障）语义相反，**不能混为同一类告警**。
+DEGRADED_HEARTBEAT_PAUSED = "heartbeat_paused"
 
 
 # ---------------------------------------------------------------- 服务
@@ -118,6 +147,7 @@ class MonitorService:
             axis_min=self.settings.control.axis_min,
             axis_max=self.settings.control.axis_max,
             state_provider=self._basic_fields,
+            telemetry_provider=self._telemetry_paused,
         )
         self.watchdog = AxisWatchdog(
             self.control, hz=self.settings.control.axis_hz,
@@ -152,6 +182,57 @@ class MonitorService:
         snap = self.state.snapshot()
         topic = snap.get("topics", {}).get("basic") or {}
         return topic.get("data", {}) or {}
+
+    # ------------------------------------------------------- 心跳（遥测）控制
+    def _telemetry_paused(self) -> bool:
+        """遥测是否暂停（供控制闸的"蒙眼不开车"闸读取）。"""
+        return bool(getattr(self.source, "paused", False))
+
+    @property
+    def heartbeat_paused(self) -> bool:
+        return self._telemetry_paused()
+
+    def set_heartbeat_paused(self, paused: bool, confirmed: bool = False) -> Dict[str, Any]:
+        """暂停 / 恢复向机器人的心跳（= 主动让渡状态推送）。
+
+        **语义边界（2026-10-16 查证）**：
+        - 心跳（类型100/命令100）只决定"机器人往谁推送状态"；basic_server 有
+          心跳超时机制（``Heartbeat timeout! Cleared %zu client(s).``），
+          停发后它会**清除本客户端** → 我们失去遥测。
+        - 心跳与指令是**两个独立 UDP socket**：停心跳**不影响**指令链路。
+        - 机器人**不会**因为"没心跳"而趴下：2026-10-16 实证——控制台重启后
+          ``sent_packets=0``（零指令）持续数分钟，车仍稳定保持 ``motion_state=17``
+          （RL 站立）。车侧真正的断链保护在 rl_deploy 的 DDS_CMD 看门狗
+          （``DDS_CMD topic data update timeout %f. Disable lynx``），
+          效果是停运动而非趴下。
+
+        **安全规则**：暂停遥测 = 看不见车，而指令链路仍可达 → 必须先停控制
+        （看门狗零位停发），否则就是"蒙眼开车"。
+        """
+        if paused:
+            # 只有"放弃遥测"这个危险方向需要二次确认；恢复视野是安全动作，不设卡
+            if not confirmed:
+                return {"ok": False, "reason": "CONFIRM_REQUIRED",
+                        "detail": "停发心跳将失去遥测（车可能仍在运动），需二次确认"}
+            stopped_control = False
+            # 不能蒙眼开车：先零位停发正在进行的控制（摇杆 / 定时移动）
+            if self.watchdog.is_active():
+                self.watchdog.pause("heartbeat_paused")
+                stopped_control = True
+            if not self.source.pause():
+                return {"ok": False, "reason": "NOT_SUPPORTED",
+                        "detail": "当前数据源（%s）不支持暂停心跳"
+                                  % getattr(self.source, "mode", "?")}
+            self.state.set_link_degraded(True, DEGRADED_HEARTBEAT_PAUSED)
+            return {"ok": True, "heartbeat_paused": True,
+                    "control_stopped": stopped_control,
+                    "source": self.source.stats()}
+        if not self.source.resume():
+            return {"ok": False, "reason": "NOT_SUPPORTED",
+                    "detail": "当前数据源（%s）不支持恢复心跳"
+                              % getattr(self.source, "mode", "?")}
+        self.state.set_link_degraded(False)
+        return {"ok": True, "heartbeat_paused": False, "source": self.source.stats()}
 
     def _on_last_client_gone(self) -> None:
         """最后一个 WS 客户端断开：看门狗兜底（PLAN Q11）。"""
@@ -330,6 +411,35 @@ async def control_lease() -> Dict[str, Any]:
     return {"ok": True, "lease_remaining": s.control.renew_lease()}
 
 
+@app.post("/api/v1/link/heartbeat", tags=["link"])
+async def control_heartbeat(req: HeartbeatToggle) -> Dict[str, Any]:
+    """暂停 / 恢复向机器人的心跳（= 主动让渡状态推送）。
+
+    **这不是运动指令**，但它决定"还能不能看见车"：
+
+    - ``paused=true`` → 停发心跳；basic_server 心跳超时后清除本客户端，
+      我们**失去遥测**。**指令链路是独立 socket、照旧可达**，所以暂停前
+      服务端会先自动零位停发正在进行的控制（摇杆 / 定时移动）——不能蒙眼开车。
+    - ``paused=false`` → 恢复心跳，重新获得状态推送。
+    - 暂停期间所有驱动类指令被闸拒绝（``TELEMETRY_PAUSED``），
+      **软急停除外**（安全手段优先）。
+
+    实测结论（2026-10-16）：机器人**不会**因为"没心跳"而趴下——零指令下
+    车稳定保持站立；车侧断链保护在 rl_deploy 的 DDS_CMD 看门狗，效果是
+    停运动（``Disable lynx``）而非趴下。
+    """
+    s = _svc()
+    return s.set_heartbeat_paused(req.paused, confirmed=req.confirmed)
+
+
+@app.get("/api/v1/link/heartbeat", tags=["link"])
+async def control_heartbeat_status() -> Dict[str, Any]:
+    """心跳（遥测）当前状态：是否暂停、发了多少、目标是谁。"""
+    s = _svc()
+    return {"ok": True, "heartbeat_paused": s.heartbeat_paused,
+            "source": s.source.stats()}
+
+
 @app.post("/api/v1/control/command", tags=["control"])
 async def control_command(req: CommandRequest) -> Dict[str, Any]:
     """下发白名单指令（name 取自 patrol_codec.COMMANDS）。"""
@@ -339,27 +449,82 @@ async def control_command(req: CommandRequest) -> Dict[str, Any]:
 
 @app.post("/api/v1/control/axis", tags=["control"])
 async def control_axis(req: AxisRequest) -> Dict[str, Any]:
-    """轴指令：continuous=True 交给看门狗 20Hz 循环。"""
+    """轴指令：continuous=True 交给看门狗 20Hz 循环；channel 选通道（steer/real）。"""
     s = _svc()
     values = {"x": req.x, "y": req.y, "z": req.z,
               "roll": req.roll, "pitch": req.pitch, "yaw": req.yaw}
     if req.continuous:
-        s.watchdog.feed(values)
+        s.watchdog.feed(values, channel=req.channel)
         if not s.watchdog.is_active():
             s.watchdog.start()
         return {"ok": True, "continuous": True, "watchdog": s.watchdog.status()}
-    return s.control.execute("axis", values)
+    return s.control.execute(patrol_codec.channel_command(req.channel), values)
+
+
+@app.post("/api/v1/control/axis/timed", tags=["control"])
+async def control_axis_timed(req: TimedAxisRequest) -> Dict[str, Any]:
+    """定时移动（2026-10-16 加）：按给定轴值持续 ``duration_s`` 秒后自动零位停止。
+
+    - **计时在后端**：浏览器定时器会被节流（切后台/省电），前端计时停不住车；
+    - 到点 = 零位一帧 + 停发（与松手同路径，**绝不软急停**）；
+    - 中止：``POST /api/v1/control/axis/stop``；
+    - ``channel``：steer（2/21 主通道，默认）/ real（2/25 实时通道）—— 2026-10-16
+      实测两通道在基础步态下行为完全一致，通道选择保留作排查工具；
+    - **横移步态警示**：0x1001 基础（标准）步态实测不支持横移（Y 只原地调姿态、
+      不位移）→ 响应带 ``warning`` 字段（**只提示、不拦截**）；
+    - 先走 ``precheck``（不发送、即时反馈）：控制未开启 / 无租约 / 未站立
+      等情况立即返回被拒原因，而不是让用户看着倒计时空转。
+    """
+    s = _svc()
+    values = {"x": req.x, "y": req.y, "z": req.z,
+              "roll": req.roll, "pitch": req.pitch, "yaw": req.yaw}
+    rejected = s.control.precheck(patrol_codec.channel_command(req.channel))
+    if rejected is not None:
+        return rejected
+    s.watchdog.feed_timed(values, req.duration_s, channel=req.channel)
+    if not s.watchdog.is_active():
+        s.watchdog.start()
+    resp: Dict[str, Any] = {"ok": True, "timed": s.watchdog.status()}
+    warn = _lateral_gait_warning(values, s._basic_fields())
+    if warn:
+        resp["warning"] = warn
+    return resp
+
+
+def _lateral_gait_warning(values: Dict[str, Any], basic: Dict[str, Any]) -> str:
+    """横移步态警示（2026-10-16 真机对照实验结论）。
+
+    实测：0x1001 基础（标准）步态下，Y 指令（两条通道均试过）只产生**原地
+    姿态调整**、不位移；切 0x3002 平地（敏捷）后横移生效（vy 抬升 2× 底噪 +
+    站高下沉 0.574→0.46，用户目视确认移动）。
+    只提示、不拦截——保留用户自行验证/标定的余地。
+    """
+    try:
+        lateral = abs(float(values.get("y", 0.0))) >= 0.01
+    except (TypeError, ValueError):
+        lateral = False
+    if not lateral:
+        return ""
+    gait = (basic or {}).get("gait")
+    if gait == patrol_codec.GAIT_BASIC_STD:
+        return ("基础（标准）步态不支持横移（2026-10-16 实测）——Y 指令只会原地调整姿态；"
+                "请先切「平地（敏捷）0x3002」")
+    if gait == patrol_codec.GAIT_STAIR_STD:
+        return ("楼梯（标准）步态与基础同系、横移未实测——若原地不动请切「平地（敏捷）0x3002」")
+    return ""
 
 
 @app.post("/api/v1/control/axis/stop", tags=["control"])
 async def control_axis_stop() -> Dict[str, Any]:
-    """松开摇杆：发零位并停发（**不触发软急停**，车体保持站立）。
+    """松开摇杆 / 中止定时移动：发零位并停发（**不触发软急停**，车体保持站立）。
 
-    异常断开路径（WS 断开 / 页面隐藏 / feed 超时）仍走软急停兜底 ——
+    异常断开路径（WS 断开 / 页面隐藏 / feed 超时）仍走零位兜底 ——
     2026-10-15 真机实测修正：此前松手也会软急停，表现为"一松手就趴下"。
     """
     s = _svc()
-    s.watchdog.pause("user_release")
+    reason = ("timed_aborted"
+              if s.watchdog.status().get("timed_active") else "user_release")
+    s.watchdog.pause(reason)
     return {"ok": True, "watchdog": s.watchdog.status()}
 
 
@@ -390,6 +555,45 @@ async def video_status() -> Dict[str, Any]:
         return {"enabled": False, "available": False,
                 "last_error": "视频功能未开启（M20_VIDEO__ENABLED=false）"}
     return s.video.status()
+
+
+@app.get("/api/v1/video/streams", tags=["video"])
+async def video_streams() -> Dict[str, Any]:
+    """前后双路的取流**地址要素**（2026-10-16：双路 + WebRTC）。
+
+    ⚠️ 故意**不含主机名**：前端按 `location.hostname` 拼接。若这里写死
+    `127.0.0.1`，浏览器会去连"浏览器本机"而非 196（致命错误）；写死
+    `192.168.0.196` 则换网段即失效。
+
+    返回三档可用链路，前端按 WebRTC → MediaMTX HLS → 后端代理 的顺序降级。
+    """
+    s = _svc()
+    v = s.settings.video
+    proxy_st = s.video.status() if s.video is not None else {}
+    return {
+        "enabled": bool(v.enabled),
+        "webrtc": {
+            "enabled": bool(v.webrtc_enabled),
+            "port": int(v.webrtc_port),
+            "endpoint": "/{path}/whep",
+            "note": "WHEP：POST application/sdp 换 answer，媒体走 ICE/UDP",
+        },
+        "hls": {
+            "enabled": True,
+            "port": int(v.mediamtx_hls_port),
+            "endpoint": "/{path}/index.m3u8",
+        },
+        "proxy": {          # 后端 ffmpeg 中继：最后兜底（单路，可切前后）
+            "enabled": s.video is not None,
+            "available": bool(proxy_st.get("available", False)),
+            "url": "/hls/live.m3u8",
+            "rtsp_url": v.rtsp_url,
+        },
+        "streams": [
+            {"key": "front", "label": v.front_label, "path": v.front_path},
+            {"key": "back", "label": v.back_label, "path": v.back_path},
+        ],
+    }
 
 
 @app.post("/api/v1/video/start", tags=["video"])

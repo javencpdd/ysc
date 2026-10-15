@@ -65,6 +65,24 @@ class DataSource(abc.ABC):
     def is_running(self) -> bool:
         return self._running
 
+    # ---------------------------------------------- 心跳暂停（遥测让渡）
+    #: 是否支持"暂停产出"（默认不支持；udp 心跳源支持）
+    @property
+    def pausable(self) -> bool:
+        return False
+
+    @property
+    def paused(self) -> bool:
+        return False
+
+    def pause(self) -> bool:
+        """暂停向机器人发心跳（= 主动放弃状态推送）。默认不支持，返回 False。"""
+        return False
+
+    def resume(self) -> bool:
+        """恢复发心跳。默认不支持，返回 False。"""
+        return False
+
     def stats(self) -> Dict[str, Any]:
         return {"mode": self.mode, "running": self._running}
 
@@ -89,8 +107,47 @@ class UdpHeartbeatSource(DataSource):
         self._sock = None
         self._rx_thread: Optional[threading.Thread] = None
         self._hb_thread: Optional[threading.Thread] = None
+        self._paused = False
+        self._paused_at: Optional[float] = None
         self.sent_heartbeats = 0
         self.received_packets = 0
+
+    @property
+    def pausable(self) -> bool:
+        return True
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    def pause(self) -> bool:
+        """停发心跳（不收 socket、不停线程）—— 机器人侧 basic_server 会在心跳
+        超时后**清除本客户端**，不再向我们推送状态 = 主动放弃遥测。
+
+        ⚠️ 语义边界：这只影响"机器人 → 我们"的状态推送；**指令链路是另一个
+        独立 socket，照旧可达**。所以暂停遥测前必须先停控制（见
+        ``MonitorService.set_heartbeat_paused``），否则就是蒙眼开车。
+        """
+        with self._lock:
+            if not self._running or self._paused:
+                return False
+            self._paused = True
+            self._paused_at = time.time()
+        logger.warning("心跳已暂停：目标 %s:%s（将失去遥测，指令链路仍可达）",
+                       self.target_ip, self.target_port)
+        return True
+
+    def resume(self) -> bool:
+        """恢复发心跳（重新注册为 basic_server 的推送客户端）。"""
+        with self._lock:
+            if not self._running or not self._paused:
+                return False
+            self._paused = False
+            paused_for = None if self._paused_at is None else round(
+                time.time() - self._paused_at, 1)
+            self._paused_at = None
+        logger.warning("心跳已恢复（暂停了 %ss），重新获得状态推送", paused_for)
+        return True
 
     def start(self) -> None:
         import socket
@@ -123,13 +180,15 @@ class UdpHeartbeatSource(DataSource):
         interval = 1.0 / max(1.0, self.heartbeat_hz)
         next_at = time.monotonic()
         while self._running:
-            try:
-                payload = asdu_parser.encode_frame(100, 100, {})
-                if self._sock is not None:
-                    self._sock.sendto(payload, (self.target_ip, self.target_port))
-                    self.sent_heartbeats += 1
-            except OSError as exc:
-                logger.warning("心跳发送失败（将重试）: %s", exc)
+            # 暂停期间**不发**（但保持 socket 与线程：恢复是瞬时的，不需要重连）
+            if not self._paused:
+                try:
+                    payload = asdu_parser.encode_frame(100, 100, {})
+                    if self._sock is not None:
+                        self._sock.sendto(payload, (self.target_ip, self.target_port))
+                        self.sent_heartbeats += 1
+                except OSError as exc:
+                    logger.warning("心跳发送失败（将重试）: %s", exc)
             next_at += interval
             delay = next_at - time.monotonic()
             if delay > 0:
@@ -152,6 +211,10 @@ class UdpHeartbeatSource(DataSource):
             "target": "%s:%s" % (self.target_ip, self.target_port),
             "sent_heartbeats": self.sent_heartbeats,
             "received_packets": self.received_packets,
+            "pausable": self.pausable,
+            "paused": self._paused,
+            "paused_seconds": (None if self._paused_at is None
+                               else round(time.time() - self._paused_at, 1)),
         })
         return base
 

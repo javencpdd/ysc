@@ -20,6 +20,17 @@ from .config import Config
 
 ITEM_KEYS = ("label", "class_id", "score", "box", "box_norm")
 
+#: 可整体清空的类别（Store.purge / 网页「清理数据」，ADR-011）。
+PURGE_KINDS = ("saved", "raw", "results", "spool")
+
+#: 类别 → (目录属性名, 纳入清理的扩展名)。results 只删 *.jsonl（其它文件不碰）。
+_PURGE_TARGETS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
+    "saved": ("saved_dir", (".jpg", ".json")),
+    "raw": ("raw_dir", (".jpg",)),
+    "results": ("results_dir", (".jsonl",)),
+    "spool": ("spool_dir", (".jpg",)),
+}
+
 
 class Store:
     def __init__(self, cfg: Config, log=None) -> None:
@@ -81,13 +92,65 @@ class Store:
                     self.log("clear_spool failed %s: %s" % (p, exc))
         return frames, nbytes
 
+    def purge(self, kinds: Iterable[str]) -> Dict[str, Tuple[int, int]]:
+        """整体清空所选类别（网页「清理数据」，ADR-011）。返回 {类别: (文件数, 字节数)}。
+
+        与 clean_saved / enforce_ring 的"按策略渐进清理"不同：这里是一次性全部删除。
+        调用方应先停采样器（删除期间不受新写入干扰、清得干净）。
+          * saved：全部 .jpg/.json（含 console/ 等子目录）；
+          * raw：全部原始帧 *.jpg；
+          * results：全部 *.jsonl（只删记录文件，其它文件不碰）；
+          * spool：全部待推理帧 *.jpg。
+        单文件失败只记日志不中断（尽力而为，返回实际删除数）。
+        """
+        kinds = list(kinds)
+        bad = [k for k in kinds if k not in PURGE_KINDS]
+        if bad:
+            raise ValueError(
+                "未知的清理类别：%s（可选：%s）" % (", ".join(bad), "/".join(PURGE_KINDS))
+            )
+        out: Dict[str, Tuple[int, int]] = {}
+        for kind in kinds:
+            if kind in out:  # 去重
+                continue
+            attr, exts = _PURGE_TARGETS[kind]
+            root_dir = getattr(self, attr)
+            files = 0
+            nbytes = 0
+            for root, _dirs, names in os.walk(root_dir):
+                for name in names:
+                    if os.path.splitext(name)[1].lower() not in exts:
+                        continue
+                    p = os.path.join(root, name)
+                    try:
+                        nbytes += os.path.getsize(p)
+                        os.remove(p)
+                        files += 1
+                    except OSError as exc:
+                        self.log("purge %s skip %s: %s" % (kind, p, exc))
+            out[kind] = (files, nbytes)
+            if files:
+                self.log(
+                    "purge %s removed %d file(s), %.1f MB"
+                    % (kind, files, nbytes / 1048576.0)
+                )
+        return out
+
     def save_pair(
-        self, cam: str, stem: str, jpeg: Optional[bytes], payload: Dict[str, Any]
+        self,
+        cam: str,
+        stem: str,
+        jpeg: Optional[bytes],
+        payload: Dict[str, Any],
+        meta: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """响应留存（ADR-006）：标注结果图 + 原始响应成对落 saved/<cam>/。
 
         * jpg：AI 返回的标注结果图（base64 解码后），None 时跳过；
         * json：原始响应剥掉 result_image 大字段，附 _result_image 引用路径；
+        * meta：额外元数据（ADR-008 时间轴），如 ``{"_saved_at": ts, "_alert": True}``，
+          空值字段自动省略——时间轴 API 以 ``_saved_at``（真实时钟）为排序依据，
+          老文件没有该字段时退化为文件 mtime + 时钟偏移。
         返回 (jpg 相对路径, json 相对路径)（相对 base_dir，便于迁移）。
         单侧失败只记日志不抛——留存是增强，不该打断采集主循环。
         """
@@ -105,6 +168,9 @@ class Store:
             except OSError as exc:
                 self.log("save_pair image failed %s: %s" % (stem, exc))
         doc = strip_result_image(payload)
+        for k, v in (meta or {}).items():
+            if v is not None and v != "":
+                doc[k] = v
         if img_rel:
             doc["_result_image"] = img_rel
         p = os.path.join(d, stem + ".json")
@@ -143,6 +209,67 @@ class Store:
         if removed:
             self.log("prune_results removed %d file(s) older than %.1f d" % (removed, keep_days))
         return removed
+
+    def clean_saved(self, max_bytes: int = 0, keep_days: float = 0.0) -> Tuple[int, int]:
+        """saved/ 留存清理（ADR-008）：按年龄 + 总量上限成对删 .jpg/.json。
+
+        返回 (删除的对数, 释放的字节数)。策略：
+          * keep_days > 0：mtime 早于 now - keep_days*86400 的对先删（按 mtime 判定，
+            成对文件 mtime 相同；取两者较新者以免误删半写状态）；
+          * max_bytes > 0：再按最旧优先删，直到总量降到上限以内；
+          * 两者都为 0：什么都不做。
+        只删 saved/；raw/、results/、alerts/ 不动。单文件失败只记日志不中断
+        （宁可漏删不可误删——时间轴的可回溯性依赖这些文件）。
+        """
+        if max_bytes <= 0 and keep_days <= 0:
+            return 0, 0
+        # 以 (目录, stem) 分组：一对 = 同名 .jpg + .json
+        groups: Dict[str, List[Tuple[str, int, float]]] = {}
+        for root, _dirs, files in os.walk(self.saved_dir):
+            for name in files:
+                ext = os.path.splitext(name)[1].lower()
+                if ext not in (".jpg", ".json"):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    st = os.stat(path)
+                except OSError:
+                    continue
+                stem = name[: -len(ext)]
+                groups.setdefault(os.path.join(root, stem), []).append(
+                    (path, st.st_size, st.st_mtime)
+                )
+        entries = []  # (mtime, size, [(path, size), ...])
+        for files in groups.values():
+            mtime = max(f[2] for f in files)
+            entries.append((mtime, sum(f[1] for f in files), [(f[0], f[1]) for f in files]))
+        entries.sort(key=lambda e: e[0])  # 最旧在前
+        total = sum(e[1] for e in entries)
+        cutoff = time.time() - keep_days * 86400 if keep_days > 0 else None
+        pairs = 0
+        freed = 0
+        for mtime, _size, files in entries:
+            by_age = cutoff is not None and mtime < cutoff
+            by_size = max_bytes > 0 and total > max_bytes
+            if not (by_age or by_size):
+                continue
+            removed_any = False
+            for path, size in files:
+                try:
+                    os.remove(path)
+                    total -= size
+                    freed += size
+                    removed_any = True
+                except OSError as exc:
+                    self.log("clean_saved skip %s: %s" % (path, exc))
+            if removed_any:
+                pairs += 1
+        if pairs:
+            self.log(
+                "clean_saved removed %d pair(s), freed %.1f MB (keep_days=%.1f, max=%.0f MB)"
+                % (pairs, freed / 1048576.0, keep_days, max_bytes / 1048576.0)
+            )
+        return pairs, freed
 
     def today_jsonl(self) -> str:
         return os.path.join(self.results_dir, "%s.jsonl" % datetime.now().strftime("%Y%m%d"))

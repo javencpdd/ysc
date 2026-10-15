@@ -65,3 +65,21 @@ ADR-003 计划用 chrony 修 GOS 时钟（`makestep 1 -1` + 等 sources 上线�
 1. 厂商提供可配置的 PTP 主时钟或修正基准 → 重估 chrony 路线。
 2. 需要严格时间对齐（如多机数据融合要求同一时基）→ 升级到标准 NTP 服务，脱离 AI 服务 Date 头方案。
 3. AI 服务地址变更或 Date 头不可用 → 更换标准时间源（如 192.168.0.1 若提供 NTP，或 PC 侧时钟服务）。
+
+---
+
+## 修订记录
+
+### 2026-10-16 核查：系统时钟已被修正，软件偏移自动退化为 0（本 ADR 的机制保留）
+
+现场核查（`date` / `timedatectl` / `chronyc tracking`）：
+
+- 系统时钟已是真实时间（`Fri 16 Oct 2026 01:02 CST`），`System clock synchronized: yes`、NTP service active；
+  chrony 同步源 `time.nju.edu.cn`（stratum 2），实测偏差 < 1 ms；
+- `ptp_manage.service` 仍在运行（`ptp4l` + `phc2sys` 进程都在），但**不再拖拽系统时钟**——
+  疑为车队 PTP 主时钟当前不可达/不同步（`phc2sys -w` 等待 `ptp4l` 同步态），chrony 因此稳压；
+- 采样器 `M20AI_TS_OFFSET_SEC=0`（自动测量）→ 实测偏移 **0.0** ⇒ JSONL 的 `ts == ts_host`，均为真实时间
+  （`results/20261016.jsonl` 逐条验证）；旧的 `20240621.jsonl` 为 2024 时钟域遗留，文件名即该域日期。
+- **本 ADR 的软件偏移机制不需要任何改动**：若 PTP 主钟恢复并再次拖拽（时钟回退到 2024），
+  自动测量会重新得出 ~846 天偏移，`ts` 依然正确——这正是"机制保留、行为自适应"的设计目标。
+  唯一遗留观察点：PTP 与 chrony 若长期拉锯，`ts_offset_sec` 会随启动时刻漂移，会在记录里留痕可审计。

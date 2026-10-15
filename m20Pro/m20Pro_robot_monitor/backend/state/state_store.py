@@ -55,6 +55,10 @@ class StateStore:
         self._errors = 0       # 解析失败（死信）
         self._dropped = 0      # 缓冲丢弃
         self._ws_clients = 0
+        # 服务自状态降级（如心跳被主动暂停 → 遥测失效）。与"链路故障"是两回事：
+        # 前者是操作者有意为之（提示语义相反，不能都显示成红色告警）。
+        self._degraded = False
+        self._degraded_reason: Optional[str] = None
         self._last_any_monotonic: Optional[float] = None
         self._data_source = "mock"
 
@@ -99,6 +103,17 @@ class StateStore:
     def set_data_source(self, name: str) -> None:
         with self._lock:
             self._data_source = str(name)
+
+    def set_link_degraded(self, degraded: bool, reason: Optional[str] = None) -> None:
+        """标记服务自状态降级（当前用途：心跳被主动暂停 → 遥测失效）。
+
+        为什么要单独一个标志而不是复用 ``connected``：两者提示语义**相反** ——
+        ``connected=False`` 是"链路故障，快检查"，而这里是"操作者主动放弃了遥测，
+        车可能还在动，别被'没数据'误导成'车没事'"。前端据此分色展示。
+        """
+        with self._lock:
+            self._degraded = bool(degraded)
+            self._degraded_reason = str(reason) if (degraded and reason) else None
 
     def clear_raw(self) -> None:
         with self._lock:
@@ -165,6 +180,8 @@ class StateStore:
                 "packets_parsed": self._parsed,
                 "packets_error": self._errors,
                 "packets_dropped": self._dropped,
+                "degraded": self._degraded,
+                "degraded_reason": self._degraded_reason,
             }
         return {
             "type": "snapshot",

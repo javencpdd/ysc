@@ -41,6 +41,23 @@ def service_status(runner: Runner = default_runner) -> str:
     return out.strip() if rc == 0 else (out.strip() or "unknown")
 
 
+def service_is_active(runner: Runner = default_runner) -> Optional[bool]:
+    """采样器是否在运行：True / False；无法确认时 None。不提权。
+
+    与 service_status 的差异：不依赖 shutil.which（测试可注入 runner 模拟任何环境），
+    机器上没有 systemctl（rc=127）或命令超时时返回 None——调用方据此走保守路径
+    （不碰服务直接清，见 server._purge_with_restart 的说明）。
+    activating/reloading 视为在运行（马上可停）；deactivating 视为未运行。
+    """
+    rc, out, _ = runner(["systemctl", "is-active", SERVICE], 10)
+    val = (out or "").strip().lower()
+    if val in ("active", "reloading", "activating"):
+        return True
+    if val in ("inactive", "failed", "deactivating"):
+        return False
+    return None
+
+
 def service_action(action: str, helper: str, runner: Runner = default_runner) -> Tuple[bool, str]:
     """start/stop/restart —— 经 sudo + root helper 白名单。"""
     if action not in ("start", "stop", "restart"):
@@ -93,28 +110,78 @@ def call_helper(sub: str, fields: Dict[str, str], base_dir: str, helper: str,
 
 
 # ---------------------------------------------------------------- 值格式预校验
-_SIZE_RE = re.compile(r"^[0-9]+(\.[0-9]+)?[KMGT]?$")
-_TIME_RE = re.compile(r"^[0-9]+(ms|s|m|h|d|w|y)?$")
+_SIZE_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]*)$")
+_TIME_RE = re.compile(r"^([0-9]+)\s*([A-Za-z]*)$")
+_SIZE_UNITS = ("K", "M", "G", "T")
+_TIME_UNITS = ("MS", "S", "M", "H", "D", "W", "Y")
+
+
+def _norm_size(value: str, what: str) -> Tuple[bool, str]:
+    """体积归一化（ADR-010）：裸数字补默认单位 M；单位大小写归一；非法则报错。"""
+    v = (value or "").strip()
+    m = _SIZE_RE.match(v)
+    if not m:
+        return False, "%s 格式错误：%r（可写 200 / 200M / 1G / 512K；裸数字按 MB 解释）" % (what, value)
+    num, unit = m.group(1), m.group(2).upper()
+    if not unit:  # 裸数字 → 默认 MB（systemd 的 size 必须带后缀）
+        return True, num + "M"
+    if unit not in _SIZE_UNITS:
+        return False, "%s 单位无法识别：%r（合法：K/M/G/T；裸数字按 MB）" % (what, value)
+    return True, num + unit
+
+
+def _norm_time(value: str, what: str) -> Tuple[bool, str]:
+    """时长归一化（ADR-010）：裸数字补默认单位 d。
+
+    ⚠️ systemd 的裸数字时长是**秒**——用户填 "7" 的意图几乎总是 7 天，
+    这里统一重解释为 "7d"，避免 "7" 变成 "7 秒" 的静默事故。
+    """
+    v = (value or "").strip()
+    m = _TIME_RE.match(v)
+    if not m:
+        return False, "%s 格式错误：%r（可写 7 / 7d / 24h / 2w；裸数字按天解释）" % (what, value)
+    num, unit = m.group(1), m.group(2).upper()
+    if not unit:  # 裸数字 → 默认天（systemd 默认秒，必须纠正）
+        return True, num + "d"
+    if unit not in _TIME_UNITS:
+        return False, "%s 单位无法识别：%r（合法：s/m/h/d/w/y；裸数字按天）" % (what, value)
+    return True, num + unit.lower()
 
 
 def check_vacuum(fields: Dict[str, str]) -> Optional[str]:
-    """vacuum 请求预校验：size 或 time 二选一，格式不对返回错误信息。"""
+    """vacuum 预校验 + 单位归一化（就地改写 fields，ADR-010）。
+
+    size 或 time 二选一；裸数字分别按 MB / 天 解释。
+    """
     size, t = fields.get("size", ""), fields.get("time", "")
     if bool(size) == bool(t):
         return "size 与 time 必须二选一"
-    if size and not _SIZE_RE.match(size):
-        return "size 格式错误（如 200M / 1G）"
-    if t and not _TIME_RE.match(t):
-        return "time 格式错误（如 7d / 24h）"
+    if size:
+        ok, v = _norm_size(size, "size")
+        if not ok:
+            return v
+        fields["size"] = v
+    else:
+        ok, v = _norm_time(t, "time")
+        if not ok:
+            return v
+        fields["time"] = v
     return None
 
 
 def check_journald_limits(fields: Dict[str, str]) -> Optional[str]:
+    """journald 持久上限预校验 + 单位归一化（就地改写 fields，ADR-010）。"""
     use, keep = fields.get("SystemMaxUse", ""), fields.get("MaxRetentionSec", "")
-    if use and not _SIZE_RE.match(use):
-        return "SystemMaxUse 格式错误（如 200M）"
-    if keep and not _TIME_RE.match(keep):
-        return "MaxRetentionSec 格式错误（如 7d）"
+    if use:
+        ok, v = _norm_size(use, "SystemMaxUse")
+        if not ok:
+            return v
+        fields["SystemMaxUse"] = v
+    if keep:
+        ok, v = _norm_time(keep, "MaxRetentionSec")
+        if not ok:
+            return v
+        fields["MaxRetentionSec"] = v
     if not use and not keep:
         return "至少填一项"
     return None
@@ -123,5 +190,5 @@ def check_journald_limits(fields: Dict[str, str]) -> Optional[str]:
 def check_logrotate(fields: Dict[str, str]) -> Optional[str]:
     n = fields.get("rotate", "")
     if not n.isdigit() or not 1 <= int(n) <= 365:
-        return "rotate 必须是 1-365 的整数"
+        return "rotate 必须是 1-365 的整数（份数，无单位；每份=一天的日志文件）"
     return None

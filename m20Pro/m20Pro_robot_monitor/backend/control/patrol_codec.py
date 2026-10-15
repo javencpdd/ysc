@@ -5,7 +5,11 @@
 指令值域一律以 docs/04 §1.2 原文为准（v1.2 协议事实修正）：
 - 运动状态转换 (2/22) ``MotionParam``: 0/1/2/3/4/17（旧稿 -2/-1/5 不见于文档，勿用）
 - 步态切换 (2/23) ``GaitParam``: 0x1001/0x1003/0x3002/0x3003（字段名是 GaitParam，不是 Gait）
-- 六轴轴指令 (2/21) X/Y/Z/Roll/Pitch/Yaw ∈ [-1,1]，**仅常规模式下可执行**
+- 六轴轴指令 (2/21) X/Y/Z/Roll/Pitch/Yaw ∈ [-1,1]，**仅常规模式下可执行**；
+  另有实时通道 (2/25) RealSteer，字段完全相同（2026-10-16 三通道取证：
+  basic_server 中 2/21→cmdHandle_Steer（/STEER + /HANDLE_STEER）、
+  2/25→cmdHandle_RealSteer（/REAL_STEER）—— 两条通道订阅方不同，
+  可用于"同一轴值换通道"的对照排查）
 
 ⚠️ Python 3.8 兼容。
 """
@@ -105,8 +109,37 @@ def axis(x: float = 0.0, y: float = 0.0, z: float = 0.0,
 
 
 def zero_axis() -> Dict[str, Any]:
-    """零位指令（看门狗兜底）。"""
+    """零位指令（看门狗兜底，主通道 2/21）。"""
     return axis(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def axis_real(x: float = 0.0, y: float = 0.0, z: float = 0.0,
+              roll: float = 0.0, pitch: float = 0.0, yaw: float = 0.0,
+              limits: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+    """六轴轴指令（**实时通道**，2/25 RealSteer）：字段与 (2/21) 完全相同。
+
+    2026-10-16 取证（basic_server 二进制内三条话题）：``/STEER``、
+    ``/HANDLE_STEER``、``/REAL_STEER``；两路指令只是订阅方不同。
+    排查"主通道发了车没执行"时，可用同一轴值换本通道做对照实验。
+    """
+    msg = axis(x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, limits=limits)
+    msg["command"] = 25
+    return msg
+
+
+#: 轴指令通道键 → 指令名（前端/API 用键，编解码用名）
+AXIS_CHANNELS = {"steer": "axis", "real": "axis_real"}
+
+
+def channel_key(channel: Optional[str]) -> str:
+    """规范化通道键；非法/缺省一律回退 ``steer``（绝不因拼错而静默换通道）。"""
+    c = str(channel or "steer")
+    return c if c in AXIS_CHANNELS else "steer"
+
+
+def channel_command(channel: Optional[str]) -> str:
+    """通道键 → COMMANDS 指令名。"""
+    return AXIS_CHANNELS[channel_key(channel)]
 
 
 def usage_mode(mode: int) -> Dict[str, Any]:
@@ -157,6 +190,7 @@ COMMANDS: Dict[str, Dict[str, Any]] = {
     "motion_state":    {"build": lambda p: motion_state(p.get("param", 0)), "motion": False},
     "gait":            {"build": lambda p: gait(p.get("param", GAIT_BASIC_STD)), "motion": False},
     "axis":            {"build": lambda p: axis(**p), "motion": True},
+    "axis_real":       {"build": lambda p: axis_real(**p), "motion": True},
     "usage_mode":      {"build": lambda p: usage_mode(p.get("mode", MODE_NORMAL)), "motion": False},
     "light":           {"build": lambda p: light(p.get("front", 0), p.get("back", 0)), "motion": False},
     "charge":          {"build": lambda p: charge(p.get("action", CHARGE_START)), "motion": False},

@@ -128,6 +128,74 @@ class TestResultsKeepDays(unittest.TestCase):
             Config.from_env(base_env(M20AI_RESULTS_KEEP_DAYS="abc"))
 
 
+class TestUnitsInConfig(unittest.TestCase):
+    """ADR-010：体积/时长字段同时兼容"带单位"与"不带单位"两种写法。"""
+
+    def test_size_bare_number_means_mb(self):
+        cfg = Config.from_env(base_env(M20AI_RING_MAX_MB="200", M20AI_SAVED_MAX_MB="500"))
+        self.assertEqual(cfg.ring_max_bytes, 200 * 1024 * 1024)
+        self.assertEqual(cfg.saved_max_bytes, 500 * 1024 * 1024)
+
+    def test_size_with_suffix(self):
+        cfg = Config.from_env(
+            base_env(M20AI_RING_MAX_MB="200M", M20AI_SAVED_MAX_MB="1G")
+        )
+        self.assertEqual(cfg.ring_max_bytes, 200 * 1024 * 1024)
+        self.assertEqual(cfg.saved_max_bytes, 1024 * 1024 * 1024)
+
+    def test_size_suffix_case_insensitive(self):
+        cfg = Config.from_env(base_env(M20AI_SAVED_MAX_MB="1g"))
+        self.assertEqual(cfg.saved_max_bytes, 1024 * 1024 * 1024)
+
+    def test_size_fractional(self):
+        cfg = Config.from_env(base_env(M20AI_SAVED_MAX_MB="0.5G"))
+        self.assertEqual(cfg.saved_max_bytes, 512 * 1024 * 1024)
+
+    def test_size_bad_unit_raises_with_hint(self):
+        with self.assertRaises(ConfigError) as cm:
+            Config.from_env(base_env(M20AI_SAVED_MAX_MB="1x"))
+        msg = str(cm.exception)
+        self.assertIn("M20AI_SAVED_MAX_MB", msg)
+        self.assertIn("1x", msg)
+        self.assertIn("裸数字按 MB", msg)
+
+    def test_size_garbage_raises(self):
+        with self.assertRaises(ConfigError):
+            Config.from_env(base_env(M20AI_SAVED_MAX_MB="abc"))
+
+    def test_days_bare_number_means_days(self):
+        cfg = Config.from_env(base_env(M20AI_SAVED_KEEP_DAYS="7"))
+        self.assertEqual(cfg.saved_keep_days, 7.0)
+
+    def test_days_with_suffix(self):
+        self.assertEqual(
+            Config.from_env(base_env(M20AI_SAVED_KEEP_DAYS="7d")).saved_keep_days, 7.0
+        )
+        self.assertEqual(
+            Config.from_env(base_env(M20AI_SAVED_KEEP_DAYS="24h")).saved_keep_days, 1.0
+        )
+        self.assertEqual(
+            Config.from_env(base_env(M20AI_SAVED_KEEP_DAYS="2w")).saved_keep_days, 14.0
+        )
+
+    def test_days_bad_unit_raises_with_hint(self):
+        with self.assertRaises(ConfigError) as cm:
+            Config.from_env(base_env(M20AI_RESULTS_KEEP_DAYS="3y2"))
+        self.assertIn("M20AI_RESULTS_KEEP_DAYS", str(cm.exception))
+
+    def test_negative_raises(self):
+        with self.assertRaises(ConfigError):
+            Config.from_env(base_env(M20AI_SAVED_KEEP_DAYS="-3d"))
+
+    def test_parse_helpers_directly(self):
+        from m20_ai_detect.config import parse_days, parse_size_mb
+
+        self.assertEqual(parse_size_mb("512K", "K"), 0.5)
+        self.assertEqual(parse_size_mb("2T", "K"), 2 * 1024 * 1024.0)
+        self.assertAlmostEqual(parse_days("60s", "K"), 60.0 / 86400, places=12)
+        self.assertAlmostEqual(parse_days("30m", "K"), 30.0 / 1440, places=12)
+
+
 class TestSaveMode(unittest.TestCase):
     """ADR-006：M20AI_SAVE_MODE 四值解析与旧开关兼容。"""
 

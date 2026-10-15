@@ -49,8 +49,10 @@ say "已装入。试试：aiDetect status / aiDetect help"
 say "安装 systemd unit..."
 printf "'\n" | sudo -S install -m 644 "$BASE/deploy/m20-ai-console.service" /etc/systemd/system/m20-ai-console.service
 printf "'\n" | sudo -S systemctl daemon-reload
-printf "'\n" | sudo -S systemctl enable m20-ai-console.service
-say "unit 已安装并 enable（enable != start）"
+# 开机自启默认不开启（ADR-008：重启后手动启动，aiDetect up --all）。
+# 不再自动 enable，也不触碰既有状态。
+en="$(systemctl is-enabled m20-ai-console.service 2>/dev/null || true)"
+say "unit 已安装。开机自启：${en:-disabled}（不再自动 enable；需要时：sudo systemctl enable m20-ai-console）"
 
 # ---- 5. 冒烟自检（不启动常驻，先前台验 5 秒） -------------------------------
 say "冒烟自检：前台起 5 秒，验 /api/status 与静态页..."

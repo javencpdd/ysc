@@ -89,3 +89,17 @@ class ControlLeaseError(ControlError):
     def __init__(self, message: Optional[str] = None) -> None:
         super().__init__(message or "控制租约已失效，请重新获取",
                          reason="LEASE_EXPIRED", status=409)
+
+
+class ControlTelemetryError(ControlError):
+    """遥测已暂停（心跳停发）：看不见车，禁止驱动指令。
+
+    2026-10-16 加：`POST /api/v1/link/heartbeat {paused:true}` 会停发心跳、
+    放弃状态推送（basic_server 随后清除本客户端）。此时**指令链路仍然活着**
+    （心跳与指令是两个独立 UDP socket），若放任驱动就是"蒙眼开车"——
+    故暂停遥测时一律拒绝驱动类指令，软急停除外（安全手段优先）。
+    """
+
+    def __init__(self, message: Optional[str] = None) -> None:
+        super().__init__(message or "遥测已暂停（心跳停发）——看不见车时禁止驱动，请先恢复心跳",
+                         reason="TELEMETRY_PAUSED", status=409)

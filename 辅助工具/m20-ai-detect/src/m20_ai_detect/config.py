@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,6 +19,62 @@ SAVE_MODES = ("off", "alert", "any", "all")
 #: 上游机器人服务的 restart.sh 会 ``pkill -f`` 这些关键词，
 #: 本项目的任何进程/脚本/命令行都不得包含它们，否则会被误杀。
 FORBIDDEN_TOKENS = ("push_video", "v4l2", "gst-launch")
+
+
+# ---------------------------------------------------------------- 数值 + 可选单位（ADR-010）
+#: 体积单位 → MB 换算系数。裸数字按 **MB** 解释（"200" = 200MB）。
+SIZE_UNITS_MB = {"": 1.0, "K": 1.0 / 1024, "M": 1.0, "G": 1024.0, "T": 1024.0 * 1024.0}
+#: 时长单位 → 天 换算系数。裸数字按 **天** 解释（"7" = 7 天）。
+TIME_UNITS_DAYS = {
+    "": 1.0, "S": 1.0 / 86400, "M": 1.0 / 1440, "H": 1.0 / 24, "D": 1.0, "W": 7.0,
+}
+_NUM_UNIT_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]*)$")
+
+
+def parse_number_with_unit(
+    raw: str, key: str, units: Dict[str, float], default_unit: str, what: str
+) -> float:
+    """解析 "200" / "200M" / "1G" 这类带可选单位的数值（ADR-010）。
+
+    * 裸数字按 ``default_unit`` 解释（体积=MB，时长=天）；
+    * 带单位不区分大小写（"7d" 与 "7D" 等价）；
+    * 单位无法识别或格式非法时抛 ConfigError，消息列出全部合法写法。
+    """
+    text = (raw or "").strip()
+    m = _NUM_UNIT_RE.match(text)
+    if not m:
+        raise ConfigError(
+            "%s=%r 不是合法数值（示例：%s）。%s" % (key, raw, _examples_of(units), what)
+        )
+    num, unit = m.group(1), m.group(2).upper()
+    if unit not in units:
+        raise ConfigError(
+            "%s=%r 的单位 %r 无法识别。合法单位：%s；裸数字按 %s 解释"
+            % (key, raw, m.group(2) or "(空)", _unit_names(units), default_unit or "(无)")
+        )
+    return float(num) * units[unit]
+
+
+def _unit_names(units: Dict[str, float]) -> str:
+    named = {k: v for k, v in units.items() if k}
+    order = sorted(named.items(), key=lambda kv: kv[1])
+    return "/".join(k.lower() for k, _ in order) + "（或裸数字）"
+
+
+def _examples_of(units: Dict[str, float]) -> str:
+    if units is SIZE_UNITS_MB:
+        return "体积写法：200（=200MB）、200M、1G、512K"
+    return "时长写法：7（=7天）、7d、24h、2w"
+
+
+def parse_size_mb(raw: str, key: str) -> float:
+    """体积 → MB。裸数字按 MB；支持 K/M/G/T。"""
+    return parse_number_with_unit(raw, key, SIZE_UNITS_MB, "MB", "该字段单位是体积（MB）")
+
+
+def parse_days(raw: str, key: str) -> float:
+    """时长 → 天。裸数字按天；支持 s(秒)/m(分)/h(时)/d(天)/w(周)。"""
+    return parse_number_with_unit(raw, key, TIME_UNITS_DAYS, "天", "该字段单位是时长（天）")
 
 
 class ConfigError(ValueError):
@@ -68,6 +125,12 @@ class Config:
     # 落 saved/<cam>/。旧开关 SAVE_RESULT_IMAGE=true 兼容映射为 "alert"。
     save_mode: str = "off"
     save_result_image: bool = False
+    # saved/ 留存清理（ADR-008）：0 = 不按该维度清理。
+    # saved_max_bytes：saved/ 总量上限，超出时从最旧开始成对删 .jpg/.json；
+    # saved_keep_days：>0 时先按年龄删（mtime 早于 now-keep_days 的对）。
+    # 两者可同时生效（先按年龄、再按体积）。时间轴卡片只能看到未被清理的图片。
+    saved_max_bytes: int = 500 * 1024 * 1024
+    saved_keep_days: float = 0.0
 
     # --- 告警 ---
     alert_labels: Tuple[str, ...] = ()
@@ -101,6 +164,20 @@ class Config:
                 return int(raw)
             except ValueError:
                 raise ConfigError("%s%s=%r 不是整数" % (ENV_PREFIX, key, raw))
+
+        def get_size_mb(key: str, default: float) -> float:
+            """体积字段（MB）。兼容 "200" 与 "200M"/"1G"（ADR-010）。"""
+            raw = env.get(ENV_PREFIX + key)
+            if raw is None or raw.strip() == "":
+                return default
+            return parse_size_mb(raw, ENV_PREFIX + key)
+
+        def get_days(key: str, default: float) -> float:
+            """时长字段（天）。兼容 "7" 与 "7d"/"24h"（ADR-010）。"""
+            raw = env.get(ENV_PREFIX + key)
+            if raw is None or raw.strip() == "":
+                return default
+            return parse_days(raw, ENV_PREFIX + key)
 
         def get_bool(key: str, default: bool) -> bool:
             raw = env.get(ENV_PREFIX + key)
@@ -159,8 +236,10 @@ class Config:
             retry_base=get_float("RETRY_BASE", 1.0),
             ts_offset_sec=get_float("TS_OFFSET_SEC", 0.0),
             base_dir=get("BASE_DIR", "/home/djw/m20-ai-detect"),
-            ring_max_bytes=int(get_float("RING_MAX_MB", 200) * 1024 * 1024),
-            results_keep_days=get_float("RESULTS_KEEP_DAYS", 0.0),
+            ring_max_bytes=int(get_size_mb("RING_MAX_MB", 200) * 1024 * 1024),
+            results_keep_days=get_days("RESULTS_KEEP_DAYS", 0.0),
+            saved_max_bytes=int(get_size_mb("SAVED_MAX_MB", 500) * 1024 * 1024),
+            saved_keep_days=get_days("SAVED_KEEP_DAYS", 0.0),
             save_mode=save_mode,
             save_result_image=legacy_save_image,
             alert_labels=get_list("ALERT_LABELS", ()),
@@ -199,6 +278,10 @@ class Config:
             raise ConfigError("M20AI_ALERT_SCORE 应在 [0,1]，当前 %r" % self.alert_score)
         if self.ring_max_bytes < 10 * 1024 * 1024:
             raise ConfigError("M20AI_RING_MAX_MB 不应小于 10（MB）")
+        if self.saved_max_bytes < 0:
+            raise ConfigError("M20AI_SAVED_MAX_MB 不能为负（0 = 不按体积清理）")
+        if self.saved_keep_days < 0:
+            raise ConfigError("M20AI_SAVED_KEEP_DAYS 不能为负（0 = 不按年龄清理）")
         if self.save_mode not in SAVE_MODES:
             raise ConfigError(
                 "M20AI_SAVE_MODE=%r 必须是 %s 之一" % (self.save_mode, "/".join(SAVE_MODES))

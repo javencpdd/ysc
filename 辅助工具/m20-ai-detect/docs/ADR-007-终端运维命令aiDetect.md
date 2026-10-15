@@ -26,6 +26,11 @@
 
 配套改动：helper 新增 `console-start|console-stop|console-restart`（管理 `m20-ai-console.service` 自身），sudoers 白名单从 6 条扩到 9 条——仍全部为**精确完整命令行、无通配符**。
 
+**2026-10-15 扩充（ADR-008）**：新增 `enable / disable [--all]` 子命令（开机自启开关，幂等）；
+`status` 增显示"开机自启 采样器 X · 控制台 Y"；helper/sudoers 再扩 `svc-enable|disable`、
+`console-enable|disable`（9→13 条）。背景：用户要求部署**默认不开机自启**（重启后手动
+`aiDetect up --all`），两个 bootstrap 同步取消自动 `enable`。
+
 ## 依据
 
 - 2026-10-15 本地打桩验证（stub 掉 systemctl/sudo/journalctl）：up/down/restart/reset/status/log 全流程、幂等（对已是目标态的服务不重复调用）、失败中止（停服务失败则不删帧）、helper 调用次序（stop→start 严格有序）均符合预期；
@@ -51,3 +56,34 @@
 
 - 出现"多主机同管"或"从非 104 主机远程执行"的需求时——应改为集中化运维通道（SSH 编排等），而不是继续往 aiDetect 加子命令；
 - 若将来出现需要交互确认的危险动作（如清空 `results/` 权威数据），**不得**直接加进本 CLI，须单独设计显式确认与二次校验。
+
+---
+
+## 修订记录 2026-10-16（ADR-010）：启动行为与参数面调整
+
+用户要求"启动服务时只启动控制台，不自动启动采样器；采样器由控制台开关控制、默认关闭；不需要 `--all` 参数"。
+据此修订本 ADR 的命令语义（提权模型不变，仍为 helper + 精确命令行白名单）：
+
+| 命令 | 修订后语义 |
+|---|---|
+| `up` / `down` / `restart` | **只作用于控制台**（`m20-ai-console`） |
+| `collect on\|off\|status\|restart` | **新增**：采集开关（`m20-ai-detect` 采样器），默认关闭 |
+| `enable` / `disable` | **只作用于控制台**的开机自启；采集不设自启 |
+| `reset` | 语义不变（内部临时停/起采样器以清空 spool/） |
+| `--all` | **移除**；传参直接报错（不静默忽略） |
+
+`status` 输出同步调整：控制台在前、采集在后，并单列"采集开关"与"开机自启"行。
+usage 帮助文本、README §4.6、USAGE §0/§2.4/§5 已同步。详细动机与设计见 ADR-010。
+
+## 修订记录 2026-10-16（ADR-011）：`reset` 不再拉起停着的采集
+
+上一修订中 `reset` 被记为"语义不变（内部临时停/起采样器以清空 spool/）"——这个"无条件停→清→起"
+会让**采集原本关着**的情况下被 `reset` 顺手启动，与 ADR-010"采集开关归用户"矛盾。
+据 ADR-011 修正为**保持原状态**：
+
+| 场景 | `reset` 行为 |
+|---|---|
+| 采集运行中 | 停采集 → 删 `spool/*.jpg` → 恢复启动（然后以实时 1 fps 消费） |
+| 采集原本关闭 | 只删 `spool/*.jpg`，**不启动**（提示 `aiDetect collect on` 可开采集） |
+
+网页端对应操作（「清理数据」勾选 `spool/`）同步为同一语义；README/USAGE 文案已同步。

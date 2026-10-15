@@ -35,6 +35,25 @@
       </select>
     </div>
 
+    <!-- 车侧实际反馈（2026-10-16 加）：推了摇杆车不动时看这里 -->
+    <div class="grid" style="margin-bottom: 6px">
+      <div class="kv"><span>运动状态</span><span>{{ motionLabel }}</span></div>
+      <div class="kv"><span>当前步态</span><span>{{ gaitLabel }}</span></div>
+      <div class="kv"><span>实际 前后 X</span><span>{{ n3(motion.linear_x) }} m/s</span></div>
+      <div class="kv"><span>实际 左右 Y</span><span>{{ n3(motion.linear_y) }} m/s</span></div>
+      <div class="kv"><span>实际 转向 ω</span><span>{{ n3(motion.omega_z) }} rad/s</span></div>
+    </div>
+    <div v-if="!motionReady" style="color: var(--warn); font-size: 12px; margin-bottom: 10px">
+      ⚠ 当前「{{ motionLabel }}」—— 轴指令<b>只在「站立 / RL 控制」下生效</b>，请先点「站立」
+    </div>
+    <template v-else>
+      <div v-if="joyLateralWarn" class="gait-warn">⚠ {{ joyLateralWarn }}</div>
+      <div style="color: var(--muted); font-size: 12px; margin-bottom: 10px">
+        诊断：发了横移却不动时，看「实际 左右 Y」—— 恒为 0 = 车侧没执行（步态不支持）；
+        有值但机身不挪 = 轮足侧向打滑
+      </div>
+    </template>
+
     <!-- 速度控制：虚拟摇杆（模拟遥感，交互参考 lite3 控制面板） -->
     <div class="joy-wrap">
       <div class="joy-head">
@@ -94,6 +113,51 @@
       </div>
     </div>
 
+    <!-- 定时移动（2026-10-16 加）：选方向 + 速度 + 秒数，后端计时到点自动停。
+         计时放后端：浏览器定时器会被节流（切后台/省电），前端计时停不住车。 -->
+    <div class="timed-wrap">
+      <div class="joy-head">
+        <span class="block-title">定时移动（方向 · 速度 · 秒数）</span>
+        <span class="timed-state" :class="{ on: timedActive }">
+          <template v-if="timedActive">
+            执行中 · 剩余 {{ timedRemaining.toFixed(1) }} s / 共 {{ timedTotal.toFixed(1) }} s
+          </template>
+          <template v-else>空闲</template>
+        </span>
+      </div>
+      <div class="timed-row">
+        <label>方向
+          <select v-model="timedDir" :disabled="timedActive">
+            <option v-for="(d, key) in TIMED_DIRS" :key="key" :value="key">{{ d.label }}</option>
+          </select>
+        </label>
+        <label>速度
+          <input type="number" min="0.05" max="0.4" step="0.01" v-model.number="timedSpeed"
+                 :disabled="timedActive" @change="clampTimedSpeed" />
+        </label>
+        <label>秒数
+          <input type="number" min="0.5" max="30" step="0.5" v-model.number="timedSeconds"
+                 :disabled="timedActive" @change="clampTimedSeconds" />
+        </label>
+        <label>通道
+          <select v-model="timedChannel" :disabled="timedActive">
+            <option value="steer">steer（2/21 主通道）</option>
+            <option value="real">real（2/25 实时通道）</option>
+          </select>
+        </label>
+        <button v-if="!timedActive" :disabled="!ctrl.enabled || ctrl.estop" :title="disabledTip"
+                @click="startTimed">开始</button>
+        <button v-else class="danger" @click="abortTimed">中止</button>
+      </div>
+      <div v-if="timedWarn" class="gait-warn">⚠ {{ timedWarn }}</div>
+      <div class="timed-tip">
+        到点自动「零位停止」（不软急停），计时在后端完成 —— 浏览器切后台也按时停。<br />
+        横移（左移 / 右移）需先把步态切到「平地（敏捷）0x3002」：2026-10-16 实测，
+        0x1001 基础（标准）下 Y 指令只原地调姿态、不位移（steer / real 两条通道一致）。
+        「通道」选择保留作排查工具。
+      </div>
+    </div>
+
     <div v-if="lastResult" class="last-result">最近结果：{{ lastResult }}</div>
   </div>
 </template>
@@ -105,16 +169,65 @@ const props = defineProps({
   control: { type: Object, default: () => ({}) },
   sendCommand: { type: Function, required: true },
   sendAxis: { type: Function, required: true },
+  sendTimedAxis: { type: Function, required: true },
   stopAxis: { type: Function, required: true },
   estop: { type: Function, required: true },
   clearEstop: { type: Function, required: true },
   enableControl: { type: Function, required: true },
   disableControl: { type: Function, required: true },
-  renewLease: { type: Function, default: null }
+  renewLease: { type: Function, default: null },
+  refreshControl: { type: Function, default: null },
+  //: 本面板是否可见（App.vue 标签页传入）。**切走即松手**：摇杆用了
+  //  setPointerCapture，多指触屏下"一指按摇杆、一指切标签"会让捕获中的
+  //  pointermove 继续喂看门狗——车会在看不见的标签后面继续走。
+  active: { type: Boolean, default: true },
+  //: 看门狗状态（定时移动倒计时来源；2026-10-16 加）
+  watchdog: { type: Object, default: () => ({}) },
+  // 车侧状态（诊断用）：实际速度反馈 + 当前步态 + 运动状态
+  motion: { type: Object, default: () => ({}) },
+  basic: { type: Object, default: () => ({}) }
 })
 
 const ctrl = ref(props.control)
 watch(() => props.control, (v) => { ctrl.value = v || {} }, { deep: true })
+
+// ---- 车侧实际速度反馈（2026-10-16 加）----
+// 用途：推摇杆却不动时，用它判别"指令被忽略"还是"车在动但看不出来"：
+//   · 发了 y=0.4 但 linear_y 恒为 0  → 车侧没执行横移（步态/模式不支持）
+//   · linear_y 有非零值但机身位移极小 → 轮足侧向打滑，属能力所限
+const n3 = (v) => (v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toFixed(3))
+const GAIT_LABEL = {
+  4097: '0x1001 基础（标准）',
+  4099: '0x1003 楼梯（标准）',
+  12290: '0x3002 平地（敏捷）',
+  12291: '0x3003 楼梯（敏捷）',
+}
+const gaitLabel = computed(() => {
+  const g = props.basic?.gait
+  if (!g) return '—'
+  return GAIT_LABEL[g] || `0x${Number(g).toString(16)}`
+})
+
+// ---- 横移步态提示（2026-10-16 真机对照实验结论）----
+// 实测：0x1001 基础（标准）步态下 Y 指令只原地调姿态、不位移，steer / real 两条通道
+// 表现一致；切 0x3002 平地（敏捷）后横移生效（vy 抬升 2× 底噪 + 站高 0.574→0.46）。
+// ⇒ 横移能力由**步态**决定，与通道无关。只提示、不拦截。
+function lateralHint (g) {
+  if (g === 0x1001) {
+    return '「基础（标准）0x1001」不支持横移（2026-10-16 实测）—— Y 指令只会原地调整姿态、'
+      + '不位移，请先切「平地（敏捷）0x3002」'
+  }
+  if (g === 0x1003) {
+    return '「楼梯（标准）0x1003」与基础同系、横移未实测 —— 若原地不动请切「平地（敏捷）0x3002」'
+  }
+  return ''
+}
+const MOTION_LABEL = { 0: '空闲', 1: '站立', 2: '软急停阻尼', 3: '开机阻尼', 4: '趴下', 17: 'RL 控制' }
+const motionLabel = computed(() => {
+  const m = props.basic?.motion_state
+  return m == null ? '—' : (MOTION_LABEL[m] || `未知(${m})`)
+})
+const motionReady = computed(() => [1, 17].includes(props.basic?.motion_state))
 
 const gait = ref(0x1001)
 const lastResult = ref('')
@@ -159,6 +272,8 @@ const JOY_R = 48              // 手柄行程半径（px），与 CSS 中 .joy(1
 const joyEl = ref(null)
 const joyActive = ref(false)
 const joyMode = ref('xy')                  // 'xy' = 前后+左右平移；'xyaw' = 前后+转向
+//: 摇杆「前后 + 左右平移」模式 + 标准系步态 → 提前警示横移不可用
+const joyLateralWarn = computed(() => (joyMode.value === 'xy' ? lateralHint(props.basic?.gait) : ''))
 const joyVec = ref({ x: 0, h: 0 })         // 归一化 [-1,1]：x 上推为正(前进)；h 左为正
 const readout = ref({ x: '0.00', h: '0.00' })
 let joyTimer = null
@@ -296,6 +411,12 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 
+// 切到别的标签 = 与"页面切后台"同级的松手条件（见 props.active 注释）：
+// 摇杆有 setPointerCapture，隐藏后事件仍可能继续到达，必须显式收手。
+watch(() => props.active, (on) => {
+  if (!on && joyActive.value) releaseJoy('切换标签：已自动零位停止')
+})
+
 /** 切换摇杆水平轴：清掉上一模式遗留值，避免残速 */
 function setJoyMode (mode) {
   if (joyMode.value === mode) return
@@ -305,6 +426,107 @@ function setJoyMode (mode) {
 }
 
 watch(speed, updateReadout)
+
+// ---------------------------------------------------------------- 定时移动（2026-10-16 加）
+// 设计要点：计时放**后端**（前端 setInterval 会被浏览器节流，靠它停不住车）。
+// 前端只负责：选参数 → 调一次 API → 轮询后端状态显示倒计时；中止 = 调 stopAxis。
+// 通道 steer(2/21) / real(2/25)：两通道字段同构、订阅方不同，可做对照排查。
+const TIMED_DIRS = {
+  forward: { label: '前进', axes: { x: 1 } },
+  back: { label: '后退', axes: { x: -1 } },
+  left: { label: '左移', axes: { y: 1 } },
+  right: { label: '右移', axes: { y: -1 } },
+  yaw_left: { label: '左转', axes: { yaw: 1 } },
+  yaw_right: { label: '右转', axes: { yaw: -1 } }
+}
+const TIMED_MIN_S = 0.5
+const TIMED_MAX_S = 30
+
+const timedDir = ref('forward')
+const timedSpeed = ref(SPEED_DEFAULT)
+const timedSeconds = ref(2)
+const timedChannel = ref('steer')
+
+const timedActive = computed(() => !!(props.watchdog && props.watchdog.timed_active))
+const timedRemaining = computed(() => Number((props.watchdog && props.watchdog.timed_remaining) || 0))
+const timedTotal = computed(() => Number((props.watchdog && props.watchdog.timed_total) || 0))
+
+//: 选中方向是否含横移（左移 / 右移）
+const timedIsLateral = computed(() => ['left', 'right'].includes(timedDir.value))
+//: 本地实时提示（选横移方向 + 标准系步态）—— 比等服务端返回更早一步
+const timedLateralWarn = computed(() => (timedIsLateral.value ? lateralHint(props.basic?.gait) : ''))
+//: 后端响应携带的警示（``res.warning``）：本机 basic 数据滞后时的兜底
+const timedServerWarn = ref('')
+const timedWarn = computed(() => (timedIsLateral.value
+  ? (timedLateralWarn.value || timedServerWarn.value)
+  : ''))
+
+function clampTimedSpeed () {
+  let v = Number(timedSpeed.value)
+  if (!isFinite(v) || v <= 0) v = SPEED_DEFAULT
+  v = Math.min(SPEED_MAX, Math.max(SPEED_MIN, Math.round(v * 100) / 100))
+  timedSpeed.value = v
+  return v
+}
+
+function clampTimedSeconds () {
+  let v = Number(timedSeconds.value)
+  if (!isFinite(v) || v <= 0) v = 2
+  v = Math.min(TIMED_MAX_S, Math.max(TIMED_MIN_S, Math.round(v * 2) / 2))
+  timedSeconds.value = v
+  return v
+}
+
+// 执行中每 500ms 轮询一次后端状态刷新倒计时（空闲不轮询，避免无谓请求）
+let timedPoll = null
+function stopTimedPoll () {
+  if (timedPoll) { clearInterval(timedPoll); timedPoll = null }
+}
+function ensureTimedPoll () {
+  if (timedPoll || !props.refreshControl) return
+  timedPoll = setInterval(() => { props.refreshControl() }, 500)
+}
+watch(timedActive, (on) => { on ? ensureTimedPoll() : stopTimedPoll() }, { immediate: true })
+onUnmounted(stopTimedPoll)
+
+async function startTimed () {
+  if (!ctrl.value.enabled) { lastResult.value = '需先开启控制（L1）'; return }
+  if (timedActive.value) return
+  const dir = TIMED_DIRS[timedDir.value] || TIMED_DIRS.forward
+  const s = clampTimedSpeed()
+  const secs = clampTimedSeconds()
+  const vals = { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 }
+  Object.keys(dir.axes).forEach((axis) => {
+    vals[axis] = Math.round(dir.axes[axis] * s * 100) / 100
+  })
+  // 先续约：页面刚从后台回来时租约可能已过期，不续约首帧会被租约闸拒发
+  if (props.renewLease) { try { await props.renewLease() } catch (e) { /* 忽略 */ } }
+  try {
+    const res = await props.sendTimedAxis(vals, secs, timedChannel.value)
+    timedServerWarn.value = (res && res.warning) || ''
+    if (res && res.ok) {
+      lastResult.value = `定时移动已开始：${dir.label} ${s} × ${secs}s`
+        + `（通道 ${timedChannel.value}，到点自动停止）`
+    } else {
+      lastResult.value = `被拒：${(res && res.reason) || '未知'} ${(res && res.detail) || ''}`
+    }
+  } catch (err) {
+    timedServerWarn.value = ''
+    lastResult.value = '定时移动请求失败：' + (err && err.message ? err.message : err)
+  }
+  if (props.refreshControl) props.refreshControl()
+}
+
+async function abortTimed () {
+  try {
+    await props.stopAxis()
+    lastResult.value = '已中止定时移动：零位停止（不软急停）'
+  } catch (err) {
+    lastResult.value = '中止指令下发失败（车侧 150ms 看门狗将自动清零）：'
+      + (err && err.message ? err.message : err)
+  }
+  if (props.refreshControl) props.refreshControl()
+}
 
 // ---------------------------------------------------------------- 指令
 async function send (name, params = {}) {
@@ -476,6 +698,72 @@ async function onDisable () {
 }
 
 .speed-hint { font-size: 11.5px; color: var(--muted); }
+
+/* ---- 定时移动（2026-10-16 加） ---- */
+.timed-wrap {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.timed-state {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.timed-state.on { color: var(--ok); }
+
+.timed-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.timed-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.timed-row select,
+.timed-row input {
+  padding: 4px 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.timed-row input[type='number'] {
+  width: 68px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.timed-tip {
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* 横移步态警示（2026-10-16）：摇杆区 / 定时移动区共用 */
+.gait-warn {
+  margin: 6px 0 10px;
+  padding: 6px 9px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
 
 .last-result {
   margin-top: 10px;

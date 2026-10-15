@@ -15,12 +15,12 @@ REQ="$BASE/tmp/console-$SUB.req"
 log() { logger -t m20-ai-console-helper "$*" 2>/dev/null || true; }
 
 case "$SUB" in
-  svc-start|svc-stop|svc-restart)
+  svc-start|svc-stop|svc-restart|svc-enable|svc-disable)
     verb="${SUB#svc-}"
     systemctl "$verb" m20-ai-detect
     log "$verb ok"
     ;;
-  console-start|console-stop|console-restart)
+  console-start|console-stop|console-restart|console-enable|console-disable)
     verb="${SUB#console-}"
     systemctl "$verb" m20-ai-console
     log "console $verb ok"

@@ -48,6 +48,7 @@ class Sampler:
         self._running = True
         self.ts_offset = cfg.ts_offset_sec
         self._last_prune = 0.0
+        self._last_saved_prune = 0.0
 
     # ------------------------------------------------------------ 时钟校准
     def calibrate_clock(self) -> float:
@@ -103,6 +104,7 @@ class Sampler:
                     progressed = self._process_camera(cam) or progressed
                 self.store.enforce_ring()
                 self._maybe_prune_results()
+                self._maybe_prune_saved()
                 if not progressed:
                     time.sleep(0.5)
         finally:
@@ -123,6 +125,20 @@ class Sampler:
             return
         self._last_prune = now
         self.store.prune_results(self.cfg.results_keep_days)
+
+    def _maybe_prune_saved(self) -> None:
+        """saved/ 留存清理（ADR-008，M20AI_SAVED_MAX_MB / M20AI_SAVED_KEEP_DAYS）。
+
+        超上限或超龄的成对 .jpg/.json 从最旧开始删；每 10 分钟检查一次
+        （any 模式约 1GB/天量级，10 分钟粒度把超出上限的余量压在几十 MB 内）。
+        """
+        if self.cfg.saved_max_bytes <= 0 and self.cfg.saved_keep_days <= 0:
+            return
+        now = time.time()
+        if now - self._last_saved_prune < 600:
+            return
+        self._last_saved_prune = now
+        self.store.clean_saved(self.cfg.saved_max_bytes, self.cfg.saved_keep_days)
 
     # ------------------------------------------------------------ 单路处理
     def _process_camera(self, cam: Camera) -> bool:
@@ -218,7 +234,15 @@ class Sampler:
             )
         if self._should_save(is_alert, record["n_items"]):
             jpeg = self.detector.decode_result_image(payload)
-            img_rel, json_rel = self.store.save_pair(cam.name, stem, jpeg, payload)
+            # meta 供时间轴（ADR-008）：_saved_at = 真实时间（含时钟偏移修正），
+            # 时间轴 API 以它排序/显示，避免依赖相机时钟命名的文件名。
+            img_rel, json_rel = self.store.save_pair(
+                cam.name,
+                stem,
+                jpeg,
+                payload,
+                meta={"_saved_at": ts, "_alert": True if is_alert else None},
+            )
             if img_rel:
                 record["result_image_saved"] = True
                 record["saved_image"] = img_rel
