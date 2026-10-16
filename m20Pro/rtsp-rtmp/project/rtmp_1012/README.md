@@ -44,17 +44,18 @@ H.265 进 `flvmux` 依赖 **GStreamer 1.24+ 的 Enhanced RTMP**，1.16.3 完全�
 a=rtpmap:96 H265/90000
 ```
 
-> ### ⚠️ 120 主机（Lite3）实际部署状态 · 2026-10-16 现场核查
-> 上面把 120 描述为「纯 remux 直推 172.31.68.227:1936」是**概念正确**的，但**实际由两套独立 systemd 服务拼成**，且上游推送那套**默认不随开机自启**：
+> ### ✅ 120 主机（Lite3）实际部署状态 · 2026-10-16 23:5x 复核（已更正）
+> 上面的「纯 remux 直推 172.31.68.227:1936」概念正确，实际由 **1 个系统级 + 1 个用户级** 服务拼成：
 >
-> | 服务 | 作用 | 当前状态 |
-> |---|---|---|
-> | `rtsp_stream.service`（`enabled`） | 起本地 MediaMTX（:8554/:1935）＋ 相机经 `push_video.sh` 发布到 `rtsp://127.0.0.1:8554/test` | active（相机→本地 RTSP 正常） |
-> | `streaming.service`（**`disabled`**） | 经 `/home/ysc/.zetton/streaming.sh` → `rtmp_forward.sh`，把本地 RTSP **转推上游** `rtmp://172.31.68.227:1936/live/lite3` | **inactive（上游推送没在跑）** |
+> | 层级 | 服务 | 作用 | 状态 |
+> |---|---|---|---|
+> | 系统级 | `rtsp_stream.service`（`enabled`） | 起本地 MediaMTX（:8554/:1935）＋ 相机经 `push_video.sh` 发布到 `rtsp://127.0.0.1:8554/test` | active（相机→本地 RTSP） |
+> | **用户级（~ysc）** | **`rtmp-forward.service`（`enabled`）** | `ExecStart=/home/ysc/rtsp_stream/rtmp_forward.sh`：本地 RTSP → `rtmp://172.31.68.227:1936/live/lite3` | **active running（真正的外推）** |
 >
-> - **「Lite3 推流停了」= `streaming.service` 没启动**，本地相机流本身没问题。
-> - **重启不会自动恢复上游推送**：120 上没有 `crontab`/`@reboot`/`rc.local` 兜底，且 `streaming.service` 是 `disabled`。要让重启后自动推，需先 `sudo systemctl enable streaming.service`。
-> - **120 上的 `rtmp-conn-guard` 看门狗当前盯的是 `rtsp_stream.service`**（它根本不产生 `:1936` 连接），对上游僵尸**不生效**；应改盯 `streaming.service` 才能真正自愈 Lite3 推送。
+> - **自启动确实存在**：`~/.config/systemd/user/rtmp-forward.service`（`WantedBy=default.target`，已 symlink 到 `default.target.wants/`），且 `loginctl` 显示 **`Linger=yes`** → **开机无需登录即自启**。用户重启后推流自动恢复已**实证**。
+> - ⚠️ 此前"120 无自启动 / 需 `enable streaming.service`"是**错误结论**——当时只查了系统级 `/etc/systemd`，**漏了用户级单元**（`grep /etc/systemd` 返回空正是线索）。系统级 `streaming.service`（`/home/ysc/.zetton/streaming.sh`）是**无关的厂商服务**，disabled 属正常，与外推无关。
+> - **为何会停**：`rtmp-forward.service` 带 `RestartPreventExitStatus=3`+`SuccessExitStatus=3` → 上游抖动时 `rtmp_forward.sh` exit 3 → systemd **不再重启、永久停推**（同 M20 旧病），只能靠重启拉起。
+> - **看门狗无效**：120 上 `rtmp-conn-guard` 盯的是系统级 `rtsp_stream.service`（不产生 `:1936`），对此外推无效；应改盯**用户级** `rtmp-forward.service`。
 
 ## 2. 本项目的做法
 
