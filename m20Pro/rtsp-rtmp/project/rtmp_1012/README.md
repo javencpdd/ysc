@@ -54,8 +54,9 @@ a=rtpmap:96 H265/90000
 >
 > - **自启动确实存在**：`~/.config/systemd/user/rtmp-forward.service`（`WantedBy=default.target`，已 symlink 到 `default.target.wants/`），且 `loginctl` 显示 **`Linger=yes`** → **开机无需登录即自启**。用户重启后推流自动恢复已**实证**。
 > - ⚠️ 此前"120 无自启动 / 需 `enable streaming.service`"是**错误结论**——当时只查了系统级 `/etc/systemd`，**漏了用户级单元**（`grep /etc/systemd` 返回空正是线索）。系统级 `streaming.service`（`/home/ysc/.zetton/streaming.sh`）是**无关的厂商服务**，disabled 属正常，与外推无关。
-> - **为何会停**：`rtmp-forward.service` 带 `RestartPreventExitStatus=3`+`SuccessExitStatus=3` → 上游抖动时 `rtmp_forward.sh` exit 3 → systemd **不再重启、永久停推**（同 M20 旧病），只能靠重启拉起。
-> - **看门狗无效**：120 上 `rtmp-conn-guard` 盯的是系统级 `rtsp_stream.service`（不产生 `:1936`），对此外推无效；应改盯**用户级** `rtmp-forward.service`。
+> - **为何会停（✅ 已修复 2026-10-17）**：原单元带 `RestartPreventExitStatus=3`+`SuccessExitStatus=3` → 上游抖动时 `rtmp_forward.sh` exit 3 → systemd **不再重启、永久停推**（同 M20 旧病），只能靠重启拉起。**现已去掉该豁免**，改为 `Restart=always` + **`RestartSec=30`** 退避（实测 `RestartUSec=30s`）：瞬断 30s 内自动重连自愈，上游真宕机也只每 30s 重试一次、不空转。
+> - **看门狗（✅ 已修复 2026-10-17）**：原**系统级** `rtmp-conn-guard` 盯系统级 `rtsp_stream.service`（不产生 `:1936`），对此外推无效，且僵尸时会**重启错的服务** → **已在 120 停用**（`disabled`+`inactive`）。改由**用户级** `rtmp-conn-guard-user.{service,timer}`（30s 周期，脚本 `/home/ysc/rtsp_stream/rtmp-conn-guard-user.sh`，补丁见 `patch/`）盯 `rtmp-forward.service`，走 `systemctl --user` 重启。
+> - **修复后实测**：`rtmp-forward.service` enabled+active；上游 ESTAB `cwnd:447`（健康非僵尸）；用户级看门狗首跑 `status=0/SUCCESS`、`badcount=0`。
 
 ## 2. 本项目的做法
 

@@ -1,0 +1,20 @@
+[Unit]
+Description=Relay the local MediaMTX test stream to the Lite3 RTMP endpoint
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/home/ysc/rtsp_stream/rtmp_forward.sh
+Restart=always
+# 2026-10-17 改动：原 RestartSec=5，且带 RestartPreventExitStatus=3 / SuccessExitStatus=3，
+# 导致上游抖动时脚本以 exit 3 退出后 systemd 不再重启 → 永久停推（只能靠整机重启恢复）。
+# 现去掉 exit-3 豁免：瞬断时 30s 退避自动重连自愈；上游真宕机时也只每 30s 重试一次，不空转忙等。
+RestartSec=30
+# 可选调优（取消注释即可生效）：
+# Environment=MAX_CONNECT_FAILURES=3
+# Environment=RETRY_SECONDS=5
+# Environment=PROBE_TIMEOUT=5
+# Environment=RTMP_FORWARD_LOG=/home/ysc/rtsp_stream/logs/rtmp_forward.log
+
+[Install]
+WantedBy=default.target

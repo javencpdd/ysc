@@ -1,0 +1,7 @@
+[Unit]
+Description=Watchdog (user-level) for Lite3 RTMP upstream connection health
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/ysc/rtsp_stream/rtmp-conn-guard-user.sh
