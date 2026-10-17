@@ -12,7 +12,13 @@ sudoers 只放行它（见 ``deploy/m20-ap-ctl`` 与 ``deploy/sudoers-m20-ap-ctl
 
 由此定出能力边界：
 
+  - ✅ **读当前 SSID / 密码**：操作者要拿密码连新设备，为它去 SSH
+    ``sudo cat`` 反而更绕。控制台已暴露视频/遥测/运动控制，读密码的边际风险
+    低于这些，故 status 回显 ``ap.password``（前端默认掩码）。
+    控制台走 HTTP（196 时钟异常导致 HTTPS 起不来），这点已在界面注明。
   - ✅ **改 SSID / 改密码**：只改信标内容，不动射频，实测上行全程不掉。
+    **二者可单独给**：留空的那个字段不会被写，实测只改 SSID 时密码文件
+    校验和不变（2026-10-18 真机验证）。
   - ❌ **改频段 / 改信道**：会与上行抢射频，AP 起不来或直接拖垮上行
     —— 所以本模块**根本不提供**这两个字段，而不是"提供了但提示别改"。
 
@@ -48,6 +54,10 @@ _SSID_PRINTABLE = set(chr(c) for c in range(0x20, 0x7F))
 
 #: 超时（秒）。set 内部含 1s down + 最多 25s 等 AP + 状态复查，给足余量。
 _TIMEOUT = {"status": 20, "set": 75}
+
+#: 必须按**字符串**解析的字段（见 _parse 里的说明）。密码 "00123456" 走 int()
+#: 会丢前导零；连接名理论上也可能是纯数字（虽现实中不是）。
+_STR_FIELDS = {("ap", "password"), ("ap", "con"), ("uplink", "con")}
 
 
 class ApControlError(Exception):
@@ -119,7 +129,12 @@ def _parse(text: str) -> Dict[str, Dict[str, Any]]:
         group, _, field = key.partition(".")
         if group not in out:
             continue
-        if raw in ("yes", "no"):
+        # ⚠️ 这几个字段**即使是纯数字也必须按字符串保留**：密码 "00123456"
+        #    被 int() 掉会丢前导零，用户照着界面显示的去输就连不上热点。
+        #    （2026-10-18 加密码回显时发现，已加测试锁住。）
+        if (group, field) in _STR_FIELDS:
+            out[group][field] = raw
+        elif raw in ("yes", "no"):
             out[group][field] = (raw == "yes")
         elif raw.isdigit():
             out[group][field] = int(raw)

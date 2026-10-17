@@ -174,6 +174,21 @@
         <span class="rcfg-kv">已连设备</span>
         <span class="rcfg-val mono">{{ ap.ap.clients ?? '—' }}</span>
       </div>
+      <!-- 当前密码：默认掩码，点「显示」才展开。
+           为什么默认掩码：控制台走 HTTP（196 时钟异常，HTTPS 起不来），
+           密码是明文过局域网的；且屏幕共享/截图时不会顺手带出去。 -->
+      <div v-if="ap.ap && !ap.ap.unknown" class="rcfg-row">
+        <span class="rcfg-kv">当前密码</span>
+        <span class="rcfg-val mono" :class="{ 'rcfg-masked': !apPwdShown }">
+          {{ apPasswordText }}
+        </span>
+        <button
+          v-if="ap.ap.password_set && !ap.ap.password_unreadable"
+          class="mini"
+          type="button"
+          @click="apPwdShown = !apPwdShown"
+        >{{ apPwdShown ? '隐藏' : '显示' }}</button>
+      </div>
       <div v-if="ap.sharedRadio" class="rcfg-warn">
         热点与上行<b>共用一块射频</b>，热点的信道由上行决定（配置里写的 2.4G 常被上行拖到 5G）。
         因此<b>只开放 SSID 与密码</b>，频段/信道不给改 —— 改了会与上行走不同信道，
@@ -195,8 +210,12 @@
         </button>
       </div>
       <div class="rcfg-note">
-        改热点会让<b>已连设备全部掉线</b>并重连。密码<b>不会被读出来</b>，只会显示是否已设置。
+        改热点会让<b>已连设备全部掉线</b>并重连。两个输入框<b>留空即表示该项不改</b> ——
+        实测只改 SSID 时密码文件校验和不变，所以不必为了改个名字而去打听旧密码。
         写入失败会自动回滚到原值；若上行也因此中断，脚本会优先抢救上行。
+        <br />
+        控制台走 HTTP（196 时钟异常，HTTPS 起不来），当前密码是明文过局域网的，
+        因此默认打掩码 —— 需要念给别人听或截图时再点「显示」。
       </div>
     </section>
   </div>
@@ -228,6 +247,7 @@ const newSsid = ref('')
 const newPassword = ref('')
 const apReady = ref(true)
 const apNote = ref('')
+const apPwdShown = ref(false)
 let timer = null
 let lightTimer = null
 
@@ -238,6 +258,23 @@ const autoReset = computed(() => cfg.value.auto_reset || {})
 const sleep = computed(() => cfg.value.sleep || {})
 const canSetAp = computed(
   () => !!(newSsid.value || newPassword.value) && apReady.value)
+
+/**
+ * 当前密码的展示文本。
+ *
+ * 四种状态必须分开说，不能一概显示成八个点：
+ *  · 没设密码     → 开放网络（此时谁都能连，反而是该提醒的）
+ *  · 有但读不出原文 → 含控制字符/首尾空白，显示一个连不上的密码比不显示更糟
+ *  · 已掩码       → 默认态，避免截图/屏幕共享顺手带出去
+ *  · 已展开       → 用户主动点了「显示」
+ */
+const apPasswordText = computed(() => {
+  const a = ap.value?.ap
+  if (!a || a.unknown) return '—'
+  if (!a.password_set) return '未设置密码（开放网络，谁都能连）'
+  if (a.password_unreadable) return '有密码，但含特殊字符，读不出原文'
+  return apPwdShown.value ? String(a.password) : '••••••••'
+})
 
 function nullOr (v) {
   return (v === null || v === undefined) ? null : Number(v)
@@ -418,6 +455,7 @@ async function setAp () {
     if (res?.ok) {
       newSsid.value = ''
       newPassword.value = ''
+      apPwdShown.value = false   // 密码可能变了，重新掩上
     } else {
       err.value = `热点写入被拒：${res?.reason || '未知'} ${res?.detail || ''}`
     }
@@ -481,6 +519,8 @@ onUnmounted(() => {
 .rcfg-kv { color: var(--muted, #888); }
 .rcfg-val { font-variant-numeric: tabular-nums; }
 .rcfg-val.mono { font-family: var(--mono, ui-monospace, monospace); }
+/* 掩码态：压低对比度，让"展开"成为有意的动作而非默认可见 */
+.rcfg-val.rcfg-masked { color: var(--muted, #888); letter-spacing: 1px; user-select: none; }
 .rcfg-val.ok { color: var(--ok, #2e9e5b); }
 .rcfg-val.warn { color: var(--warn, #c47f17); }
 .rcfg-val.off, .rcfg-kv { }

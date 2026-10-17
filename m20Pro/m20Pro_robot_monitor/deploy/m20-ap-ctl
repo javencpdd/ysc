@@ -14,6 +14,13 @@
 #      参数化命令行必须在 sudoers 里写 `set --ssid * --confirmed`，
 #      而 sudoers 的 `*` 是能跨空格匹配的，那是条不该开的口子。
 #
+# ★ 关于"要不要回显当前密码"（2026-10-18 应用户要求改为回显）：
+#   status 会输出 `ap.password=<值>`。此前刻意不回显，理由是控制台走 HTTP
+#   （196 时钟异常，HTTPS 起不来），密码会明文过局域网。但操作者本来就要
+#   拿这个密码连新设备，为它去 SSH `sudo cat` 反而更绕，且控制台早已暴露
+#   视频/遥测/运动控制，读密码的边际风险低于这些 —— 故改为回显，
+#   前端默认打掩码、点一下才显示。**写入仍然必须走 stdin**（上面第 1 条不变）。
+#
 # ============================================================
 # ★★ 改热点必须用**厂商自己的路径**，不能 nmcli con modify ★★
 #    （2026-10-18 真机取证，两条路都实跑过）
@@ -173,9 +180,23 @@ do_status() {
   echo "ap.ssid=$(field nmcli -g 802-11-wireless.ssid connection show "$AP_CON")"
   echo "ap.band=$(field nmcli -g 802-11-wireless.band connection show "$AP_CON")"
   echo "ap.security=$(field nmcli -g 802-11-wireless-security.key-mgmt connection show "$AP_CON")"
-  # ⚠️ 只报"有没有设密码"，**绝不回显密码本身** —— 状态会被推到浏览器。
-  if [ -n "$(field nmcli -s -g 802-11-wireless-security.psk connection show "$AP_CON")" ]; then
+  # 密码（2026-10-18 应用户要求加回显）。
+  # 取值优先 nmcli 连接 profile —— 那才是**真正在生效**的值；取不到再退回厂商文件。
+  # ⚠️ 只回显"干净"的密码：含控制字符或首尾带空白的，标记为读不出原文。
+  #    绝不显示一个照着输会连不上的密码（后端 parse 会 strip 首尾空白）。
+  local raw_psk=""
+  raw_psk=$(field nmcli -s -g 802-11-wireless-security.psk connection show "$AP_CON" 2>/dev/null || true)
+  if [ -z "$raw_psk" ] && [ -f "$PASSWORD_FILE" ]; then
+    raw_psk=$(grab head -c 16 "$PASSWORD_FILE" 2>/dev/null || true)
+  fi
+  if [ -n "$raw_psk" ]; then
     echo "ap.password_set=1"
+    if printf '%s' "$raw_psk" | LC_ALL=C grep -q '[^ -~]' \
+       || [ "$raw_psk" != "${raw_psk# }" ] || [ "$raw_psk" != "${raw_psk% }" ]; then
+      echo "ap.password_unreadable=1"
+    else
+      echo "ap.password=$raw_psk"
+    fi
   else
     echo "ap.password_set=0"
   fi
