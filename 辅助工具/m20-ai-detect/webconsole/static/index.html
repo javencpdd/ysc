@@ -40,6 +40,7 @@ h1{font-size:16px;font-weight:500;margin:0}
 .metric{background:var(--surface2);border-radius:10px;padding:14px 16px}
 .metric .k{font-size:12px;color:var(--text2)}
 .metric .v{font-size:22px;font-weight:500;margin-top:2px}
+.metric .sub{font-size:11px;color:var(--text2);margin-top:3px;line-height:1.4}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media(max-width:760px){.grid{grid-template-columns:1fr}}
 .card{background:var(--surface);border:0.5px solid var(--border);border-radius:12px;padding:16px 18px}
@@ -53,6 +54,8 @@ button:hover{background:var(--surface2)}
 button.primary{border-color:var(--oktx);color:var(--oktx)}
 button.danger{border-color:var(--errtx);color:var(--errtx)}
 button.sm{font-size:12px;padding:3px 10px}
+.langseg{display:inline-flex;gap:2px}
+.langseg button.on{border-color:var(--oktx);color:var(--oktx);font-weight:600}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .row.end{justify-content:flex-end}
 .check{display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0}
@@ -97,6 +100,18 @@ button.sm{font-size:12px;padding:3px 10px}
 .ghead{grid-column:1/-1;font-size:12px;font-weight:500;letter-spacing:.3px;margin-top:8px;padding:6px 10px;background:var(--surface2);border-left:3px solid var(--border2);border-radius:0 6px 6px 0;color:var(--text2)}
 .ghead.journal{border-left-color:var(--infotx);color:var(--infotx)}
 .ghead.data{border-left-color:var(--oktx);color:var(--oktx)}
+.sub{grid-column:1/-1;font-size:12px;font-weight:500;color:var(--text2);margin:12px 0 2px;padding-left:8px;border-left:3px solid var(--border2)}
+.card h2 .fold{margin-left:auto;flex:0 0 auto;min-width:26px;padding:2px 8px;line-height:1.2}
+/* 折叠=只留 h2。必须 !important：卡片内的图片等元素由 JS 写行内 style.display
+   （如 snapLoad 的 img.style.display="block"），行内样式优先级高于本规则，
+   否则折叠后画面仍会露出来（v0.8.3 的真实 bug，2026-10-17 修）。 */
+.card.collapsed > *:not(h2){display:none !important}
+/* 标题栏内也做收敛：折叠态只留「标题 + 状态徽标（.tag）」，隐藏说明文字与操作按钮组
+   （否则「运行日志」这类 h2 里带工具条的卡片折叠后仍是一长条控件）。 */
+.card.collapsed h2 .row{display:none !important}
+.card.collapsed h2 .note{display:none !important}
+.card.collapsed h2{margin-bottom:0}
+.card.collapsed{border-style:dashed}
 .lchip{display:inline-block;font-size:11px;padding:1px 8px;margin:2px 4px 2px 0;border:0.5px solid var(--border2);border-radius:999px;cursor:pointer;color:var(--text2);user-select:none}
 .lchip:hover{background:var(--surface2)}
 .lchip.on{background:var(--okbg);color:var(--oktx);border-color:var(--oktx)}
@@ -108,72 +123,76 @@ button.sm{font-size:12px;padding:3px 10px}
   <header>
     <div>
       <h1>m20-ai-console</h1>
-      <div class="sub">GOS 10.21.31.104:5050 · 控制 m20-ai-detect 采样服务</div>
+      <div class="sub" data-i18n="app.sub">GOS 10.21.31.104:5050 · 控制 m20-ai-detect 采样服务</div>
     </div>
     <div class="row">
-      <button class="sm" id="theme-btn" title="切换主题">主题</button>
-      <span class="pill" id="svc-pill"><span class="dot"></span><span id="svc-text">检测中…</span></span>
+      <span class="row langseg">
+        <button class="sm on" id="lang-zh" onclick="setLang('zh')">中文</button>
+        <button class="sm" id="lang-en" onclick="setLang('en')">EN</button>
+      </span>
+      <button class="sm" id="fold-all" onclick="toggleAllFolds()" data-i18n="top.fold_all" data-i18n-title="top.fold_all_title" title="折叠全部卡片">全部折叠</button>
+      <button class="sm" id="theme-btn" data-i18n="theme.btn" data-i18n-title="theme.title" title="切换主题">主题</button>
+      <span class="pill" id="svc-pill"><span class="dot"></span><span id="svc-text" data-i18n="common.loading">检测中…</span></span>
     </div>
   </header>
 
   <div class="tokenbar" id="tokenbar">
-    <span>需要访问 token：</span>
-    <input type="text" id="token-input" placeholder="输入 M20AIC_TOKEN">
-    <button class="sm" id="token-save">保存</button>
+    <span data-i18n="token.need">需要访问 token：</span>
+    <input type="text" id="token-input" data-i18n-ph="token.ph" placeholder="输入 M20AIC_TOKEN">
+    <button class="sm" id="token-save" data-i18n="token.save">保存</button>
   </div>
 
   <div class="cards">
-    <div class="metric"><div class="k">今日帧数</div><div class="v" id="m-frames">–</div></div>
-    <div class="metric"><div class="k">告警次数</div><div class="v" id="m-alerts">–</div></div>
-    <div class="metric"><div class="k">AI 平均耗时</div><div class="v" id="m-ai">–</div></div>
-    <div class="metric"><div class="k">磁盘余量</div><div class="v" id="m-disk">–</div></div>
-    <div class="metric"><div class="k">journal 占用</div><div class="v" id="m-journal">–</div></div>
-  </div>
+    <div class="metric"><div class="k" data-i18n="metric.frames">今日帧数</div><div class="v" id="m-frames">–</div></div>
+    <div class="metric"><div class="k" data-i18n="metric.alerts">告警次数</div><div class="v" id="m-alerts">–</div></div>
+    <div class="metric"><div class="k" data-i18n="metric.ai">AI 平均耗时</div><div class="v" id="m-ai">–</div></div>
+    <div class="metric"><div class="k" data-i18n="metric.disk">磁盘余量</div><div class="v" id="m-disk">–</div></div>
+    <div class="metric"><div class="k" data-i18n="metric.data">检测数据</div><div class="v" id="m-data">–</div><div class="sub" id="m-data-note"></div></div>  </div>
 
   <div class="grid">
-    <div class="card">
-      <h2>采集开关 <span class="tag" id="capture-tag">检测中…</span></h2>
+    <div class="card" data-fold="svc">
+      <h2><span data-i18n="svc.title">采集开关</span> <span class="tag" id="capture-tag" data-i18n="common.loading">检测中…</span></h2>
       <div class="row">
-        <button class="primary" onclick="svc('start')">开启采集</button>
-        <button class="danger" onclick="svc('stop')">停止采集</button>
-        <button onclick="svc('restart')">重启采集</button>
+        <button class="primary" onclick="svc('start')" data-i18n="svc.start">开启采集</button>
+        <button class="danger" onclick="svc('stop')" data-i18n="svc.stop">停止采集</button>
+        <button onclick="svc('restart')" data-i18n="svc.restart">重启采集</button>
       </div>
-      <div class="note" style="margin-top:10px"><b>默认关闭</b>（ADR-010）：开启后才抽帧并调 AI（写 raw/、results/、saved/）；关闭后网页的历史数据、时间轴、文件浏览仍可用。等效命令：<code>aiDetect collect on|off</code>。systemd m20-ai-detect · 经 sudoers 白名单执行。</div>
+      <div class="note" style="margin-top:10px" data-i18n-html="svc.note"><b>默认关闭</b>（ADR-010）：开启后才抽帧并调 AI（写 raw/、results/、saved/）；关闭后网页的历史数据、时间轴、文件浏览仍可用。等效命令：<code>aiDetect collect on|off</code>。systemd m20-ai-detect · 经 sudoers 白名单执行。</div>
       <div class="statusline" id="svc-status"></div>
     </div>
 
-    <div class="card">
-      <h2>最近检测 <span class="note" id="recent-sub">点任一帧看完整响应</span></h2>
-      <div id="recent"><div class="note">加载中…</div></div>
+    <div class="card" data-fold="recent">
+      <h2><span data-i18n="recent.title">最近检测</span> <span class="note" id="recent-sub" data-i18n="recent.hint">点任一帧看完整响应</span></h2>
+      <div id="recent"><div class="note" data-i18n="common.loading">加载中…</div></div>
       <div class="statusline" id="recent-status"></div>
     </div>
 
-    <div class="card wide" id="snap-card">
-      <h2><span>相机画面 <span class="tag" id="snap-tag">加载中…</span></span><span class="note" id="snap-src"></span></h2>
+    <div class="card wide" id="snap-card" data-fold="snap">
+      <h2><span><span data-i18n="snap.title">相机画面</span> <span class="tag" id="snap-tag" data-i18n="common.loading">加载中…</span></span><span class="note" id="snap-src"></span></h2>
       <div class="row" style="margin-bottom:10px">
         <select id="snap-cam" onchange="snapLoad()" style="width:150px"></select>
-        <label class="check" style="margin:0"><input type="checkbox" id="snap-auto" checked> 自动刷新（3 秒）</label>
-        <button class="sm" onclick="snapLoad()">立即刷新</button>
-        <span class="note">采集运行中 = 采样器当前帧（检测器所见）；未运行 = 从同一路 RTSP 即时抓帧</span>
+        <label class="check" style="margin:0"><input type="checkbox" id="snap-auto" checked> <span data-i18n="snap.auto">自动刷新（3 秒）</span></label>
+        <button class="sm" onclick="snapLoad()" data-i18n="snap.refresh">立即刷新</button>
+        <span class="note" data-i18n="snap.note">采集运行中 = 采样器当前帧（检测器所见）；未运行 = 从同一路 RTSP 即时抓帧；取不到实时帧时标红「视频源不可达」并只显示旧帧</span>
       </div>
-      <img id="snap-img" alt="相机画面">
+      <img id="snap-img" data-i18n="snap.title" alt="相机画面">
       <div class="statusline" id="snap-status"></div>
     </div>
 
-    <div class="card wide">
-      <h2>目标图片时间轴 <span class="note" id="tl-sum"></span><span class="row" id="tl-cams"></span></h2>
+    <div class="card wide" data-fold="tl">
+      <h2><span data-i18n="tl.title">目标图片时间轴</span> <span class="note" id="tl-sum"></span><span class="row" id="tl-cams"></span></h2>
       <div class="grid">
         <div>
           <div id="tl-imgwrap">
-            <img id="tl-img" alt="检测结果图" title="点击查看该帧的完整响应" onclick="timelineDetail()">
-            <div class="note" id="tl-empty">加载中…</div>
+            <img id="tl-img" data-i18n="tl.alt" data-i18n-title="recent.click" alt="检测结果图" title="点击查看该帧的完整响应" onclick="timelineDetail()">
+            <div class="note" id="tl-empty" data-i18n="common.loading">加载中…</div>
           </div>
         </div>
         <div>
-          <div class="kv"><span class="k">时间（真实时钟）</span><span id="tl-ts">–</span></div>
-          <div class="kv"><span class="k">相机 / 帧</span><span id="tl-cam" style="word-break:break-all">–</span></div>
-          <div class="kv"><span class="k">检出目标</span><span id="tl-items">–</span></div>
-          <label class="f" for="tl-range">时间条（左 = 更早，右 = 更新）</label>
+          <div class="kv"><span class="k" data-i18n="tl.ts">时间（真实时钟）</span><span id="tl-ts">–</span></div>
+          <div class="kv"><span class="k" data-i18n="tl.cam">相机 / 帧</span><span id="tl-cam" style="word-break:break-all">–</span></div>
+          <div class="kv"><span class="k" data-i18n="tl.items">检出目标</span><span id="tl-items">–</span></div>
+          <label class="f" for="tl-range" data-i18n="tl.range">时间条（左 = 更早，右 = 更新）</label>
           <input type="range" id="tl-range" min="0" max="0" value="0" step="1" oninput="tlUserSlide(+this.value)">
           <div class="row" style="justify-content:space-between;margin-top:4px">
             <span class="note" id="tl-oldest">–</span>
@@ -181,192 +200,196 @@ button.sm{font-size:12px;padding:3px 10px}
             <span class="note" id="tl-newest">–</span>
           </div>
           <div class="row" style="margin-top:8px">
-            <label class="check" style="margin:0"><input type="checkbox" id="tl-follow" checked> 跟随最新</label>
-            <button class="sm" onclick="loadTimeline()">刷新</button>
-            <span class="note">滑动即暂停跟随；留存图超上限时从最旧自动清理</span>
+            <label class="check" style="margin:0"><input type="checkbox" id="tl-follow" checked> <span data-i18n="tl.follow">跟随最新</span></label>
+            <button class="sm" onclick="loadTimeline()" data-i18n="tl.refresh">刷新</button>
+            <span class="note" data-i18n="tl.note">滑动即暂停跟随；留存图超上限时从最旧自动清理</span>
           </div>
           <div class="statusline" id="tl-status"></div>
         </div>
       </div>
     </div>
 
-    <div class="card wide">
-      <h2>数据文件（只读浏览） <span class="note">仅限 saved/ raw/ results/ spool/ log/ 五个目录</span></h2>
+    <div class="card wide" data-fold="fb">
+      <h2><span data-i18n="fb.title">数据文件（只读浏览）</span> <span class="note" data-i18n="fb.note">仅限 saved/ raw/ results/ spool/ log/ 五个目录</span></h2>
       <div class="row">
-        <button class="sm" onclick="fbGo(fbParent)">↑ 上一级</button>
+        <button class="sm" onclick="fbGo(fbParent)" data-i18n="fb.up">↑ 上一级</button>
         <span class="note" id="fb-path" style="word-break:break-all">/</span>
-        <input type="text" id="fb-match" placeholder="名称过滤" oninput="fbLoad()" style="width:130px">
-        <button class="sm" onclick="fbLoad()">刷新</button>
+        <input type="text" id="fb-match" data-i18n-ph="fb.match_ph" placeholder="名称过滤" oninput="fbLoad()" style="width:130px">
+        <button class="sm" onclick="fbLoad()" data-i18n="fb.refresh">刷新</button>
       </div>
-      <div id="fb-list"><div class="note" style="padding:12px">加载中…</div></div>
+      <div id="fb-list"><div class="note" style="padding:12px" data-i18n="common.loading">加载中…</div></div>
       <div class="row" style="margin-top:12px">
-        <label class="f" style="margin:0">文本预览行数（末尾）</label>
+        <label class="f" style="margin:0" data-i18n="fb.tail_label">文本预览行数（末尾）</label>
         <input type="number" id="fb-tail" value="200" min="1" max="5000" step="100" style="width:100px">
       </div>
-      <div id="fb-imgwrap" style="display:none"><img id="fb-img" alt="图片预览"></div>
+      <div id="fb-imgwrap" style="display:none"><img id="fb-img" data-i18n="fb.img_alt" alt="图片预览"></div>
       <pre id="fb-preview" style="display:none"></pre>
       <div class="statusline" id="fb-status"></div>
     </div>
 
-    <div class="card wide">
-      <h2>检测配置</h2>
+    <div class="card wide" data-fold="cfg">
+      <h2><span data-i18n="cfg.title">检测配置</span></h2>
       <div class="grid">
         <div>
-          <label class="f" for="cap">检测接口（AI 服务 33 项能力）</label>
+          <label class="f" for="cap" data-i18n="cfg.cap">检测接口（AI 服务 33 项能力）</label>
           <select id="cap"></select>
         </div>
         <div>
-          <label class="f">检测方式</label>
-          <label class="check"><input type="radio" name="mode" value="stream" checked onchange="setMode()"> 视频流抽帧（服务常驻，1fps 落库）</label>
-          <label class="check"><input type="radio" name="mode" value="single" onchange="setMode()"> 单帧检测（上传一张图，即返即显，可勾选留存证据）</label>
+          <label class="f" data-i18n="cfg.mode">检测方式</label>
+          <label class="check"><input type="radio" name="mode" value="stream" checked onchange="setMode()"> <span data-i18n="cfg.mode_stream">视频流抽帧（服务常驻，1fps 落库）</span></label>
+          <label class="check"><input type="radio" name="mode" value="single" onchange="setMode()"> <span data-i18n="cfg.mode_single">单帧检测（上传一张图，即返即显，可勾选留存证据）</span></label>
         </div>
         <div>
-          <label class="f" for="obj">obj_thresh：<span id="obj-v">0.30</span></label>
+          <label class="f" for="obj"><span data-i18n="cfg.obj">obj_thresh</span>：<span id="obj-v">0.30</span></label>
           <input type="range" id="obj" min="0.05" max="0.9" step="0.05" value="0.3" oninput="document.getElementById('obj-v').textContent=this.value">
         </div>
         <div>
-          <label class="f" for="nms">nms_thresh：<span id="nms-v">0.45</span></label>
+          <label class="f" for="nms"><span data-i18n="cfg.nms">nms_thresh</span>：<span id="nms-v">0.45</span></label>
           <input type="range" id="nms" min="0.1" max="0.9" step="0.05" value="0.45" oninput="document.getElementById('nms-v').textContent=this.value">
         </div>
       </div>
       <div class="row end" style="margin-top:14px">
-        <span class="note">写入 m20-ai-detect.env；采集运行中会自动重启生效，未运行则下次开启时生效</span>
-        <button class="primary" onclick="saveConfig()">保存并应用</button>
+        <span class="note" data-i18n="cfg.note">写入 m20-ai-detect.env；采集运行中会自动重启生效，未运行则下次开启时生效</span>
+        <button class="primary" onclick="saveConfig()" data-i18n="cfg.save">保存并应用</button>
       </div>
       <div class="statusline" id="cfg-status"></div>
     </div>
 
-    <div class="card">
-      <h2>相机与采集</h2>
-      <label class="check"><input type="checkbox" id="en-f" checked> 前视 video1（rtsp://10.21.31.103:8554/video1）</label>
-      <label class="check"><input type="checkbox" id="en-b"> 后视 video2</label>
-      <label class="f" for="fps">抽帧速率（fps）</label>
+    <div class="card" data-fold="cam">
+      <h2><span data-i18n="cam.title">相机与采集</span></h2>
+      <label class="check"><input type="checkbox" id="en-f" checked> <span data-i18n="cam.front">前视 video1（rtsp://10.21.31.103:8554/video1）</span></label>
+      <label class="check"><input type="checkbox" id="en-b"> <span data-i18n="cam.back">后视 video2</span></label>
+      <label class="f" for="fps" data-i18n="cam.fps">抽帧速率（fps）</label>
       <input type="number" id="fps" value="1" min="0.2" max="5" step="0.5" style="width:100px">
-      <div class="row end" style="margin-top:12px"><button onclick="saveCameras()">保存并应用</button></div>
+      <div class="row end" style="margin-top:12px"><button onclick="saveCameras()" data-i18n="cfg.save">保存并应用</button></div>
       <div class="statusline" id="cam-status"></div>
     </div>
 
-    <div class="card">
-      <h2>关注目标</h2>
-      <label class="f" for="labels">关注目标（英文标签，逗号分隔；留空 = 不保存任何图片）</label>
+    <div class="card" data-fold="alert">
+      <h2><span data-i18n="alert.title">关注目标</span></h2>
+      <label class="f" for="labels" data-i18n="alert.labels">关注目标（英文标签，逗号分隔；留空 = 不保存任何图片）</label>
       <input type="text" id="labels" placeholder="person, car, fire" value="">
-      <div class="note" id="label-stats" style="margin-top:6px">今日检出：加载中…</div>
-      <label class="f" for="score">触发阈值：<span id="score-v">0.60</span>（分值 ≥ 阈值的检出才计入）</label>
+      <div class="note" id="label-stats" style="margin-top:6px" data-i18n="alert.stats_empty">今日检出：暂无记录（开启采集并产生检测后，这里会出现可点选的标签）</div>
+      <label class="f" for="score"><span data-i18n="alert.score">触发阈值</span>：<span id="score-v">0.60</span> <span data-i18n="alert.score_note">（分值 ≥ 阈值的检出才计入）</span></label>
       <input type="range" id="score" min="0.1" max="0.95" step="0.05" value="0.6" oninput="document.getElementById('score-v').textContent=this.value">
-      <div class="note" style="margin:8px 0 0">命中任一关注目标的帧：<b>①</b> 计入「告警次数」；<b>②</b> 当「日志与数据留存策略」的<b>响应留存条件 = alert</b> 时，把标注结果图保存到 saved/（时间轴可回看）。<br>想"只保存检测到人的图片"：把这里设为 <span class="lchip on">person</span>、留存条件选 alert、保存并应用即可。</div>
-      <div class="row end" style="margin-top:12px"><button onclick="saveAlerts()">保存并应用</button></div>
+      <div class="note" style="margin:8px 0 0" data-i18n-html="alert.note">命中任一关注目标的帧：<b>①</b> 计入「告警次数」；<b>②</b> 当「日志与数据留存策略」的<b>响应留存条件 = alert</b> 时，把标注结果图保存到 saved/（时间轴可回看）。<br>想“只保存检测到人的图片”：把这里设为 <span class="lchip on">person</span>、留存条件选 alert、保存并应用即可。</div>
+      <div class="row end" style="margin-top:12px"><button onclick="saveAlerts()" data-i18n="cfg.save">保存并应用</button></div>
       <div class="statusline" id="alert-status"></div>
     </div>
 
-    <div class="card wide" id="single-card" style="display:none">
-      <h2>单帧检测</h2>
-      <div id="drop">点击选择或拖入一张图片（jpg/png，≤20MB）</div>
+    <div class="card wide" id="single-card" data-fold="single" style="display:none">
+      <h2><span data-i18n="single.title">单帧检测</span></h2>
+      <div id="drop" data-i18n="single.drop">点击选择或拖入一张图片（jpg/png，≤20MB）</div>
       <input type="file" id="file" accept="image/*" style="display:none">
       <div class="row" style="margin-top:10px">
-        <button class="primary" id="detect-btn" disabled>开始检测</button>
-        <label class="check" style="margin:0"><input type="checkbox" id="single-save"> 保存这一帧（图 + 响应落 saved/console/）</label>
-        <span class="note">直接调 AI 接口，结果即返即显；勾选保存后同时留存证据</span>
+        <button class="primary" id="detect-btn" disabled data-i18n="single.start">开始检测</button>
+        <label class="check" style="margin:0"><input type="checkbox" id="single-save"> <span data-i18n="single.save_cb">保存这一帧（图 + 响应落 saved/console/）</span></label>
+        <span class="note" data-i18n="single.note">直接调 AI 接口，结果即返即显；勾选保存后同时留存证据</span>
       </div>
       <div class="statusline" id="detect-status"></div>
-      <img id="result-img" alt="检测结果">
+      <img id="result-img" data-i18n="single.result_alt" alt="检测结果">
       <div id="result-items"></div>
-      <label class="f">原始响应 JSON（AI 接口实际返回，已剥离 base64 大图字段）</label>
+      <label class="f" data-i18n="single.raw_label">原始响应 JSON（AI 接口实际返回，已剥离 base64 大图字段）</label>
       <div class="logbox" id="result-raw" style="max-height:220px"></div>
     </div>
 
     <div class="card wide" id="detail-card" style="display:none">
-      <h2>响应详情 <span class="row"><button class="sm" onclick="closeDetail()">关闭</button></span></h2>
+      <h2><span data-i18n="detail.title">响应详情</span> <span class="row"><button class="sm" onclick="closeDetail()" data-i18n="detail.close">关闭</button></span></h2>
       <div class="grid">
         <div>
-          <div class="kv"><span class="k">帧</span><span id="d-frame" style="word-break:break-all"></span></div>
-          <div class="kv"><span class="k">相机 / 时间</span><span id="d-cam"></span></div>
-          <div class="kv"><span class="k">耗时</span><span id="d-ms"></span></div>
-          <div class="kv"><span class="k">来源</span><span id="d-source"></span></div>
-          <label class="f">解析结果（检出了什么）</label>
+          <div class="kv"><span class="k" data-i18n="detail.frame">帧</span><span id="d-frame" style="word-break:break-all"></span></div>
+          <div class="kv"><span class="k" data-i18n="detail.cam">相机 / 时间</span><span id="d-cam"></span></div>
+          <div class="kv"><span class="k" data-i18n="detail.ms">耗时</span><span id="d-ms"></span></div>
+          <div class="kv"><span class="k" data-i18n="detail.source">来源</span><span id="d-source"></span></div>
+          <label class="f" data-i18n="detail.parse">解析结果（检出了什么）</label>
           <div id="d-summary"></div>
           <div class="row" style="margin-top:12px">
-            <button class="sm" id="d-redetect" onclick="redetectCurrent()">重新检测（调 AI 服务）</button>
-            <span class="note">用 raw/ 环形缓冲里的原帧重调，约 0.25s；未留存时才需要</span>
+            <button class="sm" id="d-redetect" onclick="redetectCurrent()" data-i18n="detail.redetect">重新检测（调 AI 服务）</button>
+            <span class="note" data-i18n="detail.redetect_note">用 raw/ 环形缓冲里的原帧重调，约 0.25s；未留存时才需要</span>
           </div>
           <div class="statusline" id="d-status"></div>
         </div>
-        <div><img id="d-img" alt="检测结果图" style="display:none;max-width:100%;border-radius:8px"></div>
+        <div><img id="d-img" data-i18n="detail.img_alt" alt="检测结果图" style="display:none;max-width:100%;border-radius:8px"></div>
       </div>
-      <label class="f">原始响应 JSON（AI 接口实际返回，已剥离 base64 大图字段）</label>
+      <label class="f" data-i18n="single.raw_label">原始响应 JSON（AI 接口实际返回，已剥离 base64 大图字段）</label>
       <div class="logbox" id="d-raw" style="max-height:280px"></div>
     </div>
 
-    <div class="card wide">
-      <h2>运行日志
+    <div class="card wide" data-fold="log">
+      <h2><span data-i18n="log.title">运行日志</span>
         <span class="row">
-          <button class="sm" onclick="setLogLevel('all')">全部</button>
-          <button class="sm" onclick="setLogLevel('alert')">告警</button>
-          <button class="sm" onclick="setLogLevel('fail')">失败</button>
-          <button class="sm" onclick="setLogLevel('boot')">启动</button>
-          <input type="text" id="log-q" placeholder="搜索关键字" style="width:140px" oninput="loadLogs()">
-          <label class="check" style="margin:0"><input type="checkbox" id="auto-refresh" checked> 自动刷新</label>
+          <button class="sm" onclick="setLogLevel('all')" data-i18n="log.lv_all">全部</button>
+          <button class="sm" onclick="setLogLevel('alert')" data-i18n="log.lv_alert">告警</button>
+          <button class="sm" onclick="setLogLevel('fail')" data-i18n="log.lv_fail">失败</button>
+          <button class="sm" onclick="setLogLevel('boot')" data-i18n="log.lv_boot">启动</button>
+          <input type="text" id="log-q" data-i18n-ph="log.q_ph" placeholder="搜索关键字" style="width:140px" oninput="loadLogs()">
+          <label class="check" style="margin:0"><input type="checkbox" id="auto-refresh" checked> <span data-i18n="log.auto">自动刷新</span></label>
         </span>
       </h2>
-      <div class="logbox" id="logbox"><div class="note">加载中…</div></div>
-      <div class="note" style="margin-top:8px">来源 journalctl -u m20-ai-detect（时间戳为本机时钟；若见 2024 时间说明系统时钟又被车队 PTP 拖回，权威时间以 JSONL 的 ts 为准）</div>
+      <div class="logbox" id="logbox"><div class="note" data-i18n="common.loading">加载中…</div></div>
+      <div class="note" style="margin-top:8px" data-i18n="log.note">来源 journalctl -u m20-ai-detect（时间戳为本机时钟；若见 2024 时间说明系统时钟又被车队 PTP 拖回，权威时间以 JSONL 的 ts 为准）</div>
     </div>
 
-    <div class="card wide">
-      <h2>日志与数据留存策略</h2>
+    <div class="card wide" data-fold="ret">
+      <h2><span data-i18n="ret.title">日志与数据留存策略</span></h2>
       <div class="grid">
-        <div class="ghead journal">journal 日志 —— systemd 服务运行日志（「运行日志」卡的来源）</div>
+        <div class="ghead journal" data-i18n="ret.ghead_journal">journal 日志 —— systemd 服务运行日志（「运行日志」卡的来源）</div>
         <div>
-          <label class="f" for="vac-size">立即清理一次 — 只留最新 200M / 1G 空间</label>
-          <div class="row"><input type="text" id="vac-size" placeholder="200M" style="flex:1"><button onclick="vacuum('size')">执行</button></div>
-          <label class="f" for="vac-time">或立即清理一次 — 只留最近 7d / 24h</label>
-          <div class="row"><input type="text" id="vac-time" placeholder="7d" style="flex:1"><button onclick="vacuum('time')">执行</button></div>
-          <div class="note" style="margin:6px 0 0"><b>一次性动作，不是持续配置</b>：从最旧的日志开始删，删到满足限额即止（二选一），执行后 journal 仍会继续增长；作用于整机所有单元的 journal，不止本服务。<br><b>单位</b>：体积默认 MB（200=200MB），可写 K/M/G/T；时长默认<b>天</b>（7=7天），可写 s/m/h/d/w。</div>
+          <div class="note" id="j-usage" style="margin:0 0 8px;padding:6px 10px;background:var(--surface2);border-radius:6px"></div>
+          <label class="f" for="vac-size" data-i18n="ret.vac_size">立即清理一次 — 只留最新 200M / 1G 空间</label>
+          <div class="row"><input type="text" id="vac-size" data-i18n-ph="ret.vac_size_ph" placeholder="200M" style="flex:1"><button onclick="vacuum('size')" data-i18n="ret.exec">执行</button></div>
+          <label class="f" for="vac-time" data-i18n="ret.vac_time">或立即清理一次 — 只留最近 7d / 24h</label>
+          <div class="row"><input type="text" id="vac-time" data-i18n-ph="ret.vac_time_ph" placeholder="7d" style="flex:1"><button onclick="vacuum('time')" data-i18n="ret.exec">执行</button></div>
+          <div class="note" style="margin:6px 0 0" data-i18n-html="ret.vac_note"><b>一次性动作，不是持续配置</b>：从最旧的日志开始删，删到满足限额即止（二选一），执行后 journal 仍会继续增长；作用于整机所有单元的 journal，不止本服务。<br><b>单位</b>：体积默认 MB（200=200MB），可写 K/M/G/T；时长默认<b>天</b>（7=7天），可写 s/m/h/d/w。</div>
         </div>
         <div>
-          <label class="f" for="max-use">持续生效 — journald 空间上限（SystemMaxUse，如 200M）</label>
-          <input type="text" id="max-use" placeholder="200M">
-          <label class="f" for="max-sec">持续生效 — 保留时长（MaxRetentionSec，如 7d）</label>
-          <input type="text" id="max-sec" placeholder="留空=不限">
-          <div class="row end" style="margin-top:10px"><button onclick="saveJournald()">保存并重启 journald</button></div>
-          <div class="note" style="margin:6px 0 0">写入 /etc/systemd/journald.conf，<b>长期生效（重启后仍有效）</b>。想"永远只留最近 200M / 7 天"，用这里，而不是上面的立即清理。<br><b>单位</b>：与左侧相同（体积默认 MB、时长默认<b>天</b>，均可带 K/M/G/T 与 s/m/h/d/w）。</div>
+          <label class="f" for="max-use" data-i18n="ret.max_use">持续生效 — journald 空间上限（SystemMaxUse，如 200M）</label>
+          <input type="text" id="max-use" data-i18n-ph="ret.max_use_ph" placeholder="200M">
+          <label class="f" for="max-sec" data-i18n="ret.max_sec">持续生效 — 保留时长（MaxRetentionSec，如 7d）</label>
+          <input type="text" id="max-sec" data-i18n-ph="ret.max_sec_ph" placeholder="留空=不限">
+          <div class="row end" style="margin-top:10px"><button onclick="saveJournald()" data-i18n="ret.save_journald">保存并重启 journald</button></div>
+          <div class="note" style="margin:6px 0 0" data-i18n-html="ret.journald_note">写入 /etc/systemd/journald.conf，<b>长期生效（重启后仍有效）</b>。想“永远只留最近 200M / 7 天”，用这里，而不是上面的立即清理。<br><b>单位</b>：与左侧相同（体积默认 MB、时长默认<b>天</b>，均可带 K/M/G/T 与 s/m/h/d/w）。</div>
         </div>
         <div>
-          <label class="f" for="lr-rotate">文件日志轮转份数（logrotate rotate）</label>
+          <label class="f" for="lr-rotate" data-i18n="ret.lr_rotate">文件日志轮转份数（logrotate rotate）</label>
           <input type="text" id="lr-rotate" value="7">
-          <div class="row end" style="margin-top:10px"><button onclick="saveLogrotate()">保存</button></div>
-          <div class="note" style="margin:6px 0 0"><b>单位：份（整数 1–365，无单位后缀）</b>，每份=一天的日志文件。只作用于 log/*.log 文件日志（<b>不影响 journal</b>）：每天切一份、保留最近 7 份（≈ 最近 7 天）、旧份 gzip 压缩、超出 7 份的最旧自动删除。</div>
+          <div class="row end" style="margin-top:10px"><button onclick="saveLogrotate()" data-i18n="ret.lr_save">保存</button></div>
+          <div class="note" style="margin:6px 0 0" data-i18n-html="ret.lr_note"><b>单位：份（整数 1–365，无单位后缀）</b>，每份=一天的日志文件。只作用于 log/*.log 文件日志（<b>不影响 journal</b>）：每天切一份、保留最近 7 份（≈ 最近 7 天）、旧份 gzip 压缩、超出 7 份的最旧自动删除。</div>
         </div>
-        <div class="ghead data">检测数据与图片 —— saved/ 留存图、raw/ 原始帧、results/ 记录、spool/ 积压</div>
+        <div class="ghead data" data-i18n="ret.ghead_data">检测数据与图片 —— saved/ 留存图、raw/ 原始帧、results/ 记录、spool/ 积压</div>
         <div>
-          <label class="f" for="ring-mb">raw/ 环形缓冲上限（默认 200；范围 ≥10）</label>
-          <input type="text" id="ring-mb" value="200">
-          <label class="f" for="keep-days">results/ 保留天数（默认 0 = 永不删）</label>
-          <input type="text" id="keep-days" value="0">
-          <label class="f" for="saved-max">saved/ 图片总量上限（默认 500；0 = 不按体积清理）</label>
-          <input type="text" id="saved-max" value="500">
-          <label class="f" for="saved-days">saved/ 图片保留天数（默认 0 = 不按年龄清理）</label>
-          <input type="text" id="saved-days" value="0">
-          <label class="f" for="save-mode">响应留存条件（SAVE_MODE，env 级）</label>
+          <div class="sub" data-i18n="ret.sec_cond">① 留存条件 —— 什么样的帧才配存图</div>
+          <label class="f" for="save-mode" data-i18n="ret.save_mode">响应留存条件（SAVE_MODE，env 级）</label>
           <select id="save-mode">
-            <option value="off">off — 只写 JSONL，不存图/响应</option>
-            <option value="alert">alert — 只存出现「关注目标」的帧（推荐）</option>
-            <option value="any">any — 检出任意目标都存（含误检，占用大）</option>
-            <option value="all">all — 每帧都存（最大）</option>
+            <option value="off" data-i18n="save_mode.off">off — 只写 JSONL，不存图/响应</option>
+            <option value="alert" data-i18n="save_mode.alert">alert — 只存出现「关注目标」的帧（推荐）</option>
+            <option value="any" data-i18n="save_mode.any">any — 检出任意目标都存（含误检，占用大）</option>
+            <option value="all" data-i18n="save_mode.all">all — 每帧都存（最大）</option>
           </select>
-          <div class="note" style="margin:6px 0"><b>单位（四个数值框通用）</b>：体积类（ring/saved 上限）默认 <b>MB</b>，可写 200 / 200M / 1G；时长类（keep/days）默认<b>天</b>，可写 7 / 7d / 24h / 2w。带不带单位都行，非法单位会明确报错。<br>触发时成对落 saved/&lt;cam&gt;/：标注结果图 .jpg（~85KB） + 原始响应 .json（已剥离 base64 大图）。<b>时间轴卡片即读这里</b>：超出总量上限或保留天数后，从最旧的成对文件开始自动清理（采样器每 10 分钟检查一次）。<br><b>alert 模式</b>只保存命中「关注目标」的帧（清单在「关注目标」卡配置；清单为空 = 不保存）；<br>磁盘参考（1 路 1fps，单对 ≈0.1MB，实测）：<b>any ≈7GB/天</b>（检出率高时几乎逐帧 → 500MB ≈ 最近 1~2 小时）；<b>alert ≈0.3GB/天</b>（视命中率 → 500MB ≈ 1~2 天）。想回看更久就调大上限（注意磁盘余量）。</div>
-          <div class="row end" style="margin-top:10px">
-            <button onclick="saveEnvRetention()">保存存储留存（重启后生效）</button>
-            <button onclick="saveSaveMode()">保存留存条件（重启后生效）</button>
-          </div>
+          <div class="note" style="margin:6px 0 8px" data-i18n-html="ret.cond_note"><b>只决定一帧够不够格进 saved/</b>：off = 只写 JSONL；alert = 仅命中「关注目标」的帧（清单在「关注目标」卡，为空 = 不保存）；any = 检出任意目标；all = 每帧。<br><b>raw/、results/ 与此无关</b>：无论选哪一项，原始帧和检测记录都照常保存（那是下面 ② 的容量与时长在管）。</div>
+          <div class="row end"><button onclick="saveSaveMode()" data-i18n="ret.save_mode_btn">保存留存条件（重启后生效）</button></div>
+
+          <div class="sub" data-i18n="ret.sec_quota">② 容量与时长 —— 各目录最多留多少 / 留多久</div>
+          <label class="f" for="ring-mb" data-i18n="ret.ring_mb">raw/ 环形缓冲上限（默认 200；范围 ≥10）</label>
+          <input type="text" id="ring-mb" value="200">
+          <label class="f" for="keep-days" data-i18n="ret.keep_days">results/ 保留天数（默认 0 = 永不删）</label>
+          <input type="text" id="keep-days" value="0">
+          <label class="f" for="saved-max" data-i18n="ret.saved_max">saved/ 图片总量上限（默认 500；0 = 不按体积清理）</label>
+          <input type="text" id="saved-max" value="500">
+          <label class="f" for="saved-days" data-i18n="ret.saved_days">saved/ 图片保留天数（默认 0 = 不按年龄清理）</label>
+          <input type="text" id="saved-days" value="0">
+          <div class="note" style="margin:6px 0 8px" data-i18n-html="ret.quota_note"><b>只决定“最多留多少 / 留多久”</b>，与上面的准入条件正交：raw/ 超上限挤最旧帧、results/ 超期整文件删、saved/ 按年龄 + 总量成对删。<b>四个框对应四个互不相干的维度</b>（raw 容量 / results 天数 / saved 容量 / saved 天数），改一个不影响其它三个。</div>
+          <div class="row end"><button onclick="saveEnvRetention()" data-i18n="ret.save_env">保存容量与时长（重启后生效）</button></div>
+          <div class="note" style="margin:8px 0 0" data-i18n-html="ret.env_note"><b>单位（四个数值框通用）</b>：体积类（ring/saved 上限）默认 <b>MB</b>，可写 200 / 200M / 1G；时长类（keep/days）默认<b>天</b>，可写 7 / 7d / 24h / 2w。带不带单位都行，非法单位会明确报错。<br>清理节奏：raw/ 每轮检查（挤最旧帧）、saved/ 每 10 分钟（成对删）、results/ 每小时（整文件删）。<br>磁盘参考（1 路 1fps，单对 ≈0.1MB，实测）：<b>any ≈7GB/天</b>（检出率高时几乎逐帧 → 500MB ≈ 最近 1~2 小时）；<b>alert ≈0.3GB/天</b>（视命中率 → 500MB ≈ 1~2 天）。想回看更久就调大上限（注意磁盘余量）。</div>
         </div>
         <div>
-          <label class="f">清理数据（一次性删除所选类别）</label>
-          <label class="check"><input type="checkbox" id="pg-saved"> saved/ 留存图片与响应 <span class="pgn" id="pg-saved-n">（–）</span></label>
-          <label class="check"><input type="checkbox" id="pg-results"> results/ 检测记录（权威数据，删后不可恢复） <span class="pgn" id="pg-results-n">（–）</span></label>
-          <label class="check"><input type="checkbox" id="pg-raw"> raw/ 原始帧缓冲 <span class="pgn" id="pg-raw-n">（–）</span></label>
-          <label class="check"><input type="checkbox" id="pg-spool"> spool/ 积压帧 <span class="pgn" id="pg-spool-n">（–）</span></label>
-          <div class="note" style="margin:2px 0 8px">流程：<b>停采集（仅当运行中）→ 删除所选 → 恢复采集原状态</b>（采集原本关着就不会被拉起）。清 results/ 会重置「最近检测」与今日统计；清 saved/ 会清空时间轴。</div>
-          <div class="row end"><button class="danger" onclick="purgeSelected()">清空所选数据</button></div>
+          <label class="f" data-i18n="ret.purge_title">清理数据（一次性删除所选类别）</label>
+          <label class="check"><input type="checkbox" id="pg-saved"> <span data-i18n="ret.pg_saved">saved/ 留存图片与响应</span> <span class="pgn" id="pg-saved-n">（–）</span></label>
+          <label class="check"><input type="checkbox" id="pg-results"> <span data-i18n="ret.pg_results">results/ 检测记录（权威数据，删后不可恢复）</span> <span class="pgn" id="pg-results-n">（–）</span></label>
+          <label class="check"><input type="checkbox" id="pg-raw"> <span data-i18n="ret.pg_raw">raw/ 原始帧缓冲</span> <span class="pgn" id="pg-raw-n">（–）</span></label>
+          <label class="check"><input type="checkbox" id="pg-spool"> <span data-i18n="ret.pg_spool">spool/ 积压帧</span> <span class="pgn" id="pg-spool-n">（–）</span></label>
+          <div class="note" style="margin:2px 0 8px" data-i18n-html="ret.purge_note">流程：<b>停采集（仅当运行中）→ 删除所选 → 恢复采集原状态</b>（采集原本关着就不会被拉起）。清 results/ 会重置「最近检测」与今日统计；清 saved/ 会清空时间轴。</div>
+          <div class="row end"><button class="danger" onclick="purgeSelected()" data-i18n="ret.purge_btn">清空所选数据</button></div>
         </div>
       </div>
       <div class="statusline" id="ret-status"></div>
@@ -374,18 +397,557 @@ button.sm{font-size:12px;padding:3px 10px}
   </div>
 </div>
 
+<script type="application/json" id="i18n-data">
+{
+"zh": {
+  "app.sub": "GOS 10.21.31.104:5050 · 控制 m20-ai-detect 采样服务",
+  "theme.btn": "主题",
+  "theme.title": "切换主题",
+  "token.need": "需要访问 token：",
+  "token.ph": "输入 M20AIC_TOKEN",
+  "token.save": "保存",
+  "token.bad": "token 不符",
+  "common.loading": "加载中…",
+  "metric.frames": "今日帧数",
+  "metric.alerts": "告警次数",
+  "metric.ai": "AI 平均耗时",
+  "metric.disk": "磁盘余量",
+  "metric.data": "检测数据",
+  "metric.data_note": "raw {raw} · results {results} · saved {saved} · spool {spool}",
+  "top.fold_all": "全部折叠",
+  "top.fold_all_title": "折叠全部卡片（折叠时暂停对应卡片的自动刷新）",
+  "top.unfold_all": "全部展开",
+  "top.unfold_all_title": "展开全部卡片",
+  "card.fold": "折叠此卡",
+  "card.unfold": "展开此卡",
+  "metric.offset": "{n} s 偏移",
+  "svc.title": "采集开关",
+  "svc.start": "开启采集",
+  "svc.stop": "停止采集",
+  "svc.restart": "重启采集",
+  "svc.note": "<b>默认关闭</b>（ADR-010）：开启后才抽帧并调 AI（写 raw/、results/、saved/）；关闭后网页的历史数据、时间轴、文件浏览仍可用。等效命令：<code>aiDetect collect on|off</code>。systemd m20-ai-detect · 经 sudoers 白名单执行。",
+  "svc.done": "已执行 {action}",
+  "svc.running": "采集运行中",
+  "svc.stopped": "采集已关闭",
+  "svc.unknown": "状态未知",
+  "svc.conn_fail": "连接失败",
+  "svc.on": "运行中",
+  "svc.off": "已关闭（默认）",
+  "recent.title": "最近检测",
+  "recent.hint": "点任一帧看完整响应",
+  "recent.mode_hint": "留存条件 {mode} · 点任一帧看完整响应",
+  "recent.off_hint": "留存关闭（SAVE_MODE=off）· 点帧可重新检测",
+  "recent.fresh": "最新记录 {age}前",
+  "recent.frozen": "数据已定格（服务可能已停止）",
+  "recent.empty": "今日暂无检测记录",
+  "recent.etc": "等 {n} 个",
+  "recent.detected": "检出 {n} 个目标：{items}",
+  "recent.none": "未检出任何目标",
+  "recent.alert": "告警",
+  "recent.saved": "已留存",
+  "recent.click": "点击查看该帧的完整响应",
+  "age.sec": "{n} 秒",
+  "age.min": "{n} 分钟",
+  "age.hour": "{n} 小时",
+  "snap.title": "相机画面",
+  "snap.auto": "自动刷新（3 秒）",
+  "snap.refresh": "立即刷新",
+  "snap.note": "采集运行中 = 采样器当前帧（检测器所见）；未运行 = 从同一路 RTSP 即时抓帧；取不到实时帧时标红「视频源不可达」并只显示旧帧",
+  "snap.refreshing": "刷新中…",
+  "snap.ring": "实时",
+  "snap.ring_msg": "采样器当前帧 · {age}前（采集运行中，即检测器输入）",
+  "snap.live": "即时抓帧",
+  "snap.live_msg": "采集未运行——已从同一路 RTSP 即时抓帧（约 1~2 秒握手）",
+  "snap.down": "⚠ 视频源不可达",
+  "snap.down_run": "采集运行中但取不到新帧",
+  "snap.down_idle": "采集未运行，且 RTSP 源也无响应",
+  "snap.down_msg": "⚠️ {who}（{src}）：当前只显示 {age}前的旧帧。视频链未在推送（如 AOS 相机未上线 / USB 掉线 / 视频服务未起）——恢复后自动回到实时。",
+  "snap.down_msg2": "⚠️ RTSP 源无响应，取不到任何画面（{cam}）。视频链未在推送（如 AOS 相机未上线 / USB 掉线 / 视频服务未起）——恢复后自动回到实时。",
+  "snap.fail": "抓帧失败",
+  "tl.title": "目标图片时间轴",
+  "tl.ts": "时间（真实时钟）",
+  "tl.cam": "相机 / 帧",
+  "tl.items": "检出目标",
+  "tl.range": "时间条（左 = 更早，右 = 更新）",
+  "tl.follow": "跟随最新",
+  "tl.refresh": "刷新",
+  "tl.note": "滑动即暂停跟随；留存图超上限时从最旧自动清理",
+  "tl.empty_wait": "尚无留存图片（SAVE_MODE={mode} 已开启，等待检出目标…）",
+  "tl.empty_off": "暂无留存图片。先在下方「日志与数据留存策略」把响应留存条件（SAVE_MODE）设为 any 或 alert：检出目标的图片会自动带时间戳落 saved/，这里就能滑动查看。",
+  "tl.sum_all": "saved/ 共 {n} 张",
+  "tl.sum_more": "，时间条覆盖最新 {n} 张",
+  "tl.sum_mode": " · SAVE_MODE={mode}",
+  "tl.filtered": "saved/ 共 {n} 张，当前筛选无结果",
+  "tl.all": "全部",
+  "tl.items_n": "{n} 个：{items}",
+  "tl.items_none": "未检出",
+  "tl.alert": " · 告警",
+  "tl.pos": "{i} / {n} 张",
+  "tl.oldest": "最早 {ts}",
+  "tl.newest": "最新 {ts}",
+  "tl.alt": "检测结果图",
+  "fb.title": "数据文件（只读浏览）",
+  "fb.note": "仅限 saved/ raw/ results/ spool/ log/ 五个目录",
+  "fb.up": "↑ 上一级",
+  "fb.match_ph": "名称过滤",
+  "fb.refresh": "刷新",
+  "fb.tail_label": "文本预览行数（末尾）",
+  "fb.img_alt": "图片预览",
+  "fb.readfail": "目录读取失败",
+  "fb.root_hint": "/（选择目录）",
+  "fb.dir": "目录",
+  "fb.download": "下载",
+  "fb.empty": "空目录或没有匹配项",
+  "fb.count": "{n} 项",
+  "fb.truncated": "（仅显示前 {n} 项，可用过滤缩小范围）",
+  "fb.reqfail": "请求失败：{e}",
+  "fb.fail": "读取失败：{e}",
+  "fb.tail_info": "末尾 {n} 行 · {size}",
+  "cfg.title": "检测配置",
+  "cfg.cap": "检测接口（AI 服务 33 项能力）",
+  "cfg.no_caps": "（无能力列表）",
+  "cfg.caps_err": "能力列表拉取失败：{e}",
+  "cfg.not_ready": "（未就绪）",
+  "cfg.mode": "检测方式",
+  "cfg.mode_stream": "视频流抽帧（服务常驻，1fps 落库）",
+  "cfg.mode_single": "单帧检测（上传一张图，即返即显，可勾选留存证据）",
+  "cfg.obj": "obj_thresh",
+  "cfg.nms": "nms_thresh",
+  "cfg.note": "写入 m20-ai-detect.env；采集运行中会自动重启生效，未运行则下次开启时生效",
+  "cfg.save": "保存并应用",
+  "cam.title": "相机与采集",
+  "cam.front": "前视 video1（rtsp://10.21.31.103:8554/video1）",
+  "cam.back": "后视 video2",
+  "cam.fps": "抽帧速率（fps）",
+  "alert.title": "关注目标",
+  "alert.labels": "关注目标（英文标签，逗号分隔；留空 = 不保存任何图片）",
+  "alert.stats_empty": "今日检出：暂无记录（开启采集并产生检测后，这里会出现可点选的标签）",
+  "alert.stats_head": "今日检出（点击加入/移出关注目标）：",
+  "alert.chip_on": "移出关注目标：{label}",
+  "alert.chip_off": "加入关注目标：{label}",
+  "alert.score": "触发阈值",
+  "alert.score_note": "（分值 ≥ 阈值的检出才计入）",
+  "alert.note": "命中任一关注目标的帧：<b>①</b> 计入「告警次数」；<b>②</b> 当「日志与数据留存策略」的<b>响应留存条件 = alert</b> 时，把标注结果图保存到 saved/（时间轴可回看）。<br>想“只保存检测到人的图片”：把这里设为 <span class=\"lchip on\">person</span>、留存条件选 alert、保存并应用即可。",
+  "single.title": "单帧检测",
+  "single.drop": "点击选择或拖入一张图片（jpg/png，≤20MB）",
+  "single.start": "开始检测",
+  "single.save_cb": "保存这一帧（图 + 响应落 saved/console/）",
+  "single.note": "直接调 AI 接口，结果即返即显；勾选保存后同时留存证据",
+  "single.picked": "已选：{name}（{kb} KB）",
+  "single.detecting": "检测中…",
+  "single.fail": "检测失败",
+  "single.done": "完成：{n} 个目标 · 服务端 {es}ms · 端到端 {e2e}ms",
+  "single.saved": " · 已留存 {f}",
+  "single.result_alt": "检测结果",
+  "single.raw_label": "原始响应 JSON（AI 接口实际返回，已剥离 base64 大图字段）",
+  "detail.title": "响应详情",
+  "detail.close": "关闭",
+  "detail.frame": "帧",
+  "detail.cam": "相机 / 时间",
+  "detail.ms": "耗时",
+  "detail.source": "来源",
+  "detail.parse": "解析结果（检出了什么）",
+  "detail.redetect": "重新检测（调 AI 服务）",
+  "detail.redetect_note": "用 raw/ 环形缓冲里的原帧重调，约 0.25s；未留存时才需要",
+  "detail.redetecting": "重新检测中（调 AI 服务）…",
+  "detail.from_saved": "已留存的响应（saved/）",
+  "detail.from_live": "实时重新检测的结果",
+  "detail.src_saved": "已留存（saved/ 直读）",
+  "detail.src_live": "重新检测（实时调 AI 服务）",
+  "detail.e2e": "端到端 {ms}ms",
+  "detail.srv": " · 服务端 {ms}ms",
+  "detail.img_alt": "检测结果图",
+  "log.title": "运行日志",
+  "log.lv_all": "全部",
+  "log.lv_alert": "告警",
+  "log.lv_fail": "失败",
+  "log.lv_boot": "启动",
+  "log.q_ph": "搜索关键字",
+  "log.auto": "自动刷新",
+  "log.empty": "无匹配日志",
+  "log.note": "来源 journalctl -u m20-ai-detect（时间戳为本机时钟；若见 2024 时间说明系统时钟又被车队 PTP 拖回，权威时间以 JSONL 的 ts 为准）",
+  "ret.title": "日志与数据留存策略",
+  "ret.ghead_journal": "journal 日志 —— systemd 服务运行日志（「运行日志」卡的来源）",
+  "ret.journal_now": "本服务 m20-ai-detect：{lines} 行 ≈ {kb} ｜ 整机 journal 合计 {size}（journald 是整机共享池——厂商 rsdriver 等系统服务占大头，无法按单元切分磁盘占用）",
+  "ret.vac_size": "立即清理一次 — 只留最新 200M / 1G 空间",
+  "ret.vac_size_ph": "200M",
+  "ret.exec": "执行",
+  "ret.vac_time": "或立即清理一次 — 只留最近 7d / 24h",
+  "ret.vac_time_ph": "7d",
+  "ret.vac_note": "<b>一次性动作，不是持续配置</b>：从最旧的日志开始删，删到满足限额即止（二选一），执行后 journal 仍会继续增长；作用于整机所有单元的 journal，不止本服务。<br><b>单位</b>：体积默认 MB（200=200MB），可写 K/M/G/T；时长默认<b>天</b>（7=7天），可写 s/m/h/d/w。",
+  "ret.max_use": "持续生效 — journald 空间上限（SystemMaxUse，如 200M）",
+  "ret.max_use_ph": "200M",
+  "ret.max_sec": "持续生效 — 保留时长（MaxRetentionSec，如 7d）",
+  "ret.max_sec_ph": "留空=不限",
+  "ret.save_journald": "保存并重启 journald",
+  "ret.journald_note": "写入 /etc/systemd/journald.conf，<b>长期生效（重启后仍有效）</b>。想“永远只留最近 200M / 7 天”，用这里，而不是上面的立即清理。<br><b>单位</b>：与左侧相同（体积默认 MB、时长默认<b>天</b>，均可带 K/M/G/T 与 s/m/h/d/w）。",
+  "ret.lr_rotate": "文件日志轮转份数（logrotate rotate）",
+  "ret.lr_save": "保存",
+  "ret.lr_note": "<b>单位：份（整数 1–365，无单位后缀）</b>，每份=一天的日志文件。只作用于 log/*.log 文件日志（<b>不影响 journal</b>）：每天切一份、保留最近 7 份（≈ 最近 7 天）、旧份 gzip 压缩、超出 7 份的最旧自动删除。",
+  "ret.ghead_data": "检测数据与图片 —— saved/ 留存图、raw/ 原始帧、results/ 记录、spool/ 积压",
+  "ret.ring_mb": "raw/ 环形缓冲上限（默认 200；范围 ≥10）",
+  "ret.keep_days": "results/ 保留天数（默认 0 = 永不删）",
+  "ret.saved_max": "saved/ 图片总量上限（默认 500；0 = 不按体积清理）",
+  "ret.saved_days": "saved/ 图片保留天数（默认 0 = 不按年龄清理）",
+  "ret.save_mode": "响应留存条件（SAVE_MODE，env 级）",
+  "ret.sec_cond": "① 留存条件 —— 什么样的帧才配存图",
+  "ret.cond_note": "<b>只决定一帧够不够格进 saved/</b>：off = 只写 JSONL；alert = 仅命中「关注目标」的帧（清单在「关注目标」卡，为空 = 不保存）；any = 检出任意目标；all = 每帧。<br><b>raw/、results/ 与此无关</b>：无论选哪一项，原始帧和检测记录都照常保存（那是下面 ② 的容量与时长在管）。",
+  "ret.sec_quota": "② 容量与时长 —— 各目录最多留多少 / 留多久",
+  "ret.quota_note": "<b>只决定“最多留多少 / 留多久”</b>，与上面的准入条件正交：raw/ 超上限挤最旧帧、results/ 超期整文件删、saved/ 按年龄 + 总量成对删。<b>四个框对应四个互不相干的维度</b>（raw 容量 / results 天数 / saved 容量 / saved 天数），改一个不影响其它三个。",
+  "save_mode.off": "off — 只写 JSONL，不存图/响应",
+  "save_mode.alert": "alert — 只存出现「关注目标」的帧（推荐）",
+  "save_mode.any": "any — 检出任意目标都存（含误检，占用大）",
+  "save_mode.all": "all — 每帧都存（最大）",
+  "ret.env_note": "<b>单位（四个数值框通用）</b>：体积类（ring/saved 上限）默认 <b>MB</b>，可写 200 / 200M / 1G；时长类（keep/days）默认<b>天</b>，可写 7 / 7d / 24h / 2w。带不带单位都行，非法单位会明确报错。<br>清理节奏：raw/ 每轮检查（挤最旧帧）、saved/ 每 10 分钟（成对删）、results/ 每小时（整文件删）。<br>磁盘参考（1 路 1fps，单对 ≈0.1MB，实测）：<b>any ≈7GB/天</b>（检出率高时几乎逐帧 → 500MB ≈ 最近 1~2 小时）；<b>alert ≈0.3GB/天</b>（视命中率 → 500MB ≈ 1~2 天）。想回看更久就调大上限（注意磁盘余量）。",
+  "ret.save_env": "保存容量与时长（重启后生效）",
+  "ret.save_mode_btn": "保存留存条件（重启后生效）",
+  "ret.purge_title": "清理数据（一次性删除所选类别）",
+  "ret.pg_saved": "saved/ 留存图片与响应",
+  "ret.pg_results": "results/ 检测记录（权威数据，删后不可恢复）",
+  "ret.pg_raw": "raw/ 原始帧缓冲",
+  "ret.pg_spool": "spool/ 积压帧",
+  "ret.pg_current": "（当前 {size}）",
+  "ret.purge_note": "流程：<b>停采集（仅当运行中）→ 删除所选 → 恢复采集原状态</b>（采集原本关着就不会被拉起）。清 results/ 会重置「最近检测」与今日统计；清 saved/ 会清空时间轴。",
+  "ret.purge_btn": "清空所选数据",
+  "ret.purge_empty": "先勾选要清空的数据类别（saved/results/raw/spool）",
+  "ret.pn.saved": "saved/ 留存图片",
+  "ret.pn.results": "results/ 检测记录",
+  "ret.pn.raw": "raw/ 原始帧",
+  "ret.pn.spool": "spool/ 积压帧",
+  "ret.purge_confirm": "确定清空：{txt}？\n\n流程：停采集（仅当运行中）→ 删除所选数据 → 恢复采集原状态（原本关着不会被拉起）。\nresults/ 属权威数据，删除后不可恢复。",
+  "ret.purging": "正在清空并处理采集状态…",
+  "notes.join": "；"
+},
+"en": {
+  "app.sub": "GOS 10.21.31.104:5050 · m20-ai-detect sampler console",
+  "theme.btn": "Theme",
+  "theme.title": "Toggle theme",
+  "token.need": "Access token required:",
+  "token.ph": "Enter M20AIC_TOKEN",
+  "token.save": "Save",
+  "token.bad": "Invalid token",
+  "common.loading": "Loading…",
+  "metric.frames": "Frames today",
+  "metric.alerts": "Alerts",
+  "metric.ai": "Avg AI latency",
+  "metric.disk": "Free disk",
+  "metric.data": "Detection data",
+  "metric.data_note": "raw {raw} · results {results} · saved {saved} · spool {spool}",
+  "top.fold_all": "Collapse all",
+  "top.fold_all_title": "Collapse every card (auto-refresh pauses while collapsed)",
+  "top.unfold_all": "Expand all",
+  "top.unfold_all_title": "Expand every card",
+  "card.fold": "Collapse this card",
+  "card.unfold": "Expand this card",
+  "metric.offset": "{n} s offset",
+  "svc.title": "Collector",
+  "svc.start": "Start collector",
+  "svc.stop": "Stop collector",
+  "svc.restart": "Restart collector",
+  "svc.note": "<b>Off by default</b> (ADR-010): when on, frames are sampled and sent to the AI service (writes raw/, results/, saved/); when off, the history data, timeline and file browser on this page still work. CLI equivalent: <code>aiDetect collect on|off</code>. systemd m20-ai-detect · executed via the sudoers whitelist.",
+  "svc.done": "Executed {action}",
+  "svc.running": "Collector running",
+  "svc.stopped": "Collector stopped",
+  "svc.unknown": "Status unknown",
+  "svc.conn_fail": "Connection failed",
+  "svc.on": "Running",
+  "svc.off": "Stopped (default)",
+  "recent.title": "Recent detections",
+  "recent.hint": "Click any frame for the full response",
+  "recent.mode_hint": "Retention mode {mode} · click any frame for the full response",
+  "recent.off_hint": "Retention off (SAVE_MODE=off) · click a frame to re-detect",
+  "recent.fresh": "latest record {age} ago",
+  "recent.frozen": "data frozen (service may be stopped)",
+  "recent.empty": "No detections today",
+  "recent.etc": "and {n} more",
+  "recent.detected": "{n} objects: {items}",
+  "recent.none": "No objects detected",
+  "recent.alert": "alert",
+  "recent.saved": "saved",
+  "recent.click": "Click to view the full response for this frame",
+  "age.sec": "{n}s",
+  "age.min": "{n}m",
+  "age.hour": "{n}h",
+  "snap.title": "Camera feed",
+  "snap.auto": "Auto-refresh (3 s)",
+  "snap.refresh": "Refresh now",
+  "snap.note": "Collector running = the sampler's current frame (what the detector sees); stopped = a live grab over the same RTSP stream; when no live frame can be grabbed the card shows red \"Video source unreachable\" with old frames only",
+  "snap.refreshing": "Refreshing…",
+  "snap.ring": "LIVE",
+  "snap.ring_msg": "Sampler current frame · {age} ago (collector running = detector input)",
+  "snap.live": "Live grab",
+  "snap.live_msg": "Collector stopped — grabbed live from the same RTSP stream (about 1–2 s handshake)",
+  "snap.down": "⚠ Video source unreachable",
+  "snap.down_run": "Collector is running but no new frame could be fetched",
+  "snap.down_idle": "Collector stopped, and the RTSP source is unreachable too",
+  "snap.down_msg": "⚠️ {who} ({src}): only showing a frame from {age} ago. The video chain is not publishing (camera not up on AOS / USB disconnected / video service down) — it returns to live automatically.",
+  "snap.down_msg2": "⚠️ RTSP source not responding, no frame at all ({cam}). The video chain is not publishing (camera not up on AOS / USB disconnected / video service down) — it returns to live automatically.",
+  "snap.fail": "Grab failed",
+  "tl.title": "Image timeline",
+  "tl.ts": "Time (real clock)",
+  "tl.cam": "Camera / frame",
+  "tl.items": "Objects",
+  "tl.range": "Timeline (left = older, right = newer)",
+  "tl.follow": "Follow latest",
+  "tl.refresh": "Refresh",
+  "tl.note": "Sliding pauses follow; the oldest images are cleaned automatically once over the limit",
+  "tl.empty_wait": "No images yet (SAVE_MODE={mode} is on, waiting for detections…)",
+  "tl.empty_off": "No images yet. Set the response retention mode (SAVE_MODE) to any or alert in the Retention card below: frames with detections are saved to saved/ with real timestamps and can be browsed here.",
+  "tl.sum_all": "saved/: {n} image(s)",
+  "tl.sum_more": ", timeline covers the latest {n}",
+  "tl.sum_mode": " · SAVE_MODE={mode}",
+  "tl.filtered": "saved/: {n} image(s), none under the current filter",
+  "tl.all": "All",
+  "tl.items_n": "{n}: {items}",
+  "tl.items_none": "None",
+  "tl.alert": " · alert",
+  "tl.pos": "{i} / {n}",
+  "tl.oldest": "oldest {ts}",
+  "tl.newest": "newest {ts}",
+  "tl.alt": "Detection result",
+  "fb.title": "Data files (read-only)",
+  "fb.note": "Only the saved/ raw/ results/ spool/ log/ directories",
+  "fb.up": "↑ Up",
+  "fb.match_ph": "Filter by name",
+  "fb.refresh": "Refresh",
+  "fb.tail_label": "Lines to preview (tail)",
+  "fb.img_alt": "Image preview",
+  "fb.readfail": "Failed to read directory",
+  "fb.root_hint": "/ (pick a directory)",
+  "fb.dir": "dir",
+  "fb.download": "Download",
+  "fb.empty": "Empty directory or no matches",
+  "fb.count": "{n} item(s)",
+  "fb.truncated": " (only the first {n} shown; use the filter to narrow down)",
+  "fb.reqfail": "Request failed: {e}",
+  "fb.fail": "Read failed: {e}",
+  "fb.tail_info": "last {n} lines · {size}",
+  "cfg.title": "Detection config",
+  "cfg.cap": "Detection endpoint (33 AI capabilities)",
+  "cfg.no_caps": "(no capability list)",
+  "cfg.caps_err": "Failed to fetch capabilities: {e}",
+  "cfg.not_ready": "(not ready)",
+  "cfg.mode": "Mode",
+  "cfg.mode_stream": "Video stream sampling (resident service, 1 fps, writes results)",
+  "cfg.mode_single": "Single-frame detection (upload an image; instant result; can be kept as evidence)",
+  "cfg.obj": "obj_thresh",
+  "cfg.nms": "nms_thresh",
+  "cfg.note": "Writes m20-ai-detect.env; takes effect immediately when the collector is running (it restarts); otherwise applies the next time it starts",
+  "cfg.save": "Save & apply",
+  "cam.title": "Cameras & capture",
+  "cam.front": "Front camera video1 (rtsp://10.21.31.103:8554/video1)",
+  "cam.back": "Rear camera video2",
+  "cam.fps": "Sampling rate (fps)",
+  "alert.title": "Watch targets",
+  "alert.labels": "Watch targets (English labels, comma-separated; empty = save nothing)",
+  "alert.stats_empty": "Today's detections: none yet (enable the collector and produce detections to see clickable labels)",
+  "alert.stats_head": "Detected today (click to add/remove watch targets):",
+  "alert.chip_on": "Remove from watch targets: {label}",
+  "alert.chip_off": "Add to watch targets: {label}",
+  "alert.score": "Trigger threshold",
+  "alert.score_note": "(only detections with score ≥ threshold count)",
+  "alert.note": "Frames hitting any watch target: <b>①</b> count toward \"Alerts\"; <b>②</b> when the retention mode is <b>alert</b>, the annotated image is saved to saved/ (visible in the timeline).<br>To \"only save images of people\": set this to <span class=\"lchip on\">person</span>, choose the alert retention mode, then Save & apply.",
+  "single.title": "Single-frame detection",
+  "single.drop": "Click to pick or drop an image (jpg/png, ≤20MB)",
+  "single.start": "Detect",
+  "single.save_cb": "Save this frame (image + response to saved/console/)",
+  "single.note": "Calls the AI service directly; results return instantly; check the box to keep the evidence",
+  "single.picked": "Picked: {name} ({kb} KB)",
+  "single.detecting": "Detecting…",
+  "single.fail": "Detection failed",
+  "single.done": "Done: {n} objects · server {es}ms · end-to-end {e2e}ms",
+  "single.saved": " · kept {f}",
+  "single.result_alt": "Detection result",
+  "single.raw_label": "Raw response JSON (as returned by the AI service, base64 image field stripped)",
+  "detail.title": "Response details",
+  "detail.close": "Close",
+  "detail.frame": "Frame",
+  "detail.cam": "Camera / time",
+  "detail.ms": "Latency",
+  "detail.source": "Source",
+  "detail.parse": "Parsed result (what was detected)",
+  "detail.redetect": "Re-detect (calls the AI service)",
+  "detail.redetect_note": "Re-runs the original frame from the raw/ ring buffer, ~0.25s; only needed when not saved",
+  "detail.redetecting": "Re-detecting (calls the AI service)…",
+  "detail.from_saved": "Saved response (saved/)",
+  "detail.from_live": "Result of the live re-detection",
+  "detail.src_saved": "Saved (read straight from saved/)",
+  "detail.src_live": "Re-detected (live AI call)",
+  "detail.e2e": "End-to-end {ms}ms",
+  "detail.srv": " · server {ms}ms",
+  "detail.img_alt": "Detection result",
+  "log.title": "Run logs",
+  "log.lv_all": "All",
+  "log.lv_alert": "Alerts",
+  "log.lv_fail": "Failures",
+  "log.lv_boot": "Boot",
+  "log.q_ph": "Search keyword",
+  "log.auto": "Auto-refresh",
+  "log.empty": "No matching logs",
+  "log.note": "Source: journalctl -u m20-ai-detect (timestamps in host clock; a 2024 date means the fleet PTP dragged the system clock back — trust the ts field in JSONL instead)",
+  "ret.title": "Log & data retention",
+  "ret.ghead_journal": "journal logs — systemd service logs (source of the Run logs card)",
+  "ret.journal_now": "This service m20-ai-detect: {lines} lines ≈ {kb} | machine-wide journal total {size} (journald is one shared pool — vendor/system services such as rsdriver dominate; disk usage cannot be split per unit)",
+  "ret.vac_size": "Clean once now — keep only the newest 200M / 1G",
+  "ret.vac_size_ph": "200M",
+  "ret.exec": "Run",
+  "ret.vac_time": "Or clean once now — keep only the last 7d / 24h",
+  "ret.vac_time_ph": "7d",
+  "ret.vac_note": "<b>One-off action, not a persistent setting</b>: deletes from the oldest logs until the limit is met (pick one); the journal keeps growing afterwards; applies to all units' journals, not just this service.<br><b>Units</b>: size defaults to MB (200 = 200 MB), K/M/G/T allowed; time defaults to <b>days</b> (7 = 7 days), s/m/h/d/w allowed.",
+  "ret.max_use": "Persistent — journald space cap (SystemMaxUse, e.g. 200M)",
+  "ret.max_use_ph": "200M",
+  "ret.max_sec": "Persistent — retention time (MaxRetentionSec, e.g. 7d)",
+  "ret.max_sec_ph": "empty = unlimited",
+  "ret.save_journald": "Save & restart journald",
+  "ret.journald_note": "Written to /etc/systemd/journald.conf, <b>persistent (survives reboots)</b>. To \"always keep only the last 200M / 7 days\" use this, not the one-off clean above.<br><b>Units</b>: same as the left (size in MB, time in <b>days</b>; K/M/G/T and s/m/h/d/w allowed).",
+  "ret.lr_rotate": "File log rotation count (logrotate rotate)",
+  "ret.lr_save": "Save",
+  "ret.lr_note": "<b>Unit: count (integer 1–365, no suffix)</b>, each file = one day of logs. Only affects log/*.log files (<b>not the journal</b>): one file per day, keep the newest 7 (≈ 7 days), older files gzip-compressed, beyond 7 the oldest is deleted.",
+  "ret.ghead_data": "Detection data & images — saved/ images, raw/ frames, results/ records, spool/ backlog",
+  "ret.ring_mb": "raw/ ring buffer cap (default 200; range ≥10)",
+  "ret.keep_days": "results/ retention days (default 0 = never delete)",
+  "ret.saved_max": "saved/ image size cap (default 500; 0 = no size-based cleanup)",
+  "ret.saved_days": "saved/ image retention days (default 0 = no age-based cleanup)",
+  "ret.save_mode": "Response retention mode (SAVE_MODE, env level)",
+  "ret.sec_cond": "① Retention mode — which frames qualify",
+  "ret.cond_note": "<b>Only decides whether a frame qualifies for saved/</b>: off = JSONL only; alert = only frames hitting watch targets (list in the Watch targets card; empty = nothing saved); any = any detection; all = every frame.<br><b>raw/ and results/ are unaffected</b>: whatever you pick, raw frames and detection records are always saved (that is what ② quotas &amp; retention time below manages).",
+  "ret.sec_quota": "② Quotas & retention time — how much / how long each directory keeps",
+  "ret.quota_note": "<b>Only decides “how much / how long to keep”</b>, orthogonal to the qualification above: raw/ evicts the oldest frames when over cap, results/ deletes expired files, saved/ deletes pairs by age + size.<b>The four fields are four independent dimensions</b> (raw cap / results days / saved cap / saved days) — changing one does not affect the other three.",
+  "save_mode.off": "off — write JSONL only, no images/responses",
+  "save_mode.alert": "alert — only save frames containing watch targets (recommended)",
+  "save_mode.any": "any — save any frame with detections (incl. false positives; large)",
+  "save_mode.all": "all — save every frame (largest)",
+  "ret.env_note": "<b>Units (all four fields)</b>: sizes (ring/saved caps) default to <b>MB</b>: 200 / 200M / 1G; durations (keep/days) default to <b>days</b>: 7 / 7d / 24h / 2w. With or without a unit is fine; invalid units error clearly.<br>Cleanup cadence: raw/ every tick (evict oldest), saved/ every 10 min (pairs), results/ hourly (whole files).<br>Disk reference (1 camera, 1 fps, ≈0.1 MB per pair, measured): <b>any ≈7 GB/day</b> (nearly every frame when the hit rate is high → 500 MB ≈ last 1–2 hours); <b>alert ≈0.3 GB/day</b> (depends on hit rate → 500 MB ≈ 1–2 days). Raise the cap to look back further (watch the free disk space).",
+  "ret.save_env": "Save quotas & retention time (applies after restart)",
+  "ret.save_mode_btn": "Save retention mode (applies after restart)",
+  "ret.purge_title": "Clean data (one-off delete of the selected kinds)",
+  "ret.pg_saved": "saved/ images & responses",
+  "ret.pg_results": "results/ detection records (authoritative data; unrecoverable)",
+  "ret.pg_raw": "raw/ raw frame buffer",
+  "ret.pg_spool": "spool/ pending frames",
+  "ret.pg_current": "(now {size})",
+  "ret.purge_note": "Flow: <b>stop the collector (only if running) → delete the selection → restore the previous collector state</b> (a stopped collector is never started). Clearing results/ resets Recent detections and today's counters; clearing saved/ empties the timeline.",
+  "ret.purge_btn": "Purge selected data",
+  "ret.purge_empty": "First check the data kinds to purge (saved/results/raw/spool)",
+  "ret.pn.saved": "saved/ images",
+  "ret.pn.results": "results/ records",
+  "ret.pn.raw": "raw/ frames",
+  "ret.pn.spool": "spool/ backlog",
+  "ret.purge_confirm": "Purge: {txt}?\n\nFlow: stop the collector (only if running) → delete the selection → restore the previous collector state (a stopped collector is never started).\nresults/ is authoritative data; deletion is unrecoverable.",
+  "ret.purging": "Purging and restoring the collector state…",
+  "notes.join": " · "
+}
+}
+</script>
+
 <script>
 "use strict";
 var TOKEN_KEY = "m20aic-token";
+var LANG_KEY = "m20ai-lang";
+var I18N = {};
+var LANG = "zh";
+try {
+  I18N = JSON.parse(document.getElementById("i18n-data").textContent);
+  LANG = localStorage.getItem(LANG_KEY) || "zh";
+  if (LANG !== "en" && LANG !== "zh") LANG = "zh";
+} catch (e) { /* JSON 解析失败时保持 zh 静态文本 */ }
+function t(key, vars){
+  var table = I18N[LANG] || I18N.zh || {};
+  var text = table[key];
+  if (text == null) text = (I18N.zh || {})[key];
+  if (text == null) return key;
+  if (vars) {
+    for (var k in vars) text = text.split("{" + k + "}").join(vars[k]);
+  }
+  return text;
+}
+function listSep(){ return LANG === "zh" ? "、" : ", "; }
+function applyI18n(){
+  document.documentElement.setAttribute("lang", LANG === "en" ? "en" : "zh-CN");
+  document.querySelectorAll("[data-i18n]").forEach(function(e){ e.textContent = t(e.getAttribute("data-i18n")); });
+  document.querySelectorAll("[data-i18n-ph]").forEach(function(e){ e.setAttribute("placeholder", t(e.getAttribute("data-i18n-ph"))); });
+  document.querySelectorAll("[data-i18n-title]").forEach(function(e){ e.setAttribute("title", t(e.getAttribute("data-i18n-title"))); });
+  document.querySelectorAll("[data-i18n-html]").forEach(function(e){ e.innerHTML = t(e.getAttribute("data-i18n-html")); });
+  el("lang-zh").className = "sm" + (LANG === "zh" ? " on" : "");
+  el("lang-en").className = "sm" + (LANG === "en" ? " on" : "");
+  /* 防御（v0.8.5）：applyI18n 会给带 data-i18n 的元素整块重写 textContent，
+     若标题 h2 自己带 data-i18n，注入进去的折叠按钮会被当作子节点清掉 →
+     折叠后再也点不开（2026-10-17 用户实测："检测配置/相机与采集/关注目标/
+     日志与数据留存策略 折叠后不能单独打开"）。此处幂等重建，杜绝复发。 */
+  initFolds();
+  document.querySelectorAll(".card[data-fold]").forEach(function(c){
+    setFold(c, c.classList.contains("collapsed"), false);
+  });
+  syncFoldAllBtn();
+}
+
+/* ---------- 卡片折叠（ADR-015）：状态存 localStorage，语言切换不影响 ---------- */
+var FOLD_KEY = "m20ai-fold";
+function foldId(card){ return card.getAttribute("data-fold") || ""; }
+function isFolded(key){
+  var c = document.querySelector('.card[data-fold="' + key + '"]');
+  return !!c && c.classList.contains("collapsed");
+}
+function setFold(card, collapsed, remember){
+  card.classList.toggle("collapsed", collapsed);
+  var b = card.querySelector("h2 .fold");
+  if (b){
+    b.textContent = collapsed ? "▸" : "▾";
+    b.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    b.setAttribute("title", t(collapsed ? "card.unfold" : "card.fold"));
+  }
+  if (remember === false) return;
+  try { localStorage.setItem(FOLD_KEY + "-" + foldId(card), collapsed ? "1" : "0"); } catch (e) {}
+}
+function initFolds(){
+  document.querySelectorAll(".card[data-fold]").forEach(function(card){
+    var h2 = card.querySelector("h2");
+    if (!h2 || h2.querySelector(".fold")) return;
+    var b = document.createElement("button");
+    b.className = "sm fold";
+    b.setAttribute("aria-expanded", "true");
+    b.textContent = "▾";
+    (function(c, btn){ btn.onclick = function(ev){ ev.stopPropagation(); setFold(c, !c.classList.contains("collapsed")); }; })(card, b);
+    h2.appendChild(b);
+    var saved = null;
+    try { saved = localStorage.getItem(FOLD_KEY + "-" + foldId(card)); } catch (e) {}
+    if (saved === "1") card.classList.add("collapsed");
+    setFold(card, card.classList.contains("collapsed"), false);  // 以类状态为准渲染按钮
+  });
+  syncFoldAllBtn();
+}
+function toggleAllFolds(){
+  var cards = Array.prototype.slice.call(document.querySelectorAll(".card[data-fold]"));
+  var anyOpen = cards.some(function(c){ return !c.classList.contains("collapsed"); });
+  cards.forEach(function(c){ setFold(c, anyOpen); });
+  syncFoldAllBtn();
+}
+function syncFoldAllBtn(){
+  var btn = el("fold-all");
+  if (!btn) return;
+  var cards = Array.prototype.slice.call(document.querySelectorAll(".card[data-fold]"));
+  var anyOpen = cards.some(function(c){ return !c.classList.contains("collapsed"); });
+  btn.textContent = t(anyOpen ? "top.fold_all" : "top.unfold_all");
+  btn.setAttribute("title", t(anyOpen ? "top.fold_all_title" : "top.unfold_all_title"));
+}
+function setLang(l){
+  LANG = (l === "en") ? "en" : "zh";
+  try { localStorage.setItem(LANG_KEY, LANG); } catch (e) {}
+  applyI18n();
+  refreshAll();
+}
+initFolds();
+applyI18n();
 function token(){ return localStorage.getItem(TOKEN_KEY) || ""; }
 function api(path, opts){
   opts = opts || {};
   opts.headers = opts.headers || {};
   if (token()) opts.headers["X-Console-Token"] = token();
+  opts.headers["X-Lang"] = LANG;
   return fetch(path, opts).then(function(r){
     if (r.status === 401){
       document.getElementById("tokenbar").style.display = "flex";
-      throw new Error("token 不符");
+      throw new Error(t("token.bad"));
     }
     return r.json();
   });
@@ -431,30 +993,36 @@ function fmtMB(mb){
 function loadStatus(){
   api("/api/status").then(function(d){
     var on = d.service === "active";
+    SVC_ON = on;
     var pill = el("svc-pill");
     pill.className = "pill" + (on ? " ok" : (d.service === "unknown" ? "" : " err"));
-    setText("svc-text", d.service === "active" ? "采集运行中" : d.service === "unknown" ? "状态未知" : "采集已关闭");
+    setText("svc-text", on ? t("svc.running") : d.service === "unknown" ? t("svc.unknown") : t("svc.stopped"));
     var tag = el("capture-tag");
     if (tag) {
       tag.className = "tag" + (on ? " ok" : " err");
-      tag.textContent = on ? "运行中" : "已关闭（默认）";
+      tag.textContent = on ? t("svc.on") : t("svc.off");
     }
     setText("m-frames", d.frames_today == null ? "–" : d.frames_today);
     setText("m-alerts", d.alerts_today == null ? "–" : d.alerts_today);
     setText("m-disk", d.disk && d.disk.disk_free_gb != null ? d.disk.disk_free_gb + " GB" : "–");
-    setText("m-journal", d.journal_usage || "–");
-    if (d.clock_offset_sec != null) setText("m-ai", Math.round(d.clock_offset_sec) + " s 偏移");
+    if (d.clock_offset_sec != null) setText("m-ai", t("metric.offset", {n: Math.round(d.clock_offset_sec)}));
     if (d.disk){
-      setText("pg-saved-n", "（当前 " + fmtMB(d.disk.saved_mb) + "）");
-      setText("pg-results-n", "（当前 " + fmtMB(d.disk.results_mb) + "）");
-      setText("pg-raw-n", "（当前 " + fmtMB(d.disk.raw_mb) + "）");
-      setText("pg-spool-n", "（当前 " + fmtMB(d.disk.spool_mb) + "）");
+      var tot = (d.disk.raw_mb || 0) + (d.disk.results_mb || 0) + (d.disk.saved_mb || 0) + (d.disk.spool_mb || 0);
+      setText("m-data", fmtMB(tot));
+      setText("m-data-note", t("metric.data_note", {
+        raw: fmtMB(d.disk.raw_mb), results: fmtMB(d.disk.results_mb),
+        saved: fmtMB(d.disk.saved_mb), spool: fmtMB(d.disk.spool_mb)
+      }));
+      setText("pg-saved-n", t("ret.pg_current", {size: fmtMB(d.disk.saved_mb)}));
+      setText("pg-results-n", t("ret.pg_current", {size: fmtMB(d.disk.results_mb)}));
+      setText("pg-raw-n", t("ret.pg_current", {size: fmtMB(d.disk.raw_mb)}));
+      setText("pg-spool-n", t("ret.pg_current", {size: fmtMB(d.disk.spool_mb)}));
     }
-  }).catch(function(e){ setText("svc-text", "连接失败"); });
+  }).catch(function(e){ setText("svc-text", t("svc.conn_fail")); });
 }
 function svc(action){
   jpost("/api/service", {action: action}).then(function(d){
-    statusLine("svc-status", (d.detail || "已执行 " + action), true);
+    statusLine("svc-status", d.detail || t("svc.done", {action: action}), true);
     loadStatus();
   }).catch(function(e){ statusLine("svc-status", String(e), false); });
 }
@@ -468,13 +1036,13 @@ function loadConfig(){
     sel.innerHTML = "";
     if (!d.capabilities.length){
       var o = document.createElement("option");
-      o.textContent = d.capabilities_error ? ("能力列表拉取失败：" + d.capabilities_error) : "（无能力列表）";
+      o.textContent = d.capabilities_error ? t("cfg.caps_err", {e: d.capabilities_error}) : t("cfg.no_caps");
       sel.appendChild(o);
     } else {
       d.capabilities.forEach(function(c){
         var o = document.createElement("option");
         o.value = c.id;
-        o.textContent = c.title + (c.ready ? "" : "（未就绪）");
+        o.textContent = c.title + (c.ready ? "" : t("cfg.not_ready"));
         if (c.id === d.effective.cap_id) o.selected = true;
         sel.appendChild(o);
       });
@@ -528,29 +1096,35 @@ function saveAlerts(){
 function fmtTs(ts){ return (ts || "").replace("T", " ").slice(0, 19); }
 function humanAge(ms){
   var s = Math.round(ms / 1000);
-  if (s < 90) return s + " 秒";
+  if (s < 90) return t("age.sec", {n: s});
   var m = Math.round(s / 60);
-  if (m < 90) return m + " 分钟";
-  return Math.round(m / 60) + " 小时";
+  if (m < 90) return t("age.min", {n: m});
+  return t("age.hour", {n: Math.round(m / 60)});
 }
 function loadRecent(){
   api("/api/recent?n=12").then(function(d){
     var box = el("recent");
     box.innerHTML = "";
     var sub = d.save_mode && d.save_mode !== "off"
-      ? ("留存条件 " + d.save_mode + " · 点任一帧看完整响应")
-      : "留存关闭（SAVE_MODE=off）· 点帧可重新检测";
+      ? t("recent.mode_hint", {mode: d.save_mode})
+      : t("recent.off_hint");
     /* 数据新鲜度：最近检测是 JSONL 尾部（历史），服务停止后定格而非清空，
        不标出"几秒前"的话，用户容易把定格时间误读成"现在还在检测"。 */
     if (d.records.length && d.records[0].ts) {
       var age = Date.now() - new Date(d.records[0].ts).getTime();
       if (!isNaN(age) && age > 60000) {
-        sub += " · 最新记录 " + humanAge(age) + "前";
-        if (age > 150000) sub += " · 数据已定格（服务可能已停止）";
+        sub += " · " + t("recent.fresh", {age: humanAge(age)});
+        if (age > 150000) sub += " · " + t("recent.frozen");
       }
     }
     setText("recent-sub", sub);
-    if (!d.records.length){ box.innerHTML = '<div class="note">今日暂无检测记录</div>'; return; }
+    if (!d.records.length){
+      var nd = document.createElement("div");
+      nd.className = "note";
+      nd.textContent = t("recent.empty");
+      box.appendChild(nd);
+      return;
+    }
     d.records.forEach(function(r){
       var div = document.createElement("div");
       div.className = "item rec";
@@ -560,14 +1134,14 @@ function loadRecent(){
       (r.items || []).slice(0, 4).forEach(function(it){
         parts.push(it.label + " " + (it.score != null ? Number(it.score).toFixed(2) : "?"));
       });
-      if (n > 4) parts.push("等 " + n + " 个");
+      if (n > 4) parts.push(t("recent.etc", {n: n}));
       var line = ts + " · " + (r.cam || "") + " · " +
-        (n > 0 ? ("检出 " + n + " 个目标：" + parts.join("、")) : "未检出任何目标") +
+        (n > 0 ? t("recent.detected", {n: n, items: parts.join(listSep())}) : t("recent.none")) +
         " · " + Math.round(r.e2e_ms || 0) + "ms";
-      if (r.alert) line += " · 告警";
-      if (r.saved_image) line += " · 已留存";
+      if (r.alert) line += " · " + t("recent.alert");
+      if (r.saved_image) line += " · " + t("recent.saved");
       div.textContent = line;
-      div.title = "点击查看该帧的完整响应";
+      div.title = t("recent.click");
       div.onclick = function(){ openDetail(r); };
       box.appendChild(div);
     });
@@ -588,9 +1162,9 @@ function loadTimeline(){
     var prevKey = tlData[tlIdx] ? (tlData[tlIdx].cam + "/" + tlData[tlIdx].frame) : null;
     tlData = (d.records || []).slice().reverse();
     renderTlCams(d.cams || []);
-    var sum = "saved/ 共 " + (d.total || 0) + " 张";
-    if (d.total > tlData.length) sum += "，时间条覆盖最新 " + tlData.length + " 张";
-    if (d.save_mode && d.save_mode !== "off") sum += " · SAVE_MODE=" + d.save_mode;
+    var sum = t("tl.sum_all", {n: d.total || 0});
+    if (d.total > tlData.length) sum += t("tl.sum_more", {n: tlData.length});
+    if (d.save_mode && d.save_mode !== "off") sum += t("tl.sum_mode", {mode: d.save_mode});
     setText("tl-sum", sum);
     var idx;
     if (el("tl-follow").checked || !prevKey || tlIdx < 0){
@@ -609,7 +1183,7 @@ function renderTlCams(cams){
   var box = el("tl-cams");
   box.innerHTML = "";
   if (!cams || cams.length <= 1) return;
-  var items = [{v: "", t: "全部"}].concat(cams.map(function(c){ return {v: c, t: c}; }));
+  var items = [{v: "", t: t("tl.all")}].concat(cams.map(function(c){ return {v: c, t: c}; }));
   items.forEach(function(it){
     var b = document.createElement("button");
     b.className = "sm" + (tlCam === it.v ? " primary" : "");
@@ -629,12 +1203,12 @@ function tlRender(idx, d){
     tlImgSrc = "";
     el("tl-empty").style.display = "block";
     el("tl-empty").textContent = (d.save_mode && d.save_mode !== "off")
-      ? "尚无留存图片（SAVE_MODE=" + d.save_mode + " 已开启，等待检出目标…）"
-      : "暂无留存图片。先在下方「日志与数据留存策略」把响应留存条件（SAVE_MODE）设为 any 或 alert：检出目标的图片会自动带时间戳落 saved/，这里就能滑动查看。";
+      ? t("tl.empty_wait", {mode: d.save_mode})
+      : t("tl.empty_off");
     setText("tl-ts", "–"); setText("tl-cam", "–"); setText("tl-items", "–");
     setText("tl-pos", "0 / 0"); setText("tl-oldest", "–"); setText("tl-newest", "–");
     el("tl-range").max = 0; el("tl-range").value = 0;
-    statusLine("tl-status", d.total ? ("saved/ 共 " + d.total + " 张，当前筛选无结果") : "");
+    statusLine("tl-status", d.total ? t("tl.filtered", {n: d.total}) : "");
     return;
   }
   tlIdx = Math.max(0, Math.min(idx, tlData.length - 1));
@@ -649,12 +1223,12 @@ function tlRender(idx, d){
   var parts = (r.items || []).slice(0, 6).map(function(it){
     return it.label + (it.score != null ? " " + Number(it.score).toFixed(2) : "");
   });
-  setText("tl-items", (r.n_items > 0 ? (r.n_items + " 个：" + parts.join("、")) : "未检出") + (r.alert ? " · 告警" : ""));
+  setText("tl-items", (r.n_items > 0 ? t("tl.items_n", {n: r.n_items, items: parts.join(listSep())}) : t("tl.items_none")) + (r.alert ? t("tl.alert") : ""));
   el("tl-range").max = tlData.length - 1;
   el("tl-range").value = tlIdx;
-  setText("tl-pos", (tlIdx + 1) + " / " + tlData.length + " 张");
-  setText("tl-oldest", "最早 " + fmtTs(tlData[0].ts).slice(5, 16));
-  setText("tl-newest", "最新 " + fmtTs(tlData[tlData.length - 1].ts).slice(5, 16));
+  setText("tl-pos", t("tl.pos", {i: tlIdx + 1, n: tlData.length}));
+  setText("tl-oldest", t("tl.oldest", {ts: fmtTs(tlData[0].ts).slice(5, 16)}));
+  setText("tl-newest", t("tl.newest", {ts: fmtTs(tlData[tlData.length - 1].ts).slice(5, 16)}));
   statusLine("tl-status", "");
 }
 function timelineDetail(){
@@ -672,23 +1246,23 @@ function openDetail(r){
   setText("d-frame", r.frame || "");
   setText("d-cam", (r.cam || "") + " · " + fmtTs(r.ts));
   setText("d-ms", r.e2e_ms != null
-    ? ("端到端 " + Math.round(r.e2e_ms) + "ms" + (r.elapsed_ms != null ? " · 服务端 " + Math.round(r.elapsed_ms) + "ms" : ""))
+    ? (t("detail.e2e", {ms: Math.round(r.e2e_ms)}) + (r.elapsed_ms != null ? t("detail.srv", {ms: Math.round(r.elapsed_ms)}) : ""))
     : "–");
   loadDetail(false);
 }
 function loadDetail(redetect){
   var r = currentRec;
   if (!r) return;
-  statusLine("d-status", redetect ? "重新检测中（调 AI 服务）…" : "加载中…");
+  statusLine("d-status", redetect ? t("detail.redetecting") : t("common.loading"));
   api("/api/response?frame=" + encodeURIComponent(r.frame) +
       "&cam=" + encodeURIComponent(r.cam || "front") +
       "&redetect=" + (redetect ? "1" : "0")).then(function(d){
     renderDetail(d);
-    statusLine("d-status", d.source === "saved" ? "已留存的响应（saved/）" : "实时重新检测的结果", true);
+    statusLine("d-status", d.source === "saved" ? t("detail.from_saved") : t("detail.from_live"), true);
   }).catch(function(e){ statusLine("d-status", String(e), false); });
 }
 function renderDetail(d){
-  setText("d-source", d.source === "saved" ? "已留存（saved/ 直读）" : "重新检测（实时调 AI 服务）");
+  setText("d-source", d.source === "saved" ? t("detail.src_saved") : t("detail.src_live"));
   var img = el("d-img");
   if (d.result_image){ img.src = d.result_image; img.style.display = "block"; }
   else { img.style.display = "none"; }
@@ -698,7 +1272,7 @@ function renderDetail(d){
   if (!items.length){
     var n = document.createElement("div");
     n.className = "note";
-    n.textContent = "未检出任何目标";
+    n.textContent = t("recent.none");
     box.appendChild(n);
   } else {
     items.forEach(function(it){
@@ -734,7 +1308,7 @@ var pickedFile = null;
   };
   function pick(f){
     pickedFile = f;
-    drop.textContent = "已选：" + f.name + "（" + Math.round(f.size / 1024) + " KB）";
+    drop.textContent = t("single.picked", {name: f.name, kb: Math.round(f.size / 1024)});
     el("detect-btn").disabled = false;
     el("result-img").style.display = "none";
     el("result-items").innerHTML = "";
@@ -742,17 +1316,17 @@ var pickedFile = null;
   }
   el("detect-btn").onclick = function(){
     if (!pickedFile) return;
-    statusLine("detect-status", "检测中…");
+    statusLine("detect-status", t("single.detecting"));
     var cap = CFG ? encodeURIComponent(el("cap").value) : "";
     var save = el("single-save").checked ? "1" : "0";
     fetch("/api/detect?cap=" + cap + "&include_image=1&save=" + save, {
       method: "POST",
-      headers: token() ? {"X-Console-Token": token()} : {},
+      headers: token() ? {"X-Console-Token": token(), "X-Lang": LANG} : {"X-Lang": LANG},
       body: pickedFile
     }).then(function(r){ return r.json(); }).then(function(d){
-      if (!d.ok){ statusLine("detect-status", d.error || "检测失败", false); return; }
-      var msg = "完成：" + d.n_items + " 个目标 · 服务端 " + Math.round(d.elapsed_ms || 0) + "ms · 端到端 " + Math.round(d.e2e_ms || 0) + "ms";
-      if (d.saved_image) msg += " · 已留存 " + d.saved_image;
+      if (!d.ok){ statusLine("detect-status", d.error || t("single.fail"), false); return; }
+      var msg = t("single.done", {n: d.n_items, es: Math.round(d.elapsed_ms || 0), e2e: Math.round(d.e2e_ms || 0)});
+      if (d.saved_image) msg += t("single.saved", {f: d.saved_image});
       statusLine("detect-status", msg, true);
       var img = el("result-img");
       if (d.result_image){ img.src = d.result_image; img.style.display = "block"; }
@@ -777,7 +1351,13 @@ function loadLogs(){
   api("/api/logs?level=" + logLevel + "&q=" + q + "&n=300").then(function(d){
     var box = el("logbox");
     box.innerHTML = "";
-    if (!d.lines.length){ box.innerHTML = '<div class="note">无匹配日志</div>'; return; }
+    if (!d.lines.length){
+      var nd = document.createElement("div");
+      nd.className = "note";
+      nd.textContent = t("log.empty");
+      box.appendChild(nd);
+      return;
+    }
     var frag = document.createDocumentFragment();
     d.lines.forEach(function(l){
       var div = document.createElement("div");
@@ -802,6 +1382,19 @@ function loadRetention(){
     if (d.journald_managed.SystemMaxUse) el("max-use").value = d.journald_managed.SystemMaxUse;
     if (d.journald_managed.MaxRetentionSec) el("max-sec").value = d.journald_managed.MaxRetentionSec;
     if (d.logrotate_rotate != null) el("lr-rotate").value = d.logrotate_rotate;
+    var ju = el("j-usage");
+    if (ju){
+      if (d.journal_bytes != null){
+        var svc = d.journal_service || null;
+        ju.textContent = t("ret.journal_now", {
+          size: fmtMB(d.journal_bytes / 1048576.0),
+          lines: svc ? svc.lines : "?",
+          kb: svc ? fmtMB(svc.bytes / 1048576.0) : "?"
+        });
+      } else {
+        ju.textContent = "";
+      }
+    }
   }).catch(function(){});
 }
 /* ---------- 关注目标（今日检出标签 chips，点击加入/移出） ---------- */
@@ -812,17 +1405,17 @@ function renderLabelStats(stats){
   if (!box) return;
   var cur = el("labels").value.split(",").map(function(s){ return s.trim(); }).filter(Boolean);
   if (!LABEL_STATS.length){
-    box.innerHTML = "今日检出：暂无记录（开启采集并产生检测后，这里会出现可点选的标签）";
+    box.textContent = t("alert.stats_empty");
     return;
   }
   var frag = document.createDocumentFragment();
-  frag.appendChild(document.createTextNode("今日检出（点击加入/移出关注目标）："));
+  frag.appendChild(document.createTextNode(t("alert.stats_head")));
   LABEL_STATS.forEach(function(it){
     var s = document.createElement("span");
     var on = cur.indexOf(it.label) >= 0;
     s.className = "lchip" + (on ? " on" : "");
     s.textContent = it.label + "×" + it.count;
-    s.title = (on ? "移出" : "加入") + "关注目标：" + it.label;
+    s.title = t(on ? "alert.chip_on" : "alert.chip_off", {label: it.label});
     s.onclick = function(){ toggleLabel(it.label); };
     frag.appendChild(s);
   });
@@ -839,7 +1432,7 @@ function toggleLabel(label){
 }
 function saveRetention(body, okMsg, done){
   jpost("/api/retention", body).then(function(d){
-    statusLine("ret-status", (d.notes || [okMsg]).join("；"), true);
+    statusLine("ret-status", (d.notes || [okMsg]).join(t("notes.join")), true);
     loadRetention();
     loadStatus();
     if (done) done();
@@ -876,11 +1469,11 @@ function purgeSelected(){
   if (el("pg-results").checked) sel.push("results");
   if (el("pg-raw").checked) sel.push("raw");
   if (el("pg-spool").checked) sel.push("spool");
-  if (!sel.length){ statusLine("ret-status", "先勾选要清空的数据类别（saved/results/raw/spool）", false); return; }
-  var names = {saved:"saved/ 留存图片", results:"results/ 检测记录", raw:"raw/ 原始帧", spool:"spool/ 积压帧"};
-  var txt = sel.map(function(k){ return names[k]; }).join("、");
-  if (!confirm("确定清空：" + txt + "？\n\n流程：停采集（仅当运行中）→ 删除所选数据 → 恢复采集原状态（原本关着不会被拉起）。\nresults/ 属权威数据，删除后不可恢复。")) return;
-  statusLine("ret-status", "正在清空并处理采集状态…");
+  if (!sel.length){ statusLine("ret-status", t("ret.purge_empty"), false); return; }
+  var names = {saved: t("ret.pn.saved"), results: t("ret.pn.results"), raw: t("ret.pn.raw"), spool: t("ret.pn.spool")};
+  var txt = sel.map(function(k){ return names[k]; }).join(listSep());
+  if (!confirm(t("ret.purge_confirm", {txt: txt}))) return;
+  statusLine("ret-status", t("ret.purging"));
   saveRetention({purge: sel}, null, function(){ loadTimeline(); loadRecent(); });
 }
 
@@ -892,11 +1485,13 @@ function fbText(u){
   /* /api/file 可能是 text/plain，不能用 api()（它强制 r.json()） */
   var opts = {};
   if (token()) opts.headers = {"X-Console-Token": token()};
+  opts.headers = opts.headers || {};
+  opts.headers["X-Lang"] = LANG;
   return fetch(u, opts).then(function(r){
-    if (r.status === 401){ document.getElementById("tokenbar").style.display = "flex"; throw new Error("token 不符"); }
-    return r.text().then(function(t){
-      if (!r.ok) throw new Error(t || ("HTTP " + r.status));
-      return t;
+    if (r.status === 401){ document.getElementById("tokenbar").style.display = "flex"; throw new Error(t("token.bad")); }
+    return r.text().then(function(txt){
+      if (!r.ok) throw new Error(txt || ("HTTP " + r.status));
+      return txt;
     });
   });
 }
@@ -916,9 +1511,9 @@ function fbLoad(){
   var u = "/api/files?n=" + fbN + (fbDir ? "&dir=" + encodeURIComponent(fbDir) : "") +
           (m ? "&match=" + encodeURIComponent(m) : "");
   api(u).then(function(d){
-    if (!d || !d.ok) { fbStatus(d && d.error ? d.error : "目录读取失败", true); return; }
+    if (!d || !d.ok) { fbStatus(d && d.error ? d.error : t("fb.readfail"), true); return; }
     fbParent = d.parent || "";
-    setText("fb-path", fbDir ? ("/" + fbDir) : "/（选择目录）");
+    setText("fb-path", fbDir ? ("/" + fbDir) : t("fb.root_hint"));
     var box = document.getElementById("fb-list");
     box.innerHTML = "";
     (d.entries || []).forEach(function(e){
@@ -935,12 +1530,12 @@ function fbLoad(){
       }
       var meta = document.createElement("span");
       meta.className = "meta";
-      meta.textContent = (e.type === "dir" ? "目录" : fbSize(e.size)) + " · " + (e.ts || "").replace("T", " ").slice(0, 19);
+      meta.textContent = (e.type === "dir" ? t("fb.dir") : fbSize(e.size)) + " · " + (e.ts || "").replace("T", " ").slice(0, 19);
       var acts = document.createElement("span");
       if (e.type === "file") {
         var dl = document.createElement("a");
         dl.href = fbURL("/api/file?path=" + encodeURIComponent(e.path) + "&dl=1");
-        dl.textContent = "下载";
+        dl.textContent = t("fb.download");
         dl.style.fontSize = "12px";
         dl.style.marginLeft = "8px";
         acts.appendChild(dl);
@@ -949,12 +1544,16 @@ function fbLoad(){
       box.appendChild(row);
     });
     if (!d.entries || !d.entries.length) {
-      box.innerHTML = '<div class="note" style="padding:12px">空目录或没有匹配项</div>';
+      var nd = document.createElement("div");
+      nd.className = "note";
+      nd.style.padding = "12px";
+      nd.textContent = t("fb.empty");
+      box.appendChild(nd);
     }
-    var s = (d.count || 0) + " 项";
-    if (d.truncated) s += "（仅显示前 " + fbN + " 项，可用过滤缩小范围）";
+    var s = t("fb.count", {n: d.count || 0});
+    if (d.truncated) s += t("fb.truncated", {n: fbN});
     fbStatus(s, false);
-  }).catch(function(e){ fbStatus("请求失败：" + e, true); });
+  }).catch(function(e){ fbStatus(t("fb.reqfail", {e: e}), true); });
 }
 function fbOpen(path, size){
   var ext = (path.split(".").pop() || "").toLowerCase();
@@ -969,13 +1568,13 @@ function fbOpen(path, size){
   wrap.style.display = "none";
   var tail = Math.max(1, parseInt(document.getElementById("fb-tail").value, 10) || 200);
   var u = "/api/file?path=" + encodeURIComponent(path) + "&tail=" + tail;
-  fbText(u).then(function(t){
-    pre.textContent = t;
+  fbText(u).then(function(txt){
+    pre.textContent = txt;
     pre.style.display = "block";
-    fbStatus(path + " · 末尾 " + tail + " 行 · " + fbSize(size), false);
+    fbStatus(t("fb.tail_info", {n: tail, size: fbSize(size)}), false);
   }).catch(function(e){
     pre.style.display = "none";
-    fbStatus("读取失败：" + e, true);
+    fbStatus(t("fb.fail", {e: e}), true);
   });
 }
 function fbStatus(msg, isErr){
@@ -986,6 +1585,7 @@ function fbStatus(msg, isErr){
 
 /* ---------- 相机画面（ADR-012：raw 最新帧优先，ffmpeg 即时抓帧兜底） ---------- */
 var SNAP_BUSY = false;
+var SVC_ON = false;   /* 采集（采样器）是否在运行——loadStatus 每 5s 刷新，供视频源告警文案分流 */
 function snapFillCams(names){
   var sel = el("snap-cam");
   if (!sel || sel.dataset.names === names.join(",")) return;
@@ -1006,41 +1606,59 @@ function snapLoad(){
   if (SNAP_BUSY) return;
   SNAP_BUSY = true;
   var cam = el("snap-cam").value || "";
-  snapTag("刷新中…", "");
+  snapTag(t("snap.refreshing"), "");
   api("/api/snapshot" + (cam ? "?cam=" + encodeURIComponent(cam) : "")).then(function(d){
     SNAP_BUSY = false;
-    if (!d || !d.ok){
-      snapTag("抓帧失败", "err");
-      statusLine("snap-status", (d && d.error) || "未知错误", false);
-      return;
-    }
     var img = el("snap-img");
-    img.src = d.image;
-    img.style.display = "block";
-    el("snap-src").textContent = d.cam + " · " + d.src + (d.frame ? " · " + d.frame : "");
-    if (d.source === "ring"){
-      snapTag("实时", "ok");
-      statusLine("snap-status", "采样器当前帧 · " + humanAge((d.age_s || 0) * 1000) + "前（采集运行中，即检测器输入）", true);
-    } else if (d.source === "live"){
-      snapTag("即时抓帧", "ok");
-      statusLine("snap-status", "采集未运行——已从同一路 RTSP 即时抓帧（约 1~2 秒握手）", true);
+    if (d && d.ok){
+      img.src = d.image;
+      img.style.display = "block";
+      img.style.opacity = "1";
+      el("snap-src").textContent = d.cam + " · " + d.src + (d.frame ? " · " + d.frame : "");
+      if (d.source === "ring"){
+        snapTag(t("snap.ring"), "ok");
+        statusLine("snap-status", t("snap.ring_msg", {age: humanAge((d.age_s || 0) * 1000)}), true);
+      } else if (d.source === "live"){
+        snapTag(t("snap.live"), "ok");
+        statusLine("snap-status", t("snap.live_msg"), true);
+      } else {
+        snapSourceDown(d);
+      }
     } else {
-      snapTag("已定格", "");
-      statusLine("snap-status", "采集未运行且即时抓帧失败，显示最近一帧（" + humanAge((d.age_s || 0) * 1000) + "前）", false);
+      snapSourceDown(null);
     }
   }).catch(function(e){
     SNAP_BUSY = false;
-    snapTag("抓帧失败", "err");
+    snapTag(t("snap.fail"), "err");
     statusLine("snap-status", String(e && e.message || e), false);
   });
 }
 
+/* 视频源不可达：RTSP 抓帧失败（ADR-012，2026-10-17 修订）。
+ * 旧行为只标"已定格"（琥珀色小字）——用户会把定格旧帧误当成"画面不动/相机卡住"。
+ * 现在：红色徽标 + 旧帧置暗 + 按采集开关状态给出不同的排查指向；视频链恢复后自动回到实时。 */
+function snapSourceDown(d){
+  var img = el("snap-img");
+  snapTag(t("snap.down"), "err");
+  if (d && d.ok){
+    img.src = d.image;
+    img.style.display = "block";
+    img.style.opacity = "0.4";   /* 置暗：明确"这不是实时画面" */
+    var who = SVC_ON ? t("snap.down_run") : t("snap.down_idle");
+    statusLine("snap-status", t("snap.down_msg", {who: who, src: d.src, age: humanAge((d.age_s || 0) * 1000)}), false);
+  } else {
+    img.style.display = "none";
+    img.style.opacity = "1";
+    statusLine("snap-status", t("snap.down_msg2", {cam: el("snap-cam").value || ""}), false);
+  }
+}
+
 function refreshAll(){ loadStatus(); loadConfig(); loadRetention(); loadLogs(); loadRecent(); loadTimeline(); fbLoad(); snapLoad(); }
 refreshAll();
-setInterval(function(){ loadStatus(); loadRecent(); }, 5000);
-setInterval(function(){ if (!document.hidden) loadTimeline(); }, 15000);
-setInterval(function(){ if (el("auto-refresh").checked) loadLogs(); }, 4000);
-setInterval(function(){ if (!document.hidden && el("snap-auto").checked) snapLoad(); }, 3000);
+setInterval(function(){ loadStatus(); if (!isFolded("recent")) loadRecent(); }, 5000);
+setInterval(function(){ if (!document.hidden && !isFolded("tl")) loadTimeline(); }, 15000);
+setInterval(function(){ if (!isFolded("log") && el("auto-refresh").checked) loadLogs(); }, 4000);
+setInterval(function(){ if (!document.hidden && !isFolded("snap") && el("snap-auto").checked) snapLoad(); }, 3000);
 </script>
 </body>
 </html>

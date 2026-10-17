@@ -2,7 +2,7 @@
 
 路由（全部 JSON，错误统一 {"ok": false, "error": "..."}）：
   GET  /                    静态页
-  GET  /api/status          服务状态 + 磁盘 + journal 占用 + 时钟偏移 + 版本
+  GET  /api/status          服务状态 + 磁盘 + journal 占用(字节) + 时钟偏移 + 版本
   POST /api/service         {"action": start|stop|restart}
   GET  /api/config          当前 env（脱敏）+ 生效配置 + AI 能力列表
   POST /api/config          {"updates": {...}} 校验→写 env→（按需）重启
@@ -36,7 +36,7 @@ from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import __version__, envfile, logfilter, sysactions
+from . import __version__, envfile, i18n, logfilter, sysactions
 from m20_ai_detect.config import Config, ConfigError
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -228,7 +228,10 @@ def _fmt_bytes(nbytes: int) -> str:
 
 
 def _purge_with_restart(
-    cfg: ConsoleConfig, kinds: List[str], runner=sysactions.default_runner
+    cfg: ConsoleConfig,
+    kinds: List[str],
+    runner=sysactions.default_runner,
+    lang: str = "zh",
 ) -> Tuple[bool, str]:
     """清空所选数据（2026-10-16 新增，ADR-011）：停采集（仅当在运行）→ 清空 → 恢复采集。
 
@@ -247,14 +250,14 @@ def _purge_with_restart(
     if was_active is True:
         ok, msg = sysactions.service_action("stop", cfg.helper, runner)
         if not ok:
-            return False, "停采集失败，未清任何数据：%s" % msg
+            return False, i18n.fmt("purge.stop_fail", lang, msg=msg)
     try:
         stats = Store(cfg.sampler_cfg).purge(kinds)
     except (OSError, ValueError) as exc:
         if was_active is True:
             sysactions.service_action("start", cfg.helper, runner)  # 别把采集落在停止态
-            return False, "清空失败：%s（采集已尝试恢复启动）" % exc
-        return False, "清空失败：%s" % exc
+            return False, i18n.fmt("purge.fail_restored", lang, e=exc)
+        return False, i18n.fmt("purge.fail", lang, e=exc)
 
     parts = []
     total_files = 0
@@ -263,20 +266,19 @@ def _purge_with_restart(
         files, nbytes = stats.get(kind, (0, 0))
         total_files += files
         total_bytes += nbytes
-        parts.append(
-            "%s %d 个文件（%s）" % (_PURGE_SCOPE_LABEL[kind], files, _fmt_bytes(nbytes))
-        )
-    note = "已清空：" + "、".join(parts)
+        label = i18n.fmt("purge.kind." + kind, lang)
+        parts.append(i18n.fmt("purge.part", lang, label=label, files=files, size=_fmt_bytes(nbytes)))
+    note = i18n.fmt("purge.head", lang, parts=("、" if lang != "en" else ", ").join(parts))
     if was_active is True:
         ok2, msg2 = sysactions.service_action("start", cfg.helper, runner)
         if ok2:
-            note += "；采集已重启恢复"
+            note += i18n.fmt("purge.restarted", lang)
         else:
-            note += "；⚠ 恢复采集失败：%s（请手动开启：aiDetect collect on）" % msg2
+            note += i18n.fmt("purge.restore_fail", lang, msg=msg2)
     elif was_active is False:
-        note += "；采集未运行，未做启停"
+        note += i18n.fmt("purge.idle", lang)
     else:
-        note += "；未能确认采集状态，未做启停"
+        note += i18n.fmt("purge.unknown", lang)
     try:
         runner(
             [
@@ -728,6 +730,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # ---- 语言（ADR-013：中英适配；前端 api() 每次带 X-Lang 头）----
+    def _lang(self) -> str:
+        return i18n.pick_lang(self.headers)
+
+    def _t(self, key: str, **params: Any) -> str:
+        return i18n.fmt(key, self._lang(), **params)
+
+    def _sep(self, kind: str) -> str:
+        """列表/子句连接符按语言取：枚举 、/ , ；子句 ；/ ;。"""
+        table = {
+            "enum": ({"en": ", ", "zh": "、"}),
+            "clause": ({"en": "; ", "zh": "；"}),
+        }
+        return table[kind][self._lang()]
+
     def _err(self, status: int, msg: str) -> None:
         self._send_json({"ok": False, "error": msg}, status)
 
@@ -749,18 +766,18 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
-            return None, "Content-Length 非法"
+            return None, self._t("err.cl_bad")
         if length <= 0:
             return {}, ""
         if length > 32 * 1024 * 1024:
-            return None, "请求体过大"
+            return None, self._t("err.body_big")
         raw = self.rfile.read(length)
         try:
             obj = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             return None, "JSON 解析失败：%s" % exc
         if not isinstance(obj, dict):
-            return None, "请求体必须是 JSON object"
+            return None, self._t("err.body_json")
         return obj, ""
 
     def log_message(self, fmt: str, *args: Any) -> None:  # 走 journal，不重复 stderr
@@ -773,7 +790,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/":
                 return self._get_index()  # 首页不校验 token，API 才校验
             if not self._authorized():
-                return self._err(401, "token 不符")
+                return self._err(401, self._t("err.token"))
             if path == "/api/status":
                 return self._get_status()
             if path == "/api/config":
@@ -804,7 +821,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path = self.path.split("?", 1)[0]
             if not self._authorized():
-                return self._err(401, "token 不符")
+                return self._err(401, self._t("err.token"))
             if path == "/api/service":
                 return self._post_service()
             if path == "/api/config":
@@ -823,7 +840,7 @@ class Handler(BaseHTTPRequestHandler):
             with open(INDEX_HTML, encoding="utf-8") as fh:
                 self._send_html(fh.read())
         except OSError:
-            self._err(500, "static/index.html 缺失")
+            self._err(500, self._t("err.index_missing"))
 
     def _get_status(self) -> None:
         cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
@@ -836,7 +853,7 @@ class Handler(BaseHTTPRequestHandler):
                 "version": __version__,
                 "service": sysactions.service_status(),
                 "clock_offset_sec": offset,
-                "journal_usage": sysactions.journal_disk_usage(),
+                "journal_bytes": sysactions.journal_disk_bytes(),
                 "disk": _disk_stats(cfg),
                 "frames_today": frames,
                 "alerts_today": alerts,
@@ -929,14 +946,14 @@ class Handler(BaseHTTPRequestHandler):
         q = self._query()
         cam, frame = q.get("cam", ""), q.get("frame", "")
         if not _safe_component(cam) or not _safe_component(frame):
-            return self._err(400, "cam/frame 含非法字符")
+            return self._err(400, self._t("err.illegal_char"))
         stem = os.path.splitext(frame)[0]
         path = os.path.join(cfg.sampler_cfg.base_dir, "saved", cam, stem + ".jpg")
         try:
             with open(path, "rb") as fh:
                 data = fh.read()
         except OSError:
-            return self._err(404, "图片不存在或已被留存清理删除")
+            return self._err(404, self._t("err.img_gone"))
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Content-Length", str(len(data)))
@@ -951,7 +968,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             n = int(q.get("n", "300") or 300)
         except ValueError:
-            return self._err(400, "n 必须是整数")
+            return self._err(400, self._t("err.n_int"))
         out = _file_list(
             cfg.sampler_cfg.base_dir, q.get("dir", ""), n, q.get("match", "")
         )
@@ -963,33 +980,40 @@ class Handler(BaseHTTPRequestHandler):
         q = self._query()
         rel = q.get("path", "")
         if not rel:
-            return self._err(400, "缺少 path 参数")
+            return self._err(400, self._t("err.no_path"))
         full = _resolve_under(cfg.sampler_cfg.base_dir, rel)
         if full is None:
-            return self._err(400, "路径不在只读白名单内（允许根：%s）" % ", ".join(FILE_ROOTS))
+            return self._err(
+                400, self._t("err.path_not_allowed", roots=", ".join(FILE_ROOTS))
+            )
         if not os.path.isfile(full):
-            return self._err(404, "文件不存在或不是普通文件")
+            return self._err(404, self._t("err.file_gone"))
         try:
             size = os.path.getsize(full)
             tail = int(q.get("tail", "0") or 0)
         except (OSError, ValueError):
-            return self._err(400, "参数非法")
+            return self._err(400, self._t("err.bad_param"))
         try:
             if tail > 0:
                 if tail > FILE_TAIL_MAX:
-                    return self._err(400, "tail 不得超过 %d 行" % FILE_TAIL_MAX)
+                    return self._err(
+                        400, self._t("err.tail_max", n=FILE_TAIL_MAX)
+                    )
                 data = _tail_bytes(full, tail)
             else:
                 if size > FILE_MAX_BYTES:
                     return self._err(
                         413,
-                        "文件 %.1f MB 超过直读上限 %.0f MB，请改用 tail=N 读末尾"
-                        % (size / 1048576.0, FILE_MAX_BYTES / 1048576.0),
+                        self._t(
+                            "err.file_too_big",
+                            size="%.1f" % (size / 1048576.0),
+                            max="%.0f" % (FILE_MAX_BYTES / 1048576.0),
+                        ),
                     )
                 with open(full, "rb") as fh:
                     data = fh.read()
         except OSError as exc:
-            return self._err(500, "读取失败：%s" % exc)
+            return self._err(500, self._t("err.read_fail", e=exc))
         ctype = _FILE_EXT_TYPES.get(
             os.path.splitext(full)[1].lower(), "application/octet-stream"
         )
@@ -1010,12 +1034,12 @@ class Handler(BaseHTTPRequestHandler):
         frame = q.get("frame", "")
         cam = q.get("cam", "front")
         if not frame:
-            return self._err(400, "缺少 frame 参数")
+            return self._err(400, self._t("err.no_frame"))
         redetect = q.get("redetect", "0") == "1"
         out = _response_detail(cfg, frame, cam, redetect)
         if not out.get("ok"):
             status = 404 if out.get("saved") is False else 400
-            return self._err(status, out.get("error", "查询失败"))
+            return self._err(status, out.get("error") or self._t("err.query_fail"))
         self._send_json(out)
 
     def _get_snapshot(self) -> None:
@@ -1027,7 +1051,14 @@ class Handler(BaseHTTPRequestHandler):
         out = snapshot_frame(cfg.sampler_cfg, cam or None)
         if not out.get("ok"):
             code = 400 if out.get("bad_request") else 502
-            return self._err(code, out.get("error") or "抓帧失败")
+            if out.get("code"):
+                params = {k: out[k] for k in ("cam", "cams", "src") if k in out}
+                if isinstance(params.get("cams"), list):
+                    params["cams"] = self._sep("enum").join(params["cams"])
+                msg = self._t("snap." + str(out["code"]), **params)
+            else:
+                msg = out.get("error") or ""
+            return self._err(code, msg or self._t("err.snap_fail"))
         self._send_json(out)
 
     def _get_retention(self) -> None:
@@ -1044,10 +1075,11 @@ class Handler(BaseHTTPRequestHandler):
                 "label_stats": _label_stats(cfg.base_dir),
                 "saved_max_mb": round(scfg.saved_max_bytes / 1048576.0, 1),
                 "saved_keep_days": scfg.saved_keep_days,
-                "journal_usage": sysactions.journal_disk_usage(),
+                "journal_bytes": sysactions.journal_disk_bytes(),
+                "journal_service": sysactions.journal_service_usage(),
                 "journald_managed": _read_journald_block(),
                 "logrotate_rotate": _read_logrotate_rotate(),
-                "note": "env 级改动重启采样器后生效；journald/logrotate 级立即生效",
+                "note": self._t("ret.note"),
             }
         )
 
@@ -1060,7 +1092,7 @@ class Handler(BaseHTTPRequestHandler):
         action = str(body.get("action", ""))
         ok, msg = sysactions.service_action(action, cfg.helper)
         if not ok:
-            return self._err(500, msg or "动作失败")
+            return self._err(500, msg or self._t("svc.fail"))
         self._send_json({"ok": True, "action": action, "detail": msg})
 
     def _post_config(self) -> None:
@@ -1070,33 +1102,33 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(400, err)
         updates = body.get("updates")
         if not isinstance(updates, dict) or not updates:
-            return self._err(400, "updates 必须是非空 object")
+            return self._err(400, self._t("err.updates_obj"))
         clean = {str(k): str(v) for k, v in updates.items()}
         if not all(k.startswith("M20AI_") for k in clean):
-            return self._err(400, "只允许 M20AI_* 键")
+            return self._err(400, self._t("err.m20ai_only"))
         current = envfile.read_env(cfg.env_file)
         ok, errors = envfile.validate_env(current, clean)
         if not ok:
-            return self._err(400, "配置校验失败：" + "；".join(errors))
+            return self._err(400, self._t("err.validate", detail=self._sep("clause").join(errors)))
         try:
             envfile.set_env_keys(cfg.env_file, clean)
         except (OSError, ValueError) as exc:
-            return self._err(500, "写入 env 失败：%s" % exc)
+            return self._err(500, self._t("err.env_write", e=exc))
         restart = bool(body.get("restart", True))
-        detail = "已写入 env"
+        detail = self._t("cfg.written")
         if restart:
             # ADR-010：采集开关由用户掌握——配置改动只在采集运行时重启使其生效，
             # 采集关着时**不拉起**（旧行为会无条件 restart，把停着的采集启动）。
             active = sysactions.service_is_active()
             if active is True:
                 ok, msg = sysactions.service_action("restart", cfg.helper)
-                detail += "；已重启采集，改动生效" if ok else "；重启采集失败：%s" % msg
+                detail += self._t("cfg.restarted") if ok else self._t("cfg.restart_fail", msg=msg)
             elif active is False:
-                detail += "；采集未运行（不自动拉起），改动将在下次开启采集时生效"
+                detail += self._t("cfg.not_running")
             else:
-                detail += "；未能确认采集状态，请手动重启采集使改动生效"
+                detail += self._t("cfg.unknown_state")
         else:
-            detail += "；未重启（重启采集后生效）"
+            detail += self._t("cfg.no_restart")
         self._send_json({"ok": True, "detail": detail, "applied": sorted(clean)})
 
     def _post_detect(self) -> None:
@@ -1105,9 +1137,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
-            return self._err(400, "Content-Length 非法")
+            return self._err(400, self._t("err.cl_bad"))
         if length <= 0 or length > 20 * 1024 * 1024:
-            return self._err(400, "图片大小必须在 0-20MB")
+            return self._err(400, self._t("err.img_size"))
         jpeg = self.rfile.read(length)
         try:
             result = detect_single_frame(
@@ -1119,9 +1151,9 @@ class Handler(BaseHTTPRequestHandler):
                 clock_offset=self.server.cached_offset(),  # type: ignore[attr-defined]
             )
         except Exception as exc:
-            return self._err(500, "检测失败：%s" % exc)
+            return self._err(500, self._t("err.detect_fail", e=exc))
         if not result.get("ok"):
-            return self._err(502, result.get("error", "检测失败"))
+            return self._err(502, result.get("error") or self._t("err.detect_bad"))
         self._send_json(result)
 
     def _post_retention(self) -> None:
@@ -1145,7 +1177,7 @@ class Handler(BaseHTTPRequestHandler):
         if "save_mode" in body:
             mode = str(body["save_mode"]).strip().lower()
             if mode not in ("off", "alert", "any", "all"):
-                return self._err(400, "save_mode 必须是 off/alert/any/all 之一")
+                return self._err(400, self._t("err.save_mode"))
             env_updates["M20AI_SAVE_MODE"] = mode
         if "alert_labels" in body:
             raw = body["alert_labels"]
@@ -1159,14 +1191,14 @@ class Handler(BaseHTTPRequestHandler):
                     uniq.append(s)
             if len(uniq) > _LABEL_MAX:
                 return self._err(
-                    400, "关注目标最多 %d 个（当前填了 %d 个）" % (_LABEL_MAX, len(uniq))
+                    400,
+                    self._t("err.labels_max", max=_LABEL_MAX, n=len(uniq)),
                 )
             bad = [s for s in uniq if not _LABEL_RE.match(s)]
             if bad:
                 return self._err(
                     400,
-                    "标签只允许英文字母/数字/. _ -（最长 40 字符），非法：%s"
-                    % "、".join(bad[:5]),
+                    self._t("err.label_bad", bad=self._sep("enum").join(bad[:5])),
                 )
             env_updates["M20AI_ALERT_LABELS"] = ",".join(uniq)
         if "alert_score" in body:
@@ -1175,13 +1207,13 @@ class Handler(BaseHTTPRequestHandler):
             current = envfile.read_env(cfg.env_file)
             ok, errors = envfile.validate_env(current, env_updates)
             if not ok:
-                return self._err(400, "配置校验失败：" + "；".join(errors))
+                return self._err(400, self._t("err.validate", detail=self._sep("clause").join(errors)))
             try:
                 envfile.set_env_keys(cfg.env_file, env_updates)
             except (OSError, ValueError) as exc:
-                return self._err(500, "写入 env 失败：%s" % exc)
+                return self._err(500, self._t("err.env_write", e=exc))
             if not restart_collect:
-                notes.append("env 级已写入（重启采集后生效）")
+                notes.append(self._t("ret.env_written"))
 
         # ---- root 级（helper）----
         if "journal_vacuum" in body:
@@ -1192,7 +1224,7 @@ class Handler(BaseHTTPRequestHandler):
             ok, msg = sysactions.call_helper(
                 "journal-vacuum", fields, cfg.base_dir, cfg.helper
             )
-            notes.append(("journal vacuum 已执行" if ok else "vacuum 失败：%s" % msg))
+            notes.append(self._t("helper.vacuum_ok") if ok else self._t("helper.vacuum_fail", msg=msg))
         if "journald_limits" in body:
             fields = body["journald_limits"] or {}
             err = sysactions.check_journald_limits(fields)
@@ -1201,7 +1233,7 @@ class Handler(BaseHTTPRequestHandler):
             ok, msg = sysactions.call_helper(
                 "journald-limits", fields, cfg.base_dir, cfg.helper
             )
-            notes.append(("journald 上限已更新" if ok else "journald 更新失败：%s" % msg))
+            notes.append(self._t("helper.journald_ok") if ok else self._t("helper.journald_fail", msg=msg))
         if "logrotate_rotate" in body:
             fields = {"rotate": str(body["logrotate_rotate"])}
             err = sysactions.check_logrotate(fields)
@@ -1210,7 +1242,7 @@ class Handler(BaseHTTPRequestHandler):
             ok, msg = sysactions.call_helper(
                 "logrotate-rotate", fields, cfg.base_dir, cfg.helper
             )
-            notes.append(("logrotate 轮转数已更新" if ok else "logrotate 更新失败：%s" % msg))
+            notes.append(self._t("helper.logrotate_ok") if ok else self._t("helper.logrotate_fail", msg=msg))
 
         # ---- 数据清空（停采集 → 清空 → 恢复原状态；ADR-011）----
         kinds: List[str] = []
@@ -1218,13 +1250,18 @@ class Handler(BaseHTTPRequestHandler):
             raw_kinds = body["purge"]
             if not isinstance(raw_kinds, list) or not raw_kinds:
                 return self._err(
-                    400, "purge 必须是非空数组（可选：%s）" % "/".join(PURGE_SCOPES)
+                    400,
+                    self._t("err.purge_array", scopes="/".join(PURGE_SCOPES)),
                 )
             badk = [str(k) for k in raw_kinds if str(k) not in PURGE_SCOPES]
             if badk:
                 return self._err(
                     400,
-                    "purge 含未知类别：%s（可选：%s）" % ("、".join(badk), "/".join(PURGE_SCOPES)),
+                    self._t(
+                        "err.purge_kind",
+                        bad=self._sep("enum").join(badk),
+                        scopes="/".join(PURGE_SCOPES),
+                    ),
                 )
             for k in raw_kinds:
                 if str(k) not in kinds:
@@ -1233,7 +1270,7 @@ class Handler(BaseHTTPRequestHandler):
             kinds.append("spool")
         purged = False
         if kinds:
-            ok, msg = _purge_with_restart(cfg, kinds)
+            ok, msg = _purge_with_restart(cfg, kinds, lang=self._lang())
             if not ok:
                 return self._err(500, msg)
             notes.append(msg)
@@ -1247,17 +1284,17 @@ class Handler(BaseHTTPRequestHandler):
                 ok, msg = sysactions.service_action("restart", cfg.helper)
                 if ok:
                     notes.append(
-                        "已重启采集，env 级改动即时生效" if env_updates else "已重启采集"
+                        self._t("ret.restarted_env") if env_updates else self._t("ret.restarted")
                     )
                 else:
-                    notes.append("重启采集失败：%s（改动将在下次开启采集时生效）" % msg)
+                    notes.append(self._t("ret.restart_fail", msg=msg))
             elif active is False:
-                notes.append("采集未运行；env 级改动将在下次开启采集时生效")
+                notes.append(self._t("ret.not_running"))
             else:
-                notes.append("未能确认采集状态；请用上方「采集开关」重启采集使改动生效")
+                notes.append(self._t("ret.unknown_state"))
 
         if not notes:
-            return self._err(400, "没有可保存的项")
+            return self._err(400, self._t("err.nothing"))
         self._send_json({"ok": True, "notes": notes})
 
 

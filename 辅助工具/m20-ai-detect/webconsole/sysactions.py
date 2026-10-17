@@ -80,8 +80,70 @@ def journal_lines(n: int = 200, runner: Runner = default_runner) -> List[str]:
 
 
 def journal_disk_usage(runner: Runner = default_runner) -> str:
+    """`journalctl --disk-usage` 原始输出（整句英文原文）。
+
+    仅在需要原文时使用；界面展示请用 journal_disk_bytes()（结构化、可本地化）。
+    """
     rc, out, _ = runner(["journalctl", "--disk-usage"], 15)
     return out.strip() if rc == 0 else "unknown"
+
+
+# journalctl --disk-usage 的英文原文形如：
+#   "Archived and active journals take up 208.0M in the file system."
+# 注意：原文单位**不带 B**（`M`/`K`/`G`），但也兼容带 B 的写法（`MB`/`KB`）与
+# 无单位（纯 B）。解析出字节数交给前端按语言渲染（ADR-013：界面不直接展示系统英文原文）。
+_DU_RE = re.compile(
+    r"(?P<size>\d+(?:\.\d+)?)\s*(?P<unit>B|[KMGTP]B?)\b", re.IGNORECASE
+)
+_DU_UNIT = {
+    "B": 1,
+    "K": 1024, "KB": 1024,
+    "M": 1024 ** 2, "MB": 1024 ** 2,
+    "G": 1024 ** 3, "GB": 1024 ** 3,
+    "T": 1024 ** 4, "TB": 1024 ** 4,
+    "P": 1024 ** 5, "PB": 1024 ** 5,
+}
+
+
+def journal_disk_bytes(runner: Runner = default_runner) -> Optional[int]:
+    """解析 journal 占用字节数；失败/无法解析返回 None（前端显示 –）。
+
+    保留 float→int 的中间步骤：原文是 "208.0M" 这类带小数的可读值。
+    ⚠️ `journalctl --disk-usage` **会忽略 -u 等过滤器**（systemd 明确行为），
+    返回值是**整机**所有单元的合计——要区分"本服务占多少"请用
+    journal_service_usage()（按行数/文本量估算）。
+    """
+    rc, out, _ = runner(["journalctl", "--disk-usage"], 15)
+    if rc != 0:
+        return None
+    m = _DU_RE.search(out)
+    if not m:
+        return None
+    unit = m.group("unit").upper()
+    if unit not in _DU_UNIT:
+        return None
+    return int(round(float(m.group("size")) * _DU_UNIT[unit]))
+
+
+def journal_service_usage(
+    unit: str = "m20-ai-detect", runner: Runner = default_runner
+) -> Optional[Dict[str, int]]:
+    """单个 unit 在 journal 里的体量估算：{"lines": N, "bytes": M}。
+
+    journal 文件按时间分片、各单元混写，**没有**"某 unit 占多少磁盘"的官方命令，
+    这里用 `journalctl -u <unit> -o cat` 的输出做文本量估算（未计压缩，只作量级参考）。
+    失败返回 None。用于解释"整机 journal 里本服务占多少"（实测：m20-ai-detect
+    仅约 0.2%，大头是厂商 rsdriver 驱动日志）。
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_.@-]+", unit):
+        return None
+    rc, out, _ = runner(
+        ["journalctl", "-u", unit, "--no-pager", "-o", "cat"], 20
+    )
+    if rc != 0:
+        return None
+    lines = sum(1 for ln in out.splitlines() if ln.strip())
+    return {"lines": lines, "bytes": len(out.encode("utf-8"))}
 
 
 # ---------------------------------------------------------------- helper 请求

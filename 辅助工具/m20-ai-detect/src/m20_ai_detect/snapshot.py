@@ -61,15 +61,28 @@ def _fresh_window(cfg: Config) -> float:
     return max(5.0, FRESH_FACTOR / max(cfg.fps, 0.2))
 
 
-def _pick_cam(cfg: Config, name: Optional[str]) -> Tuple[Optional[Camera], Optional[str]]:
+def _pick_cam(
+    cfg: Config, name: Optional[str]
+) -> Tuple[Optional[Camera], str, str, Dict[str, Any]]:
+    """按名字取相机；失败返回 (None, 错误文案, code, 文案参数)。
+
+    ``code`` 供 webconsole 做中英映射（ADR-013）；``error`` 保留中文原文，
+    供 CLI / 其它调用方与单测使用。
+    """
     if not cfg.cameras:
-        return None, "没有启用任何相机（在「相机与采集」里勾选前视/后视后保存）"
+        return None, "没有启用任何相机（在「相机与采集」里勾选前视/后视后保存）", "no_cameras", {}
     if not name:
-        return cfg.cameras[0], None
+        return cfg.cameras[0], "", "", {}
     for cam in cfg.cameras:
         if cam.name == name:
-            return cam, None
-    return None, "未知相机 %s（可用：%s）" % (name, "、".join(c.name for c in cfg.cameras))
+            return cam, "", "", {}
+    names = [c.name for c in cfg.cameras]
+    return (
+        None,
+        "未知相机 %s（可用：%s）" % (name, "、".join(names)),
+        "unknown_cam",
+        {"cam": name, "cams": names},  # cams 给 list，由调用方按语言拼分隔符
+    )
 
 
 def _ring_latest(cfg: Config, cam: Camera) -> Optional[Tuple[str, float]]:
@@ -147,11 +160,12 @@ def snapshot_frame(
     """取一帧「相机画面」（``grabber`` / ``now`` 可注入，测试用）。
 
     返回 ``{"ok": True, cam, src, source, age_s, frame, image}``
-    或 ``{"ok": False, error[, bad_request]}``。
+    或 ``{"ok": False, error, bad_request, code[, cam/cams/src]}``
+    （``code`` 供 webconsole 做中英映射，ADR-013）。
     """
-    cam, err = _pick_cam(cfg, cam_name)
+    cam, err, code, params = _pick_cam(cfg, cam_name)
     if cam is None:
-        return {"ok": False, "error": err, "bad_request": True}
+        return {"ok": False, "error": err, "bad_request": True, "code": code, **params}
     clock = now or time.monotonic
     wall = time.time()
     grabber = grabber or _grab_jpeg
@@ -176,4 +190,9 @@ def snapshot_frame(
             age = wall - latest[1]
             return _pack(cam, jpeg, "stale", age, os.path.basename(latest[0]))
 
-    return {"ok": False, "error": "抓帧失败：源不可达且无历史帧（%s）" % cam.src}
+    return {
+        "ok": False,
+        "error": "抓帧失败：源不可达且无历史帧（%s）" % cam.src,
+        "code": "grab_failed",
+        "src": cam.src,
+    }

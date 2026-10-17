@@ -135,6 +135,8 @@ class TestSnapshotFrame(unittest.TestCase):
         self.assertFalse(out["ok"])
         self.assertIn("抓帧失败", out["error"])
         self.assertFalse(out.get("bad_request"))
+        self.assertEqual(out["code"], "grab_failed")
+        self.assertEqual(out["src"], "rtsp://10.21.31.103:8554/video1")
 
     # ---- 参数校验 ----
 
@@ -143,11 +145,16 @@ class TestSnapshotFrame(unittest.TestCase):
         self.assertFalse(out["ok"])
         self.assertTrue(out.get("bad_request"))
         self.assertIn("可用", out["error"])
+        # webconsole 靠 code 做中英映射（ADR-013）
+        self.assertEqual(out["code"], "unknown_cam")
+        self.assertEqual(out["cam"], "nope")
+        self.assertEqual(out["cams"], ["front"])
 
     def test_no_cameras_is_bad_request(self):
         out = snapshot.snapshot_frame(Config(base_dir=self.base))
         self.assertFalse(out["ok"])
         self.assertTrue(out.get("bad_request"))
+        self.assertEqual(out["code"], "no_cameras")
 
     def test_default_cam_is_first(self):
         self._put_raw(0.5)

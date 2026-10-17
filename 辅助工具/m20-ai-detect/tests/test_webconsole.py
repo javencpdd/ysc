@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -195,6 +196,83 @@ class TestSysactions(unittest.TestCase):
         self.assertTrue(sysactions.check_journald_limits({"SystemMaxUse": "xx"}))
         self.assertTrue(sysactions.check_logrotate({"rotate": "0"}))
         self.assertTrue(sysactions.check_logrotate({"rotate": "999"}))
+
+
+class TestJournalDiskBytes(unittest.TestCase):
+    """journalctl --disk-usage 英文原文 → 字节数（前端按语言渲染，ADR-013 延伸）。
+
+    真实原文形如 "Archived and active journals take up 208.0M in the file system."
+    """
+
+    def _runner(self, out, rc=0):
+        return lambda cmd, t=15.0: (rc, out, "")
+
+    def test_parses_english_sentence(self):
+        r = self._runner(
+            "Archived and active journals take up 208.0M in the file system.\n"
+        )
+        self.assertEqual(
+            sysactions.journal_disk_bytes(r), int(208.0 * 1024 * 1024)
+        )
+
+    def test_parses_all_units(self):
+        cases = [
+            ("16.0K in the file system.", 16 * 1024),
+            ("208.0M in the file system.", 208 * 1024 ** 2),
+            ("1.5G in the file system.", int(round(1.5 * 1024 ** 3))),
+            ("2.0T in the file system.", 2 * 1024 ** 4),
+            ("512B in the file system.", 512),
+        ]
+        for text, want in cases:
+            r = self._runner(text)
+            self.assertEqual(sysactions.journal_disk_bytes(r), want, text)
+
+    def test_parses_kb_mb_gb_spelled_out(self):
+        r = self._runner("Archived and active journals take up 4.0KB in the file system.")
+        self.assertEqual(sysactions.journal_disk_bytes(r), 4096)
+        r = self._runner("Archived and active journals take up 3.0GB in the file system.")
+        self.assertEqual(sysactions.journal_disk_bytes(r), 3 * 1024 ** 3)
+
+    def test_does_not_match_other_numbers(self):
+        """句子里出现别的数字（如 208.0M）时仍取带单位的那一个。"""
+        r = self._runner("vacuuming 3 files, 208.0M total in the file system.")
+        self.assertEqual(sysactions.journal_disk_bytes(r), 208 * 1024 ** 2)
+
+    def test_returns_none_on_failure(self):
+        self.assertIsNone(sysactions.journal_disk_bytes(self._runner("", rc=1)))
+
+    def test_returns_none_on_unparseable(self):
+        self.assertIsNone(sysactions.journal_disk_bytes(self._runner("no size here\n")))
+
+    def test_raw_text_still_available(self):
+        """保留原文接口（日志/排障可能要用整句）。"""
+        r = self._runner("Archived and active journals take up 208.0M in the file system.\n")
+        self.assertIn("Archived and active", sysactions.journal_disk_usage(r))
+
+
+class TestJournalServiceUsage(unittest.TestCase):
+    """单个 unit 的 journal 体量估算（解释"208MB 里本服务占多少"）。"""
+
+    def test_counts_lines_and_bytes(self):
+        out = "line one\nline two\n\nline three\n"
+        r = lambda cmd, t=20.0: (0, out, "")  # noqa: E731
+        got = sysactions.journal_service_usage("m20-ai-detect", r)
+        self.assertEqual(got["lines"], 3)          # 空行不计
+        self.assertEqual(got["bytes"], len(out.encode("utf-8")))
+        self.assertEqual(got["bytes"], 30)
+
+    def test_passes_unit_argument(self):
+        seen = []
+        def r(cmd, t=20.0):
+            seen.append(cmd)
+            return (0, "x\n", "")
+        sysactions.journal_service_usage("m20-ai-console", r)
+        self.assertEqual(seen[0][:3], ["journalctl", "-u", "m20-ai-console"])
+        self.assertIn("--no-pager", seen[0])
+
+    def test_returns_none_on_failure_or_bad_unit(self):
+        self.assertIsNone(sysactions.journal_service_usage("m20-ai-detect", lambda c, t=20.0: (1, "", "err")))
+        self.assertIsNone(sysactions.journal_service_usage("bad;rm -rf", lambda c, t=20.0: (0, "x", "")))
 
 
 class TestPurgeWithRestart(unittest.TestCase):
@@ -427,10 +505,53 @@ class TestHTTP(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read().decode("utf-8"))
 
+    def _req(self, path, obj=None, headers=None):
+        """带自定义请求头的 GET/POST（ADR-013：X-Lang 中英适配用）。"""
+        h = dict(headers or {})
+        if obj is None:
+            req = urllib.request.Request(
+                "http://127.0.0.1:%d%s" % (self.port, path), headers=h
+            )
+        else:
+            req = urllib.request.Request(
+                "http://127.0.0.1:%d%s" % (self.port, path),
+                data=json.dumps(obj).encode("utf-8"),
+                headers=dict({"Content-Type": "application/json"}, **h),
+                method="POST",
+            )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.status, json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode("utf-8"))
+
     def test_index_served_without_token(self):
         with urllib.request.urlopen("http://127.0.0.1:%d/" % self.port, timeout=5) as r:
             body = r.read().decode("utf-8")
         self.assertIn("m20-ai-console", body)
+
+    def test_status_api_returns_bytes_not_english(self):
+        """HTTP 层：/api/status 给 journal_bytes（数字），不再给英文整句。"""
+        jd = mock.patch.object(
+            server.sysactions, "journal_disk_bytes",
+            return_value=int(208.0 * 1024 * 1024),
+        )
+        jd.start()
+        self.addCleanup(jd.stop)
+        st, d = self._get("/api/status")
+        self.assertEqual(st, 200)
+        self.assertIn("journal_bytes", d)
+        self.assertNotIn("journal_usage", d)
+        self.assertEqual(d["journal_bytes"], int(208.0 * 1024 * 1024))
+        self.assertNotIn("Archived and active journals", json.dumps(d))
+
+    def test_status_api_journal_bytes_none_when_unavailable(self):
+        jd = mock.patch.object(server.sysactions, "journal_disk_bytes", return_value=None)
+        jd.start()
+        self.addCleanup(jd.stop)
+        st, d = self._get("/api/status")
+        self.assertEqual(st, 200)
+        self.assertIsNone(d["journal_bytes"])
 
     def test_status_shape(self):
         st, d = self._get("/api/status")
@@ -488,6 +609,31 @@ class TestHTTP(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self._get("/api/snapshot?cam=nope")
         self.assertEqual(ctx.exception.code, 400)
+
+    # ---- 中英适配（ADR-013：X-Lang 头决定语言，默认 zh）----
+
+    def test_retention_note_localized_en(self):
+        st, d = self._req("/api/retention", headers={"X-Lang": "en"})
+        self.assertEqual(st, 200)
+        self.assertIn("apply immediately", d["note"])
+        st2, d2 = self._req("/api/retention")
+        self.assertIn("env 级改动重启采样器后生效", d2["note"])
+
+    def test_config_detail_localized_en(self):
+        with mock.patch.object(server.sysactions, "service_is_active", return_value=False):
+            st, d = self._req(
+                "/api/config", {"updates": {"M20AI_FPS": "2"}}, headers={"X-Lang": "en"}
+            )
+        self.assertEqual(st, 200)
+        self.assertIn("Saved to env", d["detail"])
+        self.assertIn("not auto-started", d["detail"])
+
+    def test_snapshot_error_localized_en(self):
+        st, d = self._req("/api/snapshot?cam=nope", headers={"X-Lang": "en"})
+        self.assertEqual(st, 400)
+        self.assertIn("Unknown camera", d["error"])
+        # 分隔符也随语言：英文消息里不许出现中文顿号
+        self.assertNotIn("、", d["error"])
 
     def test_logs_filtered(self):
         st, d = self._get("/api/logs?level=alert")
@@ -1264,3 +1410,164 @@ class TestRetentionUnitRoundTrip(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestI18nDict(unittest.TestCase):
+    """ADR-013：index.html 内嵌 i18n JSON——双语键集合一致、无漏译、无死键。"""
+
+    @classmethod
+    def setUpClass(cls):
+        path = os.path.join(os.path.dirname(server.__file__), "static", "index.html")
+        with open(path, encoding="utf-8") as fh:
+            cls.html = fh.read()
+
+    def _dict(self):
+        m = re.search(
+            r'<script type="application/json" id="i18n-data">(.*?)</script>',
+            self.html,
+            re.S,
+        )
+        self.assertIsNotNone(m, "index.html 缺少 i18n-data JSON 块")
+        return json.loads(m.group(1))
+
+    def test_langs_key_sets_match_and_non_empty(self):
+        data = self._dict()
+        self.assertEqual(set(data), {"zh", "en"})
+        self.assertEqual(set(data["zh"]), set(data["en"]))
+        for lang in ("zh", "en"):
+            for key, val in data[lang].items():
+                self.assertTrue(
+                    isinstance(val, str) and val.strip(),
+                    "%s.%s 为空或不是字符串" % (lang, key),
+                )
+
+    def test_referenced_keys_exist_and_no_dead_keys(self):
+        zh = self._dict()["zh"]
+        used = set(re.findall(r'data-i18n(?:-ph|-title|-html)?="([^"]+)"', self.html))
+        used |= set(re.findall(r'(?<![A-Za-z0-9_$])t\("([^"]+)"', self.html))
+        # JS 里按三元动态引用（静态扫不到）：关注目标 chip 文案、
+        # 折叠按钮文案与「全部折叠/展开」按钮文案（随折叠状态切换）
+        used |= {
+            "alert.chip_on", "alert.chip_off",
+            "card.fold", "card.unfold",
+            "top.fold_all", "top.fold_all_title",
+            "top.unfold_all", "top.unfold_all_title",
+        }
+        self.assertEqual(used - set(zh), set(), "有引用了字典里不存在的键")
+        self.assertEqual(set(zh) - used, set(), "字典里有从未被引用的死键")
+
+    def test_retention_card_two_buttons_not_confusable(self):
+        """ADR-014：留存卡两个按钮必须语义互斥（容量/时长 vs 留存条件）。
+
+        两个按钮曾经都叫「保存…（重启后生效）」，用户按错后无效改动不显著，
+        故固化：文案互不相同、分别点明各自维度、且都不含对方的命名。
+        """
+        d = self._dict()
+        for lang, words in (("zh", ("容量", "留存条件")), ("en", ("quota", "mode"))):
+            save_env = d[lang]["ret.save_env"]
+            save_mode = d[lang]["ret.save_mode_btn"]
+            self.assertNotEqual(save_env, save_mode, "%s 两个按钮文案相同" % lang)
+            self.assertIn(words[0], save_env.lower(), "%s save_env 未点明容量/时长" % lang)
+            self.assertIn(words[1], save_mode.lower(), "%s save_mode btn 未点明留存条件" % lang)
+            self.assertNotEqual(
+                save_env, save_mode.replace(words[1], words[0]), "%s 文案仅关键词互换" % lang
+            )
+        # 说明性 note 双语都在，且点明各自只管一段
+        zh = d["zh"]
+        self.assertIn("raw/、results/ 与此无关", zh["ret.cond_note"])
+        self.assertIn("四个互不相干的维度", zh["ret.quota_note"])
+        for key in ("ret.sec_cond", "ret.cond_note", "ret.sec_quota", "ret.quota_note"):
+            self.assertTrue(zh[key].strip() and d["en"][key].strip(), "%s 有空值" % key)
+        # 两个 note 的 i18n-html 标记都落在页面上（不是只进词典的死键）
+        self.assertIn('data-i18n-html="ret.cond_note"', self.html)
+        self.assertIn('data-i18n-html="ret.quota_note"', self.html)
+        self.assertIn('data-i18n="ret.sec_cond"', self.html)
+        self.assertIn('data-i18n="ret.sec_quota"', self.html)
+        # 两个按钮各自只调自己的保存函数
+        self.assertIn('onclick="saveSaveMode()" data-i18n="ret.save_mode_btn"', self.html)
+        self.assertIn('onclick="saveEnvRetention()" data-i18n="ret.save_env"', self.html)
+
+
+class TestCardFold(unittest.TestCase):
+    """卡片折叠（ADR-015）：data-fold 键唯一、CSS/JS 钩子齐全、记忆键稳定（与语言无关）。"""
+
+    EXPECTED = {
+        "svc", "recent", "snap", "tl", "fb", "cfg", "cam", "alert", "single", "log", "ret",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        path = os.path.join(os.path.dirname(server.__file__), "static", "index.html")
+        with open(path, encoding="utf-8") as fh:
+            cls.html = fh.read()
+
+    def test_every_target_card_has_unique_fold_key(self):
+        # 只扫 HTML 标签（JS 里也有 '.card[data-fold="' + key + '"]' 拼接，不参与）
+        keys = re.findall(r'<div class="card[^">]*"[^>]*data-fold="([^"]+)"', self.html)
+        self.assertEqual(set(keys), self.EXPECTED, "折叠键集合与预期不符")
+        self.assertEqual(len(keys), len(set(keys)), "折叠键有重复")
+
+    def test_css_hides_body_when_collapsed(self):
+        # 必须带 !important：卡片内图片由 JS 写行内 style.display（如 snapLoad），
+        # 行内优先级更高，不加 !important 折叠后画面会露出来（v0.8.3 bug）
+        self.assertIn(".card.collapsed > *:not(h2){display:none !important}", self.html)
+        # 标题栏内也收敛：只留标题 + 状态徽标（.tag）；说明与工具条按钮组一并隐藏
+        self.assertIn(".card.collapsed h2 .row{display:none !important}", self.html)
+        self.assertIn(".card.collapsed h2 .note{display:none !important}", self.html)
+        self.assertIn(".card h2 .fold{", self.html)
+
+    def test_inline_display_writers_are_known(self):
+        """存在写行内 display 的 JS（折叠规则必须能压过它）——锁住这个前提。"""
+        self.assertIn('img.style.display = "block"', self.html)
+        self.assertIn('img.style.display = "none"', self.html)
+
+    def test_js_hooks_present(self):
+        for fn in ("function initFolds(", "function setFold(", "function toggleAllFolds(",
+                   "function isFolded(", "function syncFoldAllBtn("):
+            self.assertIn(fn, self.html, "缺少 %s" % fn)
+        # 记忆键必须与语言无关（用 data-fold 恒定英文键，不是标题文本）
+        self.assertIn('var FOLD_KEY = "m20ai-fold"', self.html)
+        self.assertIn('localStorage.setItem(FOLD_KEY + "-" + foldId(card)', self.html)
+        # 初始化顺序：先注入按钮再 applyI18n（否则 title 不会本地化）
+        self.assertIn("initFolds();\napplyI18n();", self.html)
+
+    def test_fold_pauses_polling(self):
+        """折叠卡片时暂停其自动刷新（截图/日志/时间轴），页面隐藏仍照旧暂停。"""
+        self.assertIn('''
+setInterval(function(){ if (!document.hidden && !isFolded("snap") && el("snap-auto").checked) snapLoad(); }, 3000);''', self.html)
+        self.assertIn('!isFolded("log")', self.html)
+        self.assertIn('!isFolded("tl")', self.html)
+        self.assertIn('!isFolded("recent")', self.html)
+
+    def test_h2_never_carries_data_i18n(self):
+        """v0.8.5 起：卡片标题 h2 自身不得带 data-i18n。
+
+        applyI18n 会对带 data-i18n 的元素整块重写 textContent——若挂在 h2 上，
+        注入的折叠按钮会作为子节点被清掉，折叠后无法再单独展开
+        （2026-10-17 实测：检测配置/相机与采集/关注目标/日志与数据留存策略）。
+        标题一律用 <span data-i18n=...> 包裹。
+        """
+        self.assertNotIn("<h2 data-i18n", self.html, "h2 不能直接带 data-i18n")
+        self.assertNotIn("<h2 data-i18n-html", self.html)
+        # 每张可折叠卡的 h2 内都要有 .fold（要么静态存在，要么运行期注入后存在）
+        for key in self.EXPECTED:
+            m = re.search(r'data-fold="%s"' % key, self.html)
+            self.assertIsNotNone(m, "缺少 data-fold=%s" % key)
+
+    def test_apply_i18n_rebuilds_fold_buttons(self):
+        """防御逻辑必须存在：applyI18n 末尾幂等重建折叠按钮。"""
+        m = re.search(r"function applyI18n\(\)\{(.*?)\n\}", self.html, re.S)
+        self.assertIsNotNone(m)
+        body = m.group(1)
+        self.assertIn("initFolds();", body, "applyI18n 未重建折叠按钮（防御缺失）")
+        self.assertIn("syncFoldAllBtn();", body)
+        # initFolds 必须幂等（已有按钮则跳过），否则每次 applyI18n 都会叠加按钮
+        m2 = re.search(r"function initFolds\(\)\{(.*?)\n\}", self.html, re.S)
+        self.assertIn('h2.querySelector(".fold")', m2.group(1))
+
+    def test_fold_buttons_are_real_buttons_not_dead_keys(self):
+        zh = json.loads(re.search(
+            r'<script type="application/json" id="i18n-data">(.*?)</script>', self.html, re.S
+        ).group(1))["zh"]
+        for k in ("card.fold", "card.unfold", "top.fold_all", "top.unfold_all"):
+            self.assertTrue(zh[k].strip(), "%s 为空" % k)

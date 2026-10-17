@@ -10,7 +10,11 @@
 - **目标图片时间轴与留存清理（ADR-008）**：留存时写入真实时间 `_saved_at`，控制台"目标图片时间轴"卡片滑动时间条回看检出图；`saved/` 按总量上限/天数自动清理
 - **单位语义与启动行为（ADR-010）**：数值字段**带不带单位都行**（体积裸数字=MB、时长裸数字=天，支持 K/M/G/T 与 s/m/h/d/w，非法单位明确报错）；**启动只起控制台**，采集默认关闭由网页「采集开关」或 `aiDetect collect on|off` 控制（`--all` 已移除）
 - **关注目标与数据清空（ADR-011）**：网页「关注目标」卡可视化编辑"只保存哪些目标"（`alert` 模式 = 只存命中关注目标的帧，今日检出标签一键点选）；留存卡「清理数据」可一键清空 `saved/`/`results/`/`raw/`/`spool/`（停采集仅当运行中，清完恢复原状态，绝不拉起停着的采集）
-- **相机画面（ADR-012）**：控制台「相机画面」卡实时看当前相机——采集运行中显示采样器**当前帧**（即检测器输入本身，零额外开销），未运行则从同一路 RTSP **即时抓帧**兜底；自动刷新 3 秒、页签隐藏自动暂停
+- **相机画面（ADR-012）**：控制台「相机画面」卡实时看当前相机——采集运行中显示采样器**当前帧**（即检测器输入本身，零额外开销），未运行则从同一路 RTSP **即时抓帧**兜底；自动刷新 3 秒、页签隐藏自动暂停；**取不到实时帧时红色告警「视频源不可达」**（旧帧置暗 + 按采集状态给出排查指向，不误导为"画面卡住"）
+- **界面中英适配（ADR-013）**：控制台顶栏**中文/EN 一键切换**（localStorage 记忆，默认中文）——静态界面 + JS 拼装文案 + 接口返回的 detail/notes/错误全部随语言切换，单测保证双语词典键集合一致、无漏译
+- **留存卡按钮语义澄清（ADR-014）**：留存策略卡原有两个都叫「保存…（重启后生效）」的按钮（容量/时长 vs 留存条件）易被按错；已拆成 ①留存条件 / ②容量与时长 两节并各自紧贴自己的保存按钮，按钮文案点明维度、说明 note 写清"只管哪一段、与什么无关"，并有单测固化两按钮文案不可混淆
+- **指标卡口径统一 + journal 归位（ADR-013 延伸，v0.8.2 / v0.8.6）**：顶栏第五项由「journal 占用」改为「**检测数据**」——显示 `raw+results+saved+spool` 合计与四项明细，与留存卡「清理数据」的占用**逐项对得上**（此前 journal 的 200 MB 与下方 KB 级数字并列，易被误读成"同一本账"）。整机 journal 大小移到「日志与数据留存策略」卡的 **journal 区**（它本来就在那里被 vacuum / `SystemMaxUse` 管理），并给出构成：`当前整机 journal ≈ 200.0 MB（含所有 systemd 单元；本服务 m20-ai-detect 仅 385 行 ≈ 26 KB，大头是厂商 rsdriver 等系统服务）`。⚠️ 两个事实：`journalctl --disk-usage` **会忽略 `-u` 等过滤器**（返回值必为整机合计），"本服务占多少"只能用 `journalctl -u X -o cat` 的文本量估算（`sysactions.journal_service_usage()`）
+- **卡片折叠（ADR-015）**：每张卡片标题右侧一个 ▾ 按钮可折叠/展开，**顶栏「全部折叠 / 全部展开」**一键切换；折叠态**只剩「标题 + 状态徽标」一行**（说明文字、工具条按钮组、图片、状态行全部隐藏——用 `!important` 压过图片的 JS 行内 `style.display`，见 ADR-015 修订记录）；折叠状态按 `localStorage`（键 `m20ai-fold-<卡片键>`，**与语言无关**）记忆，刷新/换语言后保持；**折叠时自动暂停该卡片的后台轮询**（相机画面 3s / 运行日志 4s / 时间轴 15s / 最近检测 5s），展开即恢复——不再为一个看不见的卡片持续拉流
 - **受限只读文件浏览（ADR-009）**：`/api/files` + `/api/file` 可在浏览器里浏览/预览/下载 `saved/`、`raw/`、`results/`、`spool/`、`log/` 五个数据目录；白名单 + 两级路径校验，大文本走 `tail` 读末尾
 - **使用手册**：`USAGE.md`（日常查看/服务管理/配置调整/JSONL 读取，面向使用者）
 - **上位方案文档**：`辅助工具/M20视频流AI检测-接入测试与实施方案.md`（架构/实测基线/验证步骤）
@@ -55,12 +59,13 @@ m20-ai-detect/
 │   ├── __init__.py                #   __version__ = 0.7.0（与 sampler 同号）
 │   ├── __main__.py                #   python3 -m webconsole 入口（systemd ExecStart 调它）
 │   ├── envfile.py                 #   env 文件读取/就地改写/整份校验（纯逻辑）
+│   ├── i18n.py                    #   中英文案目录（X-Lang 请求头驱动，ADR-013）
 │   ├── sysactions.py              #   systemctl/journalctl/helper 动作封装 + 值格式预校验
 │   ├── logfilter.py               #   journal 行解析/级别分类/过滤（纯逻辑）
 │   ├── server.py                  #   HTTP 壳：JSON API + 静态页 + 单帧检测 + 最近记录/响应详情 + 相机画面快照
 │   └── static/index.html          #   单页前端（原生 JS，亮/暗双主题，token 可选）
 │
-├── tests/                         # unittest（非 pytest），222 项，含本地假 AI 服务端到端
+├── tests/                         # unittest（非 pytest），249 项，含本地假 AI 服务端到端
 │   ├── test_config.py             #   默认值/校验/禁用关键词/凭据打码/时钟偏移/保留天数/SAVE_MODE
 │   ├── test_detect.py             #   multipart 结构/HTTP 错误/网络错误/Date 头/时钟测量
 │   ├── test_store.py              #   JSONL/环形删最旧/告警帧/results 保留清理/save_pair 留存
@@ -95,7 +100,10 @@ m20-ai-detect/
     ├── ADR-009-受限只读文件浏览.md   #   /api/files + /api/file：五目录白名单、两级路径校验、tail 读大文本
     ├── ADR-010-配置单位语义与启动行为.md # 裸数字=默认单位（体积MB/时长天）、up只起控制台、采集默认关闭
     ├── ADR-011-关注目标与数据清空.md # 关注目标=告警+alert 留存过滤（网页可编辑）；purge 清空 saved/results/raw/spool
-    └── ADR-012-相机画面预览.md      #   单帧快照：raw 最新帧优先 / ffmpeg 即时抓帧兜底；「相机画面」卡自动刷新
+    ├── ADR-012-相机画面预览.md      #   单帧快照：raw 最新帧优先 / ffmpeg 即时抓帧兜底；「相机画面」卡自动刷新
+    ├── ADR-013-控制台界面中英适配.md #   X-Lang 请求头 + 前端 i18n JSON（217 键）；顶栏中文/EN 切换；词典一致性单测
+    ├── ADR-014-留存卡按钮语义澄清.md #   ①留存条件 / ②容量与时长 分节；按钮文案点明维度；不可混淆单测
+    └── ADR-015-卡片折叠.md          #   每卡 ▾ 折叠 + 顶栏全部折叠/展开；状态记 localStorage；折叠暂停轮询
 ```
 
 ### 运行时数据目录（部署后由 `Store` 自动创建，已 gitignore）
@@ -162,7 +170,7 @@ m20-ai-detect/
 
 ### 3.1 单仓库单版本号
 
-- 版本号唯一来源：`src/m20_ai_detect/__init__.py` 的 `__version__`（当前 `0.7.0`；`webconsole/__init__.py` 同步同号）。
+- 版本号唯一来源：`src/m20_ai_detect/__init__.py` 的 `__version__`（当前 `0.8.6`；`webconsole/__init__.py` 同步同号）。
 - `pyproject.toml` 不重复写版本；`python3 -m m20_ai_detect --version` 可直接核对远端部署的是哪一版。
 - 版本语义：`0.x` 期表示接口（JSONL 字段、CLI 子命令）仍可能调；`1.0` 锁定 JSONL `v` 字段 schema。
 
@@ -250,7 +258,7 @@ make deploy-doctor               # 远端真实环境跑，这才是门禁
 
 ### 4.5 可视化控制台（ADR-005）
 
-浏览器打开 **`http://10.21.31.104:5050`**（GOS 内网），零依赖单页：状态总览、服务启停、**相机画面（采集运行中=采样器当前帧、未运行=即时抓帧，ADR-012）**、**目标图片时间轴（滑动时间条回看检出图，ADR-008）**、**数据文件只读浏览（五个数据目录，ADR-009）**、日志查看（级别过滤/搜索/自动刷新/着色）、检测能力与参数编辑（保存即写 env；采集运行中自动重启生效，停着的不拉起）、单帧检测（上传图→AI→结果图）、相机/采集配置、**关注目标（告警 + alert 留存过滤，今日检出标签一键点选，ADR-011）**、留存策略（journal 清理、ring、results keep days、saved/ 上限与天数、logrotate）、**数据清理（勾选清空 saved/results/raw/spool；停采集仅当运行中、清完恢复原状态，ADR-011）**。
+浏览器打开 **`http://10.21.31.104:5050`**（GOS 内网），零依赖单页：状态总览、服务启停、**中英切换（顶栏 中文/EN，ADR-013）**、**相机画面（采集运行中=采样器当前帧、未运行=即时抓帧，ADR-012）**、**目标图片时间轴（滑动时间条回看检出图，ADR-008）**、**数据文件只读浏览（五个数据目录，ADR-009）**、日志查看（级别过滤/搜索/自动刷新/着色）、检测能力与参数编辑（保存即写 env；采集运行中自动重启生效，停着的不拉起）、单帧检测（上传图→AI→结果图）、相机/采集配置、**关注目标（告警 + alert 留存过滤，今日检出标签一键点选，ADR-011）**、留存策略（两区：①留存条件 `SAVE_MODE`／②容量与时长 ring·results·saved 上限与天数，各配自己的保存按钮，ADR-014；另有 journal 清理/logrotate）、**数据清理（勾选清空 saved/results/raw/spool；停采集仅当运行中、清完恢复原状态，ADR-011）**。
 
 **只读文件浏览（ADR-009）**：控制台"数据文件（只读浏览）"卡片可逐级点开 `saved/`、`raw/`、`results/`、`spool/`、`log/`，点文件即预览（图片直接显示，文本读末尾 N 行），并提供下载直链。也可直接调接口：
 
@@ -261,7 +269,7 @@ GET /api/file?path=&tail=&dl=1         # 读单文件（tail=末尾行数，dl=1
 
 安全边界：白名单根 `FILE_ROOTS = ("saved","raw","results","spool","log")`，路径逐段校验（禁 `..`、禁绝对路径、首段必须在白名单内）+ `realpath` 前缀比对（防符号链接越界）；整读上限 32 MB，超过必须改用 `tail`。工程代码与 env 一律不可达（已由单测固化）。
 
-**相机画面（ADR-012）**：控制台"相机画面"卡显示当前相机一帧并每 3 秒自动刷新（页签隐藏自动暂停）。接口 `GET /api/snapshot?cam=front`（返回 base64 JPEG + 来源标注）：采集运行中直接取 `raw/` 最新帧——**就是检测器刚处理过的画面**、零额外开销；采集未运行则用 `ffmpeg` 从同一路 RTSP 即时抓帧（成功 1.5 s / 失败 3 s 短缓存防连击、8 s 超时、抓完即退）；再失败则兜底显示环形缓冲最近一帧并如实标注"已定格 N 前"。
+**相机画面（ADR-012）**：控制台"相机画面"卡显示当前相机一帧并每 3 秒自动刷新（页签隐藏自动暂停）。接口 `GET /api/snapshot?cam=front`（返回 base64 JPEG + 来源标注）：采集运行中直接取 `raw/` 最新帧——**就是检测器刚处理过的画面**、零额外开销；采集未运行则用 `ffmpeg` 从同一路 RTSP 即时抓帧（成功 1.5 s / 失败 3 s 短缓存防连击、8 s 超时、抓完即退）；**抓帧也失败时兜底显示环形缓冲最近一帧，但明确标红「⚠ 视频源不可达」**（旧帧置暗 40%、列出 RTSP 源与帧龄、按采集开关状态给出排查指向，2026-10-17 修订——起因见 ADR-012 修订记录：USB 相机掉线后"定格旧帧"曾被误当"画面卡住"）。
 
 **UI 与 CLI 同源**：页面所有读写最终都落在同一份 `m20-ai-detect.env` 上，控制台服务 `m20-ai-console`（`webconsole/`，User=user、CPUAffinity=0-3、MemoryMax=256M）只做壳，不另存配置。
 
@@ -357,10 +365,27 @@ make deploy-console              # 一键部署（install.sh → console-bootstr
 - **响应留存（ADR-006）**：`M20AI_SAVE_MODE=off|alert|any|all` 控制"什么时候值得留证据"——触发时把 AI 标注结果图（~120 KB）与原始响应（剥掉占体积 94% 的 base64 大图、改留 jpg 路径引用，~2 KB）成对写 `saved/<cam>/`，JSONL 同步记 `saved_image`/`resp_path`。默认 `off`，行为与 0.3.x 完全一致。控制台「最近检测」点任一帧可看完整响应：已留存直读 `saved/`，未留存可用 `raw/` 原帧**重新检测**（一次真实 API 调用）。
 - **留存清理与时间轴（ADR-008）**：留存 JSON 写入时带 `_saved_at`（真实时钟，ADR-004 修正）与 `_alert`，控制台"目标图片时间轴"卡片据此**滑动时间条回看检出图**；`saved/` 按 `M20AI_SAVED_MAX_MB`（默认 500）/`M20AI_SAVED_KEEP_DAYS`（默认 0）从最旧成对清理（采样器每 10 分钟检查）。磁盘参考（2026-10-16 实测：单对 ≈0.1 MB、检出率 96.2%）：`any` ≈ 7 GB/天（500 MB ≈ 最近 1~2 小时）、`alert` ≈ 0.3 GB/天（500 MB ≈ 1~2 天）——上限、磁盘占用、可回看时长三者联动。
 - **留存过滤与数据清空（ADR-011）**：`SAVE_MODE=alert` 的"过滤清单"就是**关注目标**（`M20AI_ALERT_LABELS`/`M20AI_ALERT_SCORE`）——想"只保存检测到人的图片"，在网页「关注目标」卡设置（含今日检出标签一键点选）即可，保存后采集运行中会自动重启生效。网页「清理数据」块或 `POST /api/retention {"purge":[...]}` 可整体清空 `saved/`（图片+响应）/`results/`（仅 `*.jsonl`）/`raw/`/`spool/`：停采集**仅当运行中**、清完恢复原状态，**不会拉起停着的采集**（ADR-010）；`results/` 属权威数据，手动清空不可恢复。
-- **相机画面（ADR-012）**：控制台「相机画面」卡看当前相机——采集运行中 = `raw/` 最新一帧（检测器输入本身，不额外拉流）；未运行 = `ffmpeg` 单次抓帧（同一路 RTSP，1.5 s 短缓存 / 8 s 超时）；再失败兜底显示最近一帧并标"已定格"。`GET /api/snapshot?cam=front`。
+- **相机画面（ADR-012）**：控制台「相机画面」卡看当前相机——采集运行中 = `raw/` 最新一页（检测器输入本身，不额外拉流）；未运行 = `ffmpeg` 单次抓帧（同一路 RTSP，1.5 s 短缓存 / 8 s 超时）；再失败兜底显示最近一帧并标"已定格"。`GET /api/snapshot?cam=front`。
+- **留存卡按钮语义澄清（ADR-014）**：留存策略卡拆为 ①留存条件（`SAVE_MODE`，只管 `saved/` 准入）与 ②容量与时长（`RING_MAX_MB`/`RESULTS_KEEP_DAYS`/`SAVED_MAX_MB`/`SAVED_KEEP_DAYS`）两节，各自按钮紧贴参数；按钮文案点明维度，note 写明"只管哪段、与什么无关"（破除"改 SAVE_MODE 能省 raw 盘"的误解），单测固化两按钮文案不可混淆。
 - **AI 服务不可用**：指数退避（1→30 s），帧留在 `spool/` 不丢，同时写 `detect_fail` 事件行——恢复后自动续跑。
 - **相机源断了**：`Capture.ensure_running()` 每轮重启抽帧进程；持续断流超 `M20AI_SOURCE_DOWN_SEC` 写心跳行，便于事后区分"没目标"和"没画面"。
 - **时钟（ADR-004）**：车队 PTP 主时钟（`phc2sys` 从网卡 PHC 同步系统时钟）此前把本机钉在 2024-06-20（实测偏移 ~846 天），**不跟车队较劲**——采样器启动时向 AI 服务 `Date` 头自动测量偏移，JSONL 写修正后的 `ts` + 本机原值 `ts_host`；`M20AI_TS_OFFSET_SEC=0` 即自动测量，非 0 为手动钉值。**2026-10-16 核查：系统时钟已被修正**（chrony 同步 time.nju.edu.cn、偏差 <1ms、自动测量偏移 = 0），`ts == ts_host` 均为真实时间；机制保留作保险——若 PTP 再拖拽，自动测量会自动回到 ~846 天偏移。
+
+### 6.1 主机侧运维：rsdriver（雷达驱动）日志限流（2026-10-17）
+
+控制台「日志与数据留存策略」卡的 journal 区会显示整机 journal 占用——**其中 94.7% 来自厂商雷达驱动 `rsdriver.service`**（实测 40 行/秒 ≈ 345 万行/天 ≈ 295 MB/天，内容为 `recvLidar/recvImu msg_lidar is null`、`Exception ERRCODE_MSOPTIMEOUT`，且 `voltage/temp/timestamp` 均为 0）。已加 systemd drop-in 限流（**不屏蔽**，保留可见性）：
+
+```ini
+# /etc/systemd/system/rsdriver.service.d/10-log-ratelimit.conf
+[Service]
+LogRateLimitIntervalSec=60s
+LogRateLimitBurst=30
+```
+
+- 效果（实测）：40 行/秒 → 约 1.4 行/秒（**降 96.5%**），journal 增速 295 MB/天 → 约 10 MB/天；
+- 超出的日志由 journald 记一条 `Suppressed N messages from rsdriver.service`，错误仍可见；
+- **还原**：删除该 drop-in → `systemctl daemon-reload` → `systemctl restart rsdriver`（`sudo` 口令为半角单引号 `'`）；
+- ⚠️ **这些日志本身是雷达异常的信号**（数据全 0 / 收不到消息），限流只治"刷屏"，**雷达本身是否正常需另行排查**（M20 Pro 可在 AOS 控制台看「雷达供电 Front/Back」）。
 
 ---
 

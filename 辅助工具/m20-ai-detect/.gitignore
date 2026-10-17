@@ -26,3 +26,6 @@ tmp/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# ---- 本地浏览器验证产物（playwright-cli）----
+.playwright-cli/

@@ -2,11 +2,14 @@
 
 模块划分（按职责，不按技术层）：
   envfile     — m20-ai-detect.env 的读取/改写/校验（纯逻辑）
+  i18n        — 用户可见文案的中英目录 + X-Lang 语言判定（ADR-013）
   sysactions  — systemctl / journalctl / root helper 的动作封装（subprocess）
   logfilter   — journal 日志行解析与过滤（纯逻辑）
   server      — HTTP 壳：路由 + JSON API + 静态页（含响应查看/留存/时间轴，见 ADR-006/008；
                 受限只读文件浏览，见 ADR-009；采集开关与单位解析，见 ADR-010；
-                关注目标与数据清空，见 ADR-011；相机画面快照，见 ADR-012）
+                关注目标与数据清空，见 ADR-011；相机画面快照，见 ADR-012；
+                界面中英适配，见 ADR-013；留存卡「①留存条件／②容量与时长」
+                两节与两个保存按钮的语义澄清，见 ADR-014）
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.6"
