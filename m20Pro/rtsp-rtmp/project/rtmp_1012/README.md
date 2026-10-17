@@ -44,19 +44,70 @@ H.265 进 `flvmux` 依赖 **GStreamer 1.24+ 的 Enhanced RTMP**，1.16.3 完全�
 a=rtpmap:96 H265/90000
 ```
 
-> ### ✅ 120 主机（Lite3）实际部署状态 · 2026-10-16 23:5x 复核（已更正）
+> ### ✅ 120 主机（Lite3）实际部署状态 · 2026-10-17 23:2x 最新复核（已更正＋双机重启自启实证）
 > 上面的「纯 remux 直推 172.31.68.227:1936」概念正确，实际由 **1 个系统级 + 1 个用户级** 服务拼成：
 >
 > | 层级 | 服务 | 作用 | 状态 |
 > |---|---|---|---|
 > | 系统级 | `rtsp_stream.service`（`enabled`） | 起本地 MediaMTX（:8554/:1935）＋ 相机经 `push_video.sh` 发布到 `rtsp://127.0.0.1:8554/test` | active（相机→本地 RTSP） |
-> | **用户级（~ysc）** | **`rtmp-forward.service`（`enabled`）** | `ExecStart=/home/ysc/rtsp_stream/rtmp_forward.sh`：本地 RTSP → `rtmp://172.31.68.227:1936/live/lite3` | **active running（真正的外推）** |
+> | **系统级**（2026-10-17 23:3x 由用户级迁入） | **`rtmp-forward.service`（`enabled`）** | `ExecStart=/home/ysc/rtsp_stream/rtmp_forward.sh`：本地 RTSP → `rtmp://172.31.68.227:1936/live/lite3` | **active running（真正的外推）** |
 >
 > - **自启动确实存在**：`~/.config/systemd/user/rtmp-forward.service`（`WantedBy=default.target`，已 symlink 到 `default.target.wants/`），且 `loginctl` 显示 **`Linger=yes`** → **开机无需登录即自启**。用户重启后推流自动恢复已**实证**。
 > - ⚠️ 此前"120 无自启动 / 需 `enable streaming.service`"是**错误结论**——当时只查了系统级 `/etc/systemd`，**漏了用户级单元**（`grep /etc/systemd` 返回空正是线索）。系统级 `streaming.service`（`/home/ysc/.zetton/streaming.sh`）是**无关的厂商服务**，disabled 属正常，与外推无关。
 > - **为何会停（✅ 已修复 2026-10-17）**：原单元带 `RestartPreventExitStatus=3`+`SuccessExitStatus=3` → 上游抖动时 `rtmp_forward.sh` exit 3 → systemd **不再重启、永久停推**（同 M20 旧病），只能靠重启拉起。**现已去掉该豁免**，改为 `Restart=always` + **`RestartSec=30`** 退避（实测 `RestartUSec=30s`）：瞬断 30s 内自动重连自愈，上游真宕机也只每 30s 重试一次、不空转。
-> - **看门狗（✅ 已修复 2026-10-17）**：原**系统级** `rtmp-conn-guard` 盯系统级 `rtsp_stream.service`（不产生 `:1936`），对此外推无效，且僵尸时会**重启错的服务** → **已在 120 停用**（`disabled`+`inactive`）。改由**用户级** `rtmp-conn-guard-user.{service,timer}`（30s 周期，脚本 `/home/ysc/rtsp_stream/rtmp-conn-guard-user.sh`，补丁见 `patch/`）盯 `rtmp-forward.service`，走 `systemctl --user` 重启。
+> - **看门狗（✅ 2026-10-17 23:3x 随外推一并改为系统级）**：现由**系统级** `rtmp-conn-guard.timer`（30s）触发 oneshot `rtmp-conn-guard.service`，
+>   **显式传参** `ExecStart=/usr/local/sbin/rtmp-conn-guard.sh rtmp-forward.service`。
+>   ⚠️ **必须显式传参**——脚本 `DEFAULT_SVC` 候选为 `m20video/rtsp_stream`，120 上无 `m20video` 会**误选 `rtsp_stream`**
+>   （不产生 `:1936`）→ 看门狗失效且僵尸时重启错服务；候选表也已补入 `rtmp-forward` 作双保险。
+>   原**用户级** `rtmp-conn-guard-user.{service,timer}` 已停用禁用。
 > - **修复后实测**：`rtmp-forward.service` enabled+active；上游 ESTAB `cwnd:447`（健康非僵尸）；用户级看门狗首跑 `status=0/SUCCESS`、`badcount=0`。
+>
+> #### ★ 2026-10-17 23:2x 双机重启后实况复核（最新，覆盖上面旧数字）
+>
+> 两台主机**均刚重启**（M20 `up 3min` / Lite3 `up 5min`），推流服务**全部开机自启并推流成功**
+> —— 双机自启动配置均正确，无需人工干预。
+>
+> **Lite3（120，hostname `ysc`）· 单路 1280×720@30**
+>
+> | 层级 | 服务 | 作用 | 实测 |
+> |---|---|---|---|
+> | 系统级 | `rtsp_stream.service` | 起 MediaMTX（:8554/:1935/:8888）＋ `v4l2src /dev/video0 → mpph264enc → rtspclientsink rtsp://127.0.0.1:8554/test` | active + **enabled** ✅ |
+> | **系统级** | **`rtmp-forward.service`** | `/home/ysc/rtsp_stream/rtmp_forward.sh` → `rtspsrc 8554/test → flvmux → rtmpsink rtmp://172.31.68.227:1936/live/lite3` | active + **enabled** ✅ |
+> | 系统级 timer | `rtmp-conn-guard.timer` | 30s 周期盯 `rtmp-forward` 僵尸连接（oneshot service，**必须显式传参**） | active + enabled ✅ |
+> | 系统级 | `streaming.service` | 无关厂商服务 | inactive + disabled（正常） |
+> | ~~用户级~~ | `rtmp-forward.service` / `rtmp-conn-guard-user.timer` | **2026-10-17 23:3x 已迁移为系统级并停用** | inactive + disabled ✅ 防双推 |
+>
+> - 外推进程：`gst-launch-1.0 -e rtspsrc ... latency=200 ! ... ! rtmpsink ... live=1`（pid 3732，User=ysc，系统级托管）。
+> - 上游：`192.168.0.197:60788 → 172.31.68.227:1936` **ESTAB `cwnd:294`**（健康，非僵尸）。迁移后**单实例**，无重复推流。
+>
+> **M20 Pro（AOS 196，hostname `aos`）· 双路 800×600@30**
+>
+> | 层级 | 服务 / 进程 | 作用 | 实测 |
+> |---|---|---|---|
+> | 系统级 | **`m20video.service`** | `relay` 链：`rtspsrc 8554/video1\|video2 → rtph264depay → h264parse → flvmux → rtmpsink 1936/live/m20pro-f\|m20pro-b` | active + **enabled** ✅ |
+> | 系统级 timer | `rtmp-conn-guard.timer` | 触发 oneshot `rtmp-conn-guard.service`，盯 `m20video` 僵尸连接 | active + enabled ✅ |
+> | 系统级 timer | `m20-log-rotate.timer` | 60s 扫描轮转（10MB×5、`copytruncate`、单路隐含 ≤60MB） | active + enabled ✅ |
+> | 系统级 timer | **`cam-guard.timer`** | 触发 oneshot `cam-guard.service`（`/usr/local/sbin/camera-liveness-guard.sh`）：清理"假死 gst 管道" | active ✅（23:21:43 Succeeded） |
+> | 厂商进程（**非 systemd**） | `push_video.sh` + `mediamtx` | `local` 链：`v4l2src /dev/video0,2 → mpph264enc → rtspclientsink 8554/video1,2`；mediamtx 由脚本内 `sudo ./mediamtx` 拉起 | 5×bash + 2×gst ✅ |
+> | 车侧 | `basic_server.service` | 相机/雷达/GPS 供电开关等 | active，但 **enabled=disabled**（由厂商 `start.service` 拉起）⚠️ |
+>
+> - ⚠️ **不要因为 `mediamtx.service` 是 inactive 就判故障** —— 196 上 MediaMTX **根本不由 systemd 管**，
+>   是 `push_video.sh` 内部直接起的（进程 root 1121 在跑）。
+> - 权威状态入口 `sudo m20-video-ctl status` 实测：
+>   ```
+>   local.processes=6  local.gst=2  local.hls_video1=200  local.hls_video2=200  local.ready=yes  local.stuck=no
+>   relay.unit=active  relay.processes=4  relay.target=172.31.68.227:1936  relay.target_tcp=yes  relay.enabled=enabled
+>   ```
+> - 上游双路：`196:56604`、`196:56610` → `1936` **ESTAB，cwnd 97 / 70**（健康）。
+>
+> #### ★ 访问要点（易踩）
+> - **Lite3(120) 首选经 PC 的 `WLAN 3` 网卡（192.168.2.57）连其热点 `YSC-JYML-aw3bal-5G` → `ssh ysc@192.168.2.1`**
+>   （p2p0，~10ms 直连，最稳）；备选 `ssh ysc@192.168.0.197`（wlan0 上联 Tenda，绕一层）。
+>   `192.168.1.120` 是 eth1 LAN（另带 `192.168.137.120`），需静态路由，当前不走。
+> - **M20 经 PC 的 `WLAN` 网卡（192.168.0.200）连 Tenda → `ssh user@192.168.0.196`**。
+>   双网卡分工：`WLAN` = Tenda / M20，`WLAN 3` = Lite3 自身 AP。
+> - 管理用户级单元必须先 `export XDG_RUNTIME_DIR=/run/user/$(id -u)`，否则 `systemctl --user` 失败。
+> - 196 WiFi 抖动：SSH 超时先重试，别急着判故障。
 
 ## 2. 本项目的做法
 

@@ -121,6 +121,82 @@ def test_gait_zero_means_unset():
     assert parsed["fields"]["gait_label"] == "未设置"
 
 
+# ---------------------------------------------------------------------------
+# 2026-10-17 取证新增：关节回零 + 分设备供电使能
+# ---------------------------------------------------------------------------
+def test_basic_exposes_reset_joints_zero_and_status_code():
+    """BasicStatus 真机实测带 `ResetJointsZero` / `StatusCode`（docs/04 未收录）。
+
+    车侧 basic_server.toml 默认 autoResetJointsZero=true → 首次站立会先回零。
+    """
+    parsed = ap.parse_frame(_frame(1002, 6, {"BasicStatus": {
+        "MotionState": 1, "StatusCode": 0, "ResetJointsZero": 0}}))
+    f = parsed["fields"]
+    assert f["reset_joints_zero"] == 0
+    assert f["status_code"] == 0
+    assert f["reset_joints_zero_label"] == "无需回零"
+
+
+def test_reset_joints_zero_unknown_value_is_not_fabricated():
+    """值域未见官方文档 → 非 0 只能透传数值，绝不臆造标签。"""
+    parsed = ap.parse_frame(_frame(1002, 6, {"BasicStatus": {"ResetJointsZero": 7}}))
+    assert parsed["fields"]["reset_joints_zero"] == 7
+    assert "7" in parsed["fields"]["reset_joints_zero_label"]
+
+
+def test_device_dev_enable_is_split_per_sensor():
+    """DevEnable 真机结构：Video/Lidar 各含 Front/Back，另有 GPS/GPSMode/Led/Fan。
+
+    前端按标签页分区展示依赖这些细粒度字段（相机页 / 运动控制页 / GPS 页）。
+    """
+    dev_enable = {
+        "FanSpeed": 100, "LoadPower": 1, "LedHost": 1, "LedExt": 1, "FP": 1,
+        "Lidar": {"Front": 0, "Back": 0},
+        "GPS": 1, "GPSMode": 69905,
+        "Video": {"Front": 1, "Back": 1},
+    }
+    parsed = ap.parse_frame(_frame(1002, 5, {"DevEnable": dev_enable}))
+    f = parsed["fields"]
+    assert f["video_front"] == 1 and f["video_back"] == 1
+    assert f["lidar_front"] == 0 and f["lidar_back"] == 0
+    assert f["gps_enable"] == 1 and f["gps_mode"] == 69905
+    assert f["led_host"] == 1 and f["led_ext"] == 1
+    assert f["load_power"] == 1 and f["fan_speed"] == 100
+    # 原始结构仍保留（向后兼容）
+    assert f["dev_enable"] == dev_enable
+
+
+def test_device_dev_enable_missing_yields_none():
+    """无 DevEnable 时细粒度字段应为 None，不能抛异常或返回 0（0 会被误读成"已关"）。"""
+    parsed = ap.parse_frame(_frame(1002, 5, {"BatteryList": []}))
+    f = parsed["fields"]
+    assert f["video_front"] is None and f["lidar_front"] is None
+    assert f["gps_enable"] is None
+
+
+def test_device_gps_is_split_for_gps_tab():
+    """GPS 标签页依赖的细粒度字段；原始 `gps` 结构同时保留（排查解析错误时用）。"""
+    gps = {
+        "Latitude": 30.123456, "Longitude": 120.654321, "Speed": 1.5, "Course": 88.0,
+        "FixQuality": 1, "NumSatellites": 12, "Altitude": 45.6,
+        "HDOP": 0.8, "VDOP": 1.1, "PDOP": 1.4, "VisibleSatellites": 18,
+    }
+    parsed = ap.parse_frame(_frame(1002, 5, {"GPS": gps}))
+    f = parsed["fields"]
+    assert f["gps_latitude"] == 30.123456 and f["gps_longitude"] == 120.654321
+    assert f["gps_altitude"] == 45.6 and f["gps_speed"] == 1.5 and f["gps_course"] == 88.0
+    assert f["gps_fix_quality"] == 1 and f["gps_num_satellites"] == 12
+    assert f["gps_visible_satellites"] == 18
+    assert f["gps_hdop"] == 0.8 and f["gps_vdop"] == 1.1 and f["gps_pdop"] == 1.4
+    assert f["gps"] == gps
+
+
+def test_device_gps_missing_yields_none():
+    parsed = ap.parse_frame(_frame(1002, 5, {"BatteryList": []}))
+    assert parsed["fields"]["gps_latitude"] is None
+    assert parsed["fields"]["gps_num_satellites"] is None
+
+
 def test_confidence_report_covers_all_topics():
     report = ap.confidence_report()
     # 6 类 = docs/04 五类 + 真机实测新增的 nav（ack 也登记但无枚举字段）
@@ -128,3 +204,54 @@ def test_confidence_report_covers_all_topics():
     # 关节字段已确认；单位未载 → unknown（PLAN Q12）
     assert report["motion"]["joints"] == "confirmed"
     assert report["motion"]["unit_linear"] == "unknown"
+
+
+# ---------------------------------------------------------------- GPS 卫星系统掩码
+def test_gps_mode_presets_match_vendor_config():
+    """位定义必须与车侧 gps.yaml 的 sysMask 注释**逐位一致**。
+
+    来源：/opt/robot/share/node_driver/config/gps.yaml（2026-10-17 取证）
+      bit0-GPS L1CA, bit4-BDS B1I, bit8-GLONASS L1, bit12-GALILEO E1, bit16-QZSS
+      presets: gps_only 0x00001 / bds_only 0x00010 / glo_only 0x00100
+               / gal_only 0x01000 / qzss_only 0x10000 / all_systems 0x11111
+    """
+    assert dict(ap.GPS_SYSTEM_BITS) == {
+        0x00001: "GPS", 0x00010: "BDS", 0x00100: "GLONASS",
+        0x01000: "Galileo", 0x10000: "QZSS",
+    }
+    assert ap.GPS_SYSTEM_MASK_ALL == 0x11111
+    assert ap.gps_mode_systems(0x11111) == ["GPS", "BDS", "GLONASS", "Galileo", "QZSS"]
+
+
+def test_gps_mode_label_speaks_human_not_code():
+    """用户诉求：不要用 69905 这种代号，要真名。"""
+    assert ap.gps_mode_label(0x11111) == "全系统（GN 模式）"
+    assert ap.gps_mode_label(0x00001) == "仅 GPS"
+    assert ap.gps_mode_label(0x00010) == "仅 北斗（BDS）"
+    assert ap.gps_mode_label(0x01000) == "仅 Galileo"
+    # 组合（非预设）→ 列出星座
+    assert ap.gps_mode_label(0x00011) == "GPS + BDS"
+    # 0 = 全关
+    assert ap.gps_mode_label(0) == "全部关闭（无定位）"
+    assert ap.gps_mode_label(None) is None
+    # 含未知位必须显式标注，绝不假装看懂
+    assert "0x20000" in ap.gps_mode_label(0x20001)
+    assert ap.gps_mode_label(0x20000) == "未启用任何已知星座（含未知位 0x20000）"
+
+
+def test_device_exposes_gps_mode_in_human_readable_form():
+    frame = _frame(1002, 5, {"DevEnable": {"GPSMode": 0x11111, "GPS": 1}})
+    d = ap.parse_frame(frame)["fields"]
+    assert d["gps_mode"] == 69905                       # 原始值仍在（排查用）
+    assert d["gps_mode_hex"] == "0x11111"               # 与 gps.yaml 同写法
+    assert d["gps_mode_label"] == "全系统（GN 模式）"     # 给人看的
+    assert d["gps_systems"] == ["GPS", "BDS", "GLONASS", "Galileo", "QZSS"]
+
+
+def test_gps_mode_missing_yields_none():
+    frame = _frame(1002, 5, {"DevEnable": {"GPS": 1}})
+    d = ap.parse_frame(frame)["fields"]
+    assert d["gps_mode"] is None
+    assert d["gps_mode_label"] is None
+    assert d["gps_mode_hex"] is None
+    assert d["gps_systems"] == []

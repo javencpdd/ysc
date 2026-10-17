@@ -1,0 +1,33 @@
+[Unit]
+Description=Lite3 local RTSP -> external RTMP relay (rtsp_stream/rtmp_forward.sh)
+After=network-online.target rtsp_stream.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=ysc
+Environment=HOME=/home/ysc
+WorkingDirectory=/home/ysc/rtsp_stream
+ExecStart=/home/ysc/rtsp_stream/rtmp_forward.sh
+
+# 崩溃/退出后自动重启，保证机器人视频链路自愈
+Restart=always
+# 2026-10-17：去掉 RestartPreventExitStatus=3 / SuccessExitStatus=3。
+# 原 exit-3 豁免会让"上游抖动 -> 脚本 exit 3"之后 systemd 不再重启 = 永久停推，
+# 只能靠整机重启恢复。现改为 30s 退避重试：瞬断自愈，上游真宕机也只每 30s 试一次、不空转。
+RestartSec=30
+
+# 停止时先发 TERM，让 rtmp_forward.sh 结束 gst 并发 EOS
+KillMode=mixed
+TimeoutStopSec=25
+
+# 视频推流不应被 OOM 优先杀掉
+OOMScoreAdjust=-300
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rtmp-forward
+
+[Install]
+WantedBy=multi-user.target

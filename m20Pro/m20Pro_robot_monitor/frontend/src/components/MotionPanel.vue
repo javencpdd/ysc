@@ -15,7 +15,11 @@
       <button v-if="ctrl.estop" @click="clearEstop">解除急停</button>
       <button :disabled="!ctrl.enabled" :title="disabledTip" @click="send('stand_up')">站立</button>
       <button :disabled="!ctrl.enabled" :title="disabledTip" @click="send('lie_down')">趴下</button>
-      <button :disabled="!ctrl.enabled" :title="disabledTip" @click="send('wake_up')">唤醒</button>
+      <button
+        :disabled="!ctrl.enabled"
+        :title="wakeTip"
+        @click="send('wake_up')"
+      >唤醒整车</button>
     </div>
 
     <div class="grid" style="margin-bottom: 10px">
@@ -42,9 +46,64 @@
       <div class="kv"><span>实际 前后 X</span><span>{{ n3(motion.linear_x) }} m/s</span></div>
       <div class="kv"><span>实际 左右 Y</span><span>{{ n3(motion.linear_y) }} m/s</span></div>
       <div class="kv"><span>实际 转向 ω</span><span>{{ n3(motion.omega_z) }} rad/s</span></div>
+      <div class="kv"><span>关节回零</span><span>{{ zeroLabel }}</span></div>
+      <div class="kv"><span>雷达供电 前/后</span><span>{{ lidarLabel }}</span></div>
+    </div>
+
+    <!-- 雷达供电开关（1101/3，2026-10-17 抓包破解）：
+         可单独控制前/后雷达。**站立/RL 运动中关闭会被服务端拒绝**——
+         雷达是运控的平衡参考输入，这是有意为之的保守策略（厂商 App 不拦，我们拦）。 -->
+    <div class="devbar">
+      <span>雷达供电：</span>
+      <DeviceToggle
+        label="前雷达"
+        :value="props.device?.lidar_front ?? null"
+        :disabled="!ctrl.enabled"
+        :busy="!!devBusy"
+        @set="(v) => setLidar('Front', v)"
+      />
+      <DeviceToggle
+        label="后雷达"
+        :value="props.device?.lidar_back ?? null"
+        :disabled="!ctrl.enabled"
+        :busy="!!devBusy"
+        @set="(v) => setLidar('Back', v)"
+      />
+      <span v-if="devMsg" class="hint">{{ devMsg }}</span>
+      <span v-if="devErr" class="hint err">{{ devErr }}</span>
+    </div>
+
+    <!-- 其他设备供电（同一条 1101/3，换 Items 键即可）：
+         键名与语义全部经车侧日志逐条实证，见 patrol_codec.DEVICE_SWITCH_SPEC -->
+    <div class="devbar">
+      <span>其他设备：</span>
+      <DeviceToggle
+        v-for="d in OTHER_DEVICES"
+        :key="d.key"
+        :label="d.label"
+        :value="props.device?.[d.field] ?? null"
+        :disabled="!ctrl.enabled"
+        :busy="!!devBusy"
+        @set="(v) => setFlag(d.key, v)"
+      />
+      <!-- 风扇是 0~100 而非开关：同样用「开/关」两个选项，转速作为副标注 -->
+      <DeviceToggle
+        label="风扇"
+        :value="props.device?.fan_speed ?? null"
+        :hint="props.device?.fan_speed != null ? props.device.fan_speed : ''"
+        :disabled="!ctrl.enabled"
+        :busy="!!devBusy"
+        @set="setFan"
+      />
     </div>
     <div v-if="!motionReady" style="color: var(--warn); font-size: 12px; margin-bottom: 10px">
       ⚠ 当前「{{ motionLabel }}」—— 轴指令<b>只在「站立 / RL 控制」下生效</b>，请先点「站立」
+    </div>
+    <!-- 开机阻尼态：车侧默认 autoResetJointsZero=true，点「站立」时运控会先回零再起立 -->
+    <div v-if="isBootDamping" class="gait-warn" style="margin-bottom: 10px">
+      ⚠ 当前是「开机阻尼」态 —— 车侧默认开启<b>自动回零</b>
+      （<code>autoResetJointsZero = true</code>），点「站立」后运控会<b>先完成关节回零再起立</b>，
+      所以首次站立比后续站立慢、且中途不要干预。
     </div>
     <template v-else>
       <div v-if="joyLateralWarn" class="gait-warn">⚠ {{ joyLateralWarn }}</div>
@@ -164,6 +223,8 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import DeviceToggle from './DeviceToggle.vue'
+import { useDeviceSwitch } from '../composables/useDeviceSwitch.js'
 
 const props = defineProps({
   control: { type: Object, default: () => ({}) },
@@ -185,7 +246,9 @@ const props = defineProps({
   watchdog: { type: Object, default: () => ({}) },
   // 车侧状态（诊断用）：实际速度反馈 + 当前步态 + 运动状态
   motion: { type: Object, default: () => ({}) },
-  basic: { type: Object, default: () => ({}) }
+  basic: { type: Object, default: () => ({}) },
+  // 设备状态（2026-10-17 加）：提供 DevEnable 分设备供电使能
+  device: { type: Object, default: () => ({}) }
 })
 
 const ctrl = ref(props.control)
@@ -228,6 +291,57 @@ const motionLabel = computed(() => {
   return m == null ? '—' : (MOTION_LABEL[m] || `未知(${m})`)
 })
 const motionReady = computed(() => [1, 17].includes(props.basic?.motion_state))
+
+// ---- 关节回零（2026-10-17 取证）----
+// 车侧 basic_server.toml 默认 `autoResetJointsZero = true`，BasicStatus 上报带
+// `ResetJointsZero` 字段。值域未见官方文档，故标签由后端保守给出、前端不臆造。
+const zeroLabel = computed(() => props.basic?.reset_joints_zero_label || '—')
+// 开机阻尼态（MotionParam=3）：此时点「站立」，运控会先跑 ZeroCalibrationState 回零再起立
+const isBootDamping = computed(() => props.basic?.motion_state === 3)
+
+// ---- 设备供电开关（1101/3，2026-10-17 抓包破解）----
+// 此前判断"协议未公开单独开/关雷达"是**错的** —— 抓包拿到 1101/3，
+// Items 键名决定目标设备（Lidar/Video/GPS/...），已逐键经车侧日志实证。
+// ⚠️ 必须解构到顶层：Vue 3 模板只对**顶层** setup 绑定做 ref 解包，
+// 写成 `dev.busy` 拿到的是 Ref 对象本身（恒真）→ `:disabled` 永远为真。
+// 这正是 2026-10-17 用户反馈"供电开关按钮按不了"的根因。
+const { busy: devBusy, msg: devMsg, err: devErr,
+        apply: devApply, setPair } = useDeviceSwitch(props)
+const onoff = (v) => (v == null ? '—' : (Number(v) ? '开' : '关'))
+const lidarLabel = computed(() => {
+  const f = onoff(props.device?.lidar_front)
+  const b = onoff(props.device?.lidar_back)
+  return (f === '—' && b === '—') ? '—' : `${f} / ${b}`
+})
+const lidarVal = (side) => (side === 'Front' ? props.device?.lidar_front : props.device?.lidar_back)
+const lidarOther = (side) => (side === 'Front' ? props.device?.lidar_back : props.device?.lidar_front)
+function setLidar (side, v) {
+  // 1101/3 是**整键覆写**，必须把另一路的当前值一起带上，
+  // 否则只改一路会把没点的那路默认成 0（= 顺带关掉）。
+  setPair('Lidar', side, v, lidarOther(side))
+}
+
+// 其他单路设备（键名/标签经车侧日志逐条实证，见 patrol_codec.DEVICE_SWITCH_SPEC）
+const OTHER_DEVICES = [
+  { key: 'LedHost', field: 'led_host', label: '主机电源指示灯' },
+  { key: 'LedExt', field: 'led_ext', label: '外部负载指示灯' },
+  { key: 'LoadPower', field: 'load_power', label: '外部负载供电' },
+  { key: 'FP', field: 'fp', label: '对频模块' }
+]
+function setFlag (key, v) {
+  devApply(key, { [key]: v }, '', v === 0)
+}
+
+// 风扇：0 与 100 两档（真机只实测过 100；转速语义未见文档，故不做连续滑杆）
+async function setFan (v) {
+  const next = v ? 100 : 0
+  await devApply('FanSpeed', { FanSpeed: next }, '', next === 0)
+}
+
+// 唤醒 = 退出整车休眠（1101/6），会连带恢复相机/雷达/GPS/关节供电 —— 标注清楚避免误解
+const wakeTip = computed(() => (ctrl.value.enabled
+  ? '退出整车休眠（1101/6）—— 会同时恢复相机 / 雷达 / GPS / 关节供电'
+  : disabledTip.value))
 
 const gait = ref(0x1001)
 const lastResult = ref('')
@@ -551,6 +665,25 @@ async function onDisable () {
 </script>
 
 <style scoped>
+/* ---- 状态栅格：**固定列数**，不用 auto-fill ----
+   2026-10-17 修复：全局 `.grid` 用 `repeat(auto-fill, minmax(150px, 1fr))`，
+   容器宽度只要差几个像素，能容纳的列数就会从 4 跳到 3（反之亦然）→
+   整块布局"突然换行"。改成固定列数后，列数只会在断点处变化，不再抖动。 */
+/* 150px 是「标签 + 最长数值」的实测下限（如 "实际 转向 ω" + "-0.003 rad/s"），
+   用 minmax() 给足冗余，值又是 nowrap，所以不会再出现"挤到下一行"。 */
+.grid {
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+}
+@media (max-width: 1180px) {
+  .grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
+}
+@media (max-width: 880px) {
+  .grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+}
+@media (max-width: 560px) {
+  .grid { grid-template-columns: minmax(150px, 1fr); }
+}
+
 .btn-row {
   display: flex;
   gap: 8px;
@@ -754,6 +887,21 @@ async function onDisable () {
 }
 
 /* 横移步态警示（2026-10-16）：摇杆区 / 定时移动区共用 */
+.devbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border, #d8dce3);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--panel-2, #f7f8fa);
+}
+.devbar .hint.err {
+  color: var(--danger, #d0453b);
+}
 .gait-warn {
   margin: 6px 0 10px;
   padding: 6px 9px;

@@ -1,0 +1,5 @@
+deploy/m20-ap-ctl text eol=lf
+deploy/m20-video-ctl text eol=lf
+deploy/_apply.sh text eol=lf
+deploy/*.sh text eol=lf
+tools/*.sh text eol=lf

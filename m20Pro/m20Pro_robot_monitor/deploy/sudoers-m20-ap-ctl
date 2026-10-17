@@ -1,0 +1,16 @@
+# 控制台读写 M20 自身 WiFi 热点（SSID / 密码）的最小提权白名单。
+#
+# 安装：sudo cp deploy/sudoers-m20-ap-ctl /etc/sudoers.d/m20-ap-ctl
+#       sudo chmod 0440 /etc/sudoers.d/m20-ap-ctl
+# 卸载：sudo rm /etc/sudoers.d/m20-ap-ctl
+#
+# ★ 这里**没有任何通配符**，是新值走 stdin 换来的：
+#   若把 SSID/密码放在命令行，就必须写 `m20-ap-ctl set --ssid * --confirmed`，
+#   而 sudoers 的 `*` 能跨空格匹配多个参数，那是条不该开的口子
+#   （且密码进 argv = 任何本地用户 ps 一下就能看到 WiFi 密码）。
+#
+# 只放行两条命令，且都带固定的 --confirmed：不带它 helper 会自行拒绝，
+# 所以 sudoers 这层与 helper 那层是双保险，不是单靠一边。
+
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-ap-ctl status
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-ap-ctl set --confirmed

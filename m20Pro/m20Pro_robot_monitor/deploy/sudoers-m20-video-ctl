@@ -1,0 +1,19 @@
+# m20pro-console 视频推流服务控制白名单（2026-10-17）
+#
+# 为什么需要：推流服务（mediamtx / push_video.sh / m20video.service）全部以 root 运行，
+# 而控制台服务跑在普通用户 user。这里**只放行一个固定入口**，且该入口自身
+# 只接受 status|start|stop|restart × local|relay 这 8 种组合 —— 不给控制台
+# root，也不放开 systemctl 全权。
+#
+# 安装： sudo install -m 0440 -o root -g root deploy/sudoers-m20-video-ctl /etc/sudoers.d/m20-video-ctl
+# 卸载： sudo rm /etc/sudoers.d/m20-video-ctl
+#
+# ⚠️ 逐条列出而不是用通配符 * —— 通配符会让"入口脚本被替换"这条防线失效。
+
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-video-ctl status
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-video-ctl start local
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-video-ctl stop local
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-video-ctl restart local
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-video-ctl start relay
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-video-ctl stop relay
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-video-ctl restart relay

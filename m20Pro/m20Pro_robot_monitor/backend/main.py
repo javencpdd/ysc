@@ -44,6 +44,9 @@ from config import Settings, load_settings  # noqa: E402
 from control import patrol_codec  # noqa: E402
 from control.axis_watchdog import AxisWatchdog  # noqa: E402
 from control.control_gateway import ControlGateway, UdpControlSink  # noqa: E402
+from control.command_log import CommandLog
+from net import ap_ctl
+from video import service_ctl as video_service
 from errors import ConfigError, ProtocolError  # noqa: E402
 from ingestion import asdu_parser  # noqa: E402
 from ingestion.data_source import build_data_source  # noqa: E402
@@ -105,9 +108,50 @@ class ControlToggle(BaseModel):
     confirmed: bool = False
 
 
+class VideoServiceRequest(BaseModel):
+    """视频推流服务控制：target=local|relay，action=start|stop|restart。"""
+
+    target_local: str = Field(default="", alias="target")
+    action: str = "status"
+    confirmed: bool = False
+
+    model_config = {"populate_by_name": True}
+
+
 class HeartbeatToggle(BaseModel):
     """暂停 / 恢复心跳（遥测让渡）。"""
     paused: bool = True
+    confirmed: bool = False
+
+
+class LightRequest(BaseModel):
+    """前后补光灯（1101/2）。"""
+    front: bool = False
+    back: bool = False
+
+
+class AutoResetRequest(BaseModel):
+    """首启回零开关（1101/10 写 / 1101/11 读）。"""
+    enable: bool = True
+    confirmed: bool = False
+
+
+class SleepConfigRequest(BaseModel):
+    """休眠设置（1101/6 写 / 1101/7 读）。
+
+    ``sleep=True`` 是整车休眠（会趴下）——必须 confirmed；
+    只改自动休眠开关/时长时 ``sleep`` 留 False，此时不触发休眠。
+    """
+    sleep: bool = False
+    auto: bool = False
+    minutes: int = 10
+    confirmed: bool = False
+
+
+class ApSetRequest(BaseModel):
+    """改 M20 自身热点（只开放 SSID / 密码）。"""
+    ssid: Optional[str] = None
+    password: Optional[str] = None
     confirmed: bool = False
 
 
@@ -132,13 +176,24 @@ class MonitorService:
         )
         self.state.set_data_source(self.settings.data_source)
 
+        # 报文记录（2026-10-17 加）：留下发出的原始字节帧 + 机器人响应标记。
+        # mock 场景同样记录（RecordingSink 不发包，正好验证"不发也留证"的边界）。
+        self.command_log = CommandLog(
+            size=self.settings.control.packet_log_size,
+            timeout_s=self.settings.control.packet_timeout_ms / 1000.0,
+        )
+
         # 控制出口：udp 真实 socket；mock 场景用记录型（不发包）
         if self.settings.data_source == "mock":
             from control.control_gateway import RecordingSink
             sink: Any = RecordingSink()
         else:
-            sink = UdpControlSink(self.settings.robot.target_ip,
-                                  self.settings.robot.target_port)
+            # 指令应答走**请求的源端口**回到本 socket，故出口必须能收：
+            # 收到就转交 CommandLog 做 (Type,Command) 关联（见 UdpControlSink）
+            sink = UdpControlSink(
+                self.settings.robot.target_ip,
+                self.settings.robot.target_port,
+                on_response=self._on_command_response)
         self.control = ControlGateway(
             sink=sink,
             enabled=self.settings.control.enabled,
@@ -148,7 +203,9 @@ class MonitorService:
             axis_max=self.settings.control.axis_max,
             state_provider=self._basic_fields,
             telemetry_provider=self._telemetry_paused,
+            device_provider=self._device_fields,
         )
+        self.control.command_log = self.command_log
         self.watchdog = AxisWatchdog(
             self.control, hz=self.settings.control.axis_hz,
             timeout_ms=self.settings.control.axis_timeout_ms,
@@ -176,12 +233,83 @@ class MonitorService:
             self.state.record_error(raw, str(exc))
             return
         self.state.update(parsed, raw)
+        # 报文响应关联（2026-10-17 加）：机器人对指令的应答带回 Type/Command，
+        # 据此把"在途指令"标成 ok / error。未匹配上的（状态上报、心跳应答）
+        # 是一次 dict 查找，开销可忽略。
+        self.command_log.on_response(parsed["type"], parsed["command"],
+                                     parsed.get("items"), raw)
+
+    def _on_command_response(self, raw: bytes) -> None:
+        """控制出口收到一帧机器人应答（运行在控制出口接收线程中）。
+
+        basic_server 的应答信封带回 ``Type``/``Command``（实测
+        ``{"PatrolDevice":{"Items":{"ErrorCode":0},"Type":1101,"Command":3,...}}``），
+        据此把对应在途指令标成 ok / error。解析失败不影响接收循环。
+        """
+        try:
+            decoded = asdu_parser.decode_frame(raw)
+        except Exception as exc:  # noqa: BLE001 - 应答帧异常不该影响接收循环
+            logger.debug("指令应答帧解析失败: %s", exc)
+            return
+        self.command_log.on_response(decoded["type"], decoded["command"],
+                                     decoded.get("items"), raw)
+
+    def _device_fields(self) -> Dict[str, Any]:
+        """设备状态原始字段（含 ``dev_enable``）—— 供设备开关的"是否在关闭"判定用。
+
+        必须给**原始 DevEnable 结构**（与 Items 同构），而不是扁平字段：
+        判定要逐路比较 ``{"Video":{"Front":..,"Back":..}}``，扁平化会丢掉两路的结构。
+        """
+        snap = self.state.snapshot()
+        topic = snap.get("topics", {}).get("device") or {}
+        return topic.get("data", {}) or {}
 
     def _basic_fields(self) -> Dict[str, Any]:
         """供控制闸读取基础状态（前置校验用）。"""
         snap = self.state.snapshot()
         topic = snap.get("topics", {}).get("basic") or {}
         return topic.get("data", {}) or {}
+
+    # ------------------------------------------------- 机器人设置（M4）
+    def robot_config(self) -> Dict[str, Any]:
+        """补光灯 / 回零开关 / 休眠配置 的当前值。
+
+        **三条数据源性质不同，绝不能混为一谈**：
+
+          - 补光灯 —— 设备帧（1002/5）里的 ``Led.Fill``，2Hz 自动到，
+            **不用主动问**；
+          - 回零开关 / 休眠配置 —— 必须主动发查询指令（1101/11、1101/7），
+            异步回来。
+
+        所以后两者一律带 ``age_s``：前端要靠它区分"还没问过"与"问过但车没答"，
+        拿不到就显示"未知"——**不能拿旧值冒充当前值**（旧值可能是别人改过的）。
+        """
+        dev = self._device_fields()
+        ar = self.command_log.query(1101, 11)
+        sc = self.command_log.query(1101, 7)
+        return {
+            "fill_light": {
+                "front": dev.get("fill_front"),
+                "back": dev.get("fill_back"),
+                "known": dev.get("fill_front") is not None
+                         or dev.get("fill_back") is not None,
+            },
+            "auto_reset": _auto_reset_view(ar),
+            "sleep": _sleep_view(sc),
+        }
+
+    def robot_config_refresh(self) -> Dict[str, Any]:
+        """主动发两条查询指令（1101/11、1101/7）。
+
+        只负责"问"，不负责"等"—— 应答是异步到 UDP 接收线程的，落到
+        command_log 的查询缓存后由下一次 :meth:`robot_config` 读到。
+        前端的节奏应该是「进页面问一次 → 2s 后读」。
+        """
+        sent = {}
+        for name in ("auto_reset_query", "sleep_query"):
+            res = self.control.execute(name, {})
+            sent[name] = res.get("ok", False)
+        return {"ok": any(sent.values()), "sent": sent}
 
     # ------------------------------------------------------- 心跳（遥测）控制
     def _telemetry_paused(self) -> bool:
@@ -355,8 +483,21 @@ async def ready() -> Any:
 
 @app.get("/api/v1/schema", tags=["contract"])
 async def schema() -> Dict[str, Any]:
-    """WS 快照 JSON Schema —— 前后端契约（PLAN §5.4）。"""
-    return {"version": SCHEMA_VERSION, "schema": snapshot_json_schema()}
+    """WS 快照 JSON Schema —— 前后端契约（PLAN §5.4）。
+
+    附带 ``gps_modes``：GPSMode 掩码的可选值清单（**协议常量，单一来源在
+    ``asdu_parser``**）。前端据此渲染"卫星系统模式"选择器，避免把掩码值
+    在 JS 里再硬编码一份 —— 那份迟早会和 gps.yaml 漂移。
+    """
+    return {
+        "version": SCHEMA_VERSION,
+        "schema": snapshot_json_schema(),
+        "gps_modes": [
+            {"mask": bit, "hex": "0x%05X" % bit, "label": label,
+             "systems": asdu_parser.gps_mode_systems(bit)}
+            for bit, label in sorted(asdu_parser.GPS_MODE_PRESETS.items())
+        ],
+    }
 
 
 @app.get("/api/v1/state", tags=["state"])
@@ -491,6 +632,48 @@ async def control_axis_timed(req: TimedAxisRequest) -> Dict[str, Any]:
     return resp
 
 
+def _as_int(value: Any, default: int = 0) -> int:
+    """尽力转 int（协议字段可能是字符串 / null）。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _auto_reset_view(entry: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """查询缓存 → 回零开关视图。没问过就整体 ``known=False``。"""
+    if not entry:
+        return {"enable": None, "known": False, "age_s": None}
+    items = entry.get("items") or {}
+    if "Enable" not in items:
+        return {"enable": None, "known": False, "age_s": entry.get("age_s")}
+    return {"enable": bool(items["Enable"]), "known": True,
+            "age_s": entry.get("age_s")}
+
+
+def _sleep_view(entry: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """查询缓存 → 休眠配置视图。
+
+    车侧应答实测为 ``{"Sleep":0,"Auto":false,"Time":10}``：
+    ``Sleep`` 是**当前是否已休眠**（整数 0/1，不是布尔）、``Auto`` 是自动
+    休眠开关、``Time`` 是等待分钟数（车侧校验 5~30）。
+    """
+    if not entry:
+        return {"known": False, "age_s": None, "sleeping": None,
+                "auto": None, "minutes": None}
+    items = entry.get("items") or {}
+    if "Time" not in items and "Auto" not in items:
+        return {"known": False, "age_s": entry.get("age_s"), "sleeping": None,
+                "auto": None, "minutes": None}
+    return {
+        "known": True,
+        "age_s": entry.get("age_s"),
+        "sleeping": _as_int(items.get("Sleep")) == 1,
+        "auto": bool(items.get("Auto")),
+        "minutes": _as_int(items.get("Time")),
+    }
+
+
 def _lateral_gait_warning(values: Dict[str, Any], basic: Dict[str, Any]) -> str:
     """横移步态警示（2026-10-16 真机对照实验结论）。
 
@@ -546,7 +729,164 @@ async def control_audit(limit: int = 50) -> Dict[str, Any]:
     return {"items": _svc().control.audit(limit)}
 
 
+@app.get("/api/v1/control/packets", tags=["control"])
+async def control_packets(limit: int = 60) -> Dict[str, Any]:
+    """指令报文记录：发出的原始字节帧 + 机器人是否响应、回了什么。
+
+    与 ``/control/audit`` 的分工：审计是**操作视角**（含被闸拒的、没有报文），
+    这里是**报文视角**（线上真实跑过的字节 + 应答）。事故复盘两个都要看。
+
+    响应状态语义（前端分色直接认这些字符串）：
+      - ``ok``          收到响应且 ErrorCode == 0
+      - ``error``       收到响应但 ErrorCode != 0（附 ErrorMessage）
+      - ``no_response`` 超时未响应 —— **不代表车没执行**，basic_server 对部分
+                        指令执行了但并不回帧；这是"不知道"，不是"失败"
+      - ``send_failed`` 本地 socket 都没发出去（没上线）
+      - ``rejected``    被安全闸拦下，从未生成报文
+      - ``pending``     已发出、还在等
+    """
+    return _svc().command_log.snapshot(limit)
+
+
+# ---------------------------------------------------------------- 机器人设置（M4）
+@app.get("/api/v1/robot/config", tags=["robot"])
+async def robot_config() -> Dict[str, Any]:
+    """补光灯 / 首启回零 / 休眠配置 的当前值。
+
+    三条来源性质不同（详见 ``MonitorService.robot_config``），最重要的差异是
+    **补光灯自动就有、另两项必须主动问**。拿到 ``known=False`` 时前端显示
+    "未知"，不要显示成"关闭"——那是凭空断言。
+    """
+    return {"ok": True, **_svc().robot_config()}
+
+
+@app.post("/api/v1/robot/config/refresh", tags=["robot"])
+async def robot_config_refresh() -> Dict[str, Any]:
+    """发查询指令（1101/11 + 1101/7）。应答异步到达，请 2s 后再读 GET。"""
+    return _svc().robot_config_refresh()
+
+
+@app.post("/api/v1/robot/light", tags=["robot"])
+async def robot_light(req: LightRequest) -> Dict[str, Any]:
+    """前后补光灯 (1101/2)。
+
+    **闭环校验**：下发只回 ErrorCode（不回状态），真正的状态在设备帧
+    ``Led.Fill`` 里，约 1s 后翻转。前端应当"下发 → 等 1.5s → 读设备帧比对"，
+    与 GPS 模式切换的回读校验同套路。
+    """
+    s = _svc()
+    return s.control.execute("light", {"front": 1 if req.front else 0,
+                                       "back": 1 if req.back else 0})
+
+
+@app.post("/api/v1/robot/auto_reset", tags=["robot"])
+async def robot_auto_reset(req: AutoResetRequest) -> Dict[str, Any]:
+    """首启回零开关 (1101/10)。
+
+    ⚠️ **车侧对这条指令不回帧**（2026-10-18 实测）。所以这里的 ``result=ok``
+    只表示"报文发出去了"，**不代表生效**。是否生效必须再发 1101/11 回读，
+    前端要点亮"已验证"标记就得走这一步。
+    """
+    s = _svc()
+    out = s.control.execute("auto_reset_set", {"enable": bool(req.enable)},
+                            confirmed=req.confirmed)
+    if out.get("ok"):
+        out["verify_hint"] = "该指令无应答，请发 1101/11 回读确认是否生效"
+    return out
+
+
+@app.post("/api/v1/robot/sleep", tags=["robot"])
+async def robot_sleep(req: SleepConfigRequest) -> Dict[str, Any]:
+    """休眠设置 (1101/6)。
+
+    三种用法差异很大，别混：
+      - ``sleep=false``               → **唤醒整车**（同时也是"只改配置"的载体：
+                                        改 Auto/Time 时 sleep 留 false 不会休眠）
+      - ``sleep=true``                → 整车休眠，会趴下并依次断电，需 confirmed
+      - ``auto=true/false, minutes``  → 只改自动休眠策略，不立即休眠
+    """
+    # 车侧会把 Time 夹取到 5~30（2026-10-18 实测：12→生效、60→30、3→5，且不回
+    # 错误码），Auto 照常生效。也就是说用户填 60 会被静默降成 30 —— 必须在这里
+    # 就拒掉并说清楚，而不是发给车侧让它静默夹取。
+    if not 5 <= req.minutes <= 30:
+        return {"ok": False, "command": "sleep", "reason": "MINUTES_OUT_OF_RANGE",
+                "status": 409,
+                "detail": "休眠时长必须在 5~30 分钟之间（车侧只接受该范围，当前 %r）" % req.minutes}
+    s = _svc()
+    return s.control.execute("sleep", {"enable": bool(req.sleep),
+                                       "auto": bool(req.auto),
+                                       "minutes": req.minutes},
+                             confirmed=req.confirmed)
+
+
+# ---------------------------------------------------------------- 热点（M4）
+@app.get("/api/v1/net/ap", tags=["net"])
+async def net_ap_status() -> Dict[str, Any]:
+    """M20 自身热点 + 上行链路的状态。
+
+    两个对象一起给是因为**它们共用一块射频**：只看 AP 会漏掉"改 AP 会不会
+    拖垮上行"这个真正的风险源。
+    """
+    try:
+        return ap_ctl.status()
+    except ap_ctl.ApControlError as exc:
+        return JSONResponse(
+            {"ok": False, "reason": exc.reason, "detail": str(exc)},
+            status_code=exc.status)
+
+
+@app.post("/api/v1/net/ap", tags=["net"])
+async def net_ap_set(req: ApSetRequest) -> Dict[str, Any]:
+    """改热点的 SSID / 密码（只开放这两项）。
+
+    不开放频段与信道：AP 与上行共用射频，改了会与上行走不同信道，
+    结果是 AP 起不来或直接把上行（我们的 SSH 通路）带下去。
+
+    失败时 ``result=rolled_back`` 表示已自动还原——**上行掉线一定会回滚**。
+    """
+    try:
+        return ap_ctl.set_ap(ssid=req.ssid, password=req.password,
+                             confirmed=req.confirmed)
+    except ap_ctl.ApControlError as exc:
+        return JSONResponse(
+            {"ok": False, "reason": exc.reason, "detail": str(exc)},
+            status_code=exc.status)
+
+
 # ---------------------------------------------------------------- 视频（M3）
+@app.get("/api/v1/video/service", tags=["video"])
+async def video_service_status() -> Dict[str, Any]:
+    """视频推流服务的状态（两条链：本地推流 / 外推中继）。
+
+    与 ``/api/v1/video/status`` 的分工：那个看的是**取流侧**（MediaMTX 能否
+    拉流），这里看的是**推流服务侧**（进程在不在、有没有真的在出流、以及
+    能不能启停）。画面黑掉时两个都要看：进程活着但没流是最常见的一种坏法。
+
+    **两条链不是一回事**：``local`` 是喂控制台画面的；``relay`` 是往外推的，
+    关掉它控制台照旧能看到画面。
+    """
+    try:
+        return video_service.status()
+    except video_service.VideoServiceError as exc:
+        return {"ok": False, "reason": exc.reason, "detail": str(exc),
+                "targets": {}}
+
+
+@app.post("/api/v1/video/service", tags=["video"])
+async def video_service_control(req: VideoServiceRequest) -> Dict[str, Any]:
+    """启动 / 停止 / 重启推流服务（``stop`` 需 ``confirmed=true``）。
+
+    ⚠️ 这**不是机器人指令**，不受控制闸（L1/租约）约束：它是 AOS 本机服务，
+    与机器人运动无关。而且"画面黑了想重启推流"很可能正好发生在控制通道没
+    打开的时候 —— 把恢复手段锁在 L1 后面才是错的。
+    """
+    try:
+        return video_service.control(req.target_local, req.action, req.confirmed)
+    except video_service.VideoServiceError as exc:
+        return {"ok": False, "reason": exc.reason, "detail": str(exc),
+                "status": exc.status}
+
+
 @app.get("/api/v1/video/status", tags=["video"])
 async def video_status() -> Dict[str, Any]:
     """视频代理状态；`available=False` 时前端显示"视频中断"而非白屏。"""

@@ -44,9 +44,27 @@ body {
   gap: 8px 12px;
 }
 
-.kv { display: flex; justify-content: space-between; gap: 8px; }
-.kv span:first-child { color: var(--muted); }
-.kv span:last-child { font-variant-numeric: tabular-nums; }
+/* 键值行：标签可截断、**数值绝不换行**。
+   2026-10-17 修复「实际 转向 ω 0.003 rad/s」动不动就折行：
+   ① 值 span 没有 nowrap，空间一紧就把 "0.003" 和 "rad/s" 拆成两行 → 行高突变；
+   ② 数字符号位（负号）出现/消失会改变占位宽度。
+   对策：值 `white-space: nowrap` + `flex: 0 0 auto`（永远完整显示），
+   标签 `flex: 1 1 auto` 且空间不足时省略号 —— **数值优先**。 */
+.kv { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.kv span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.kv span:last-child {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  /* 等宽数字：位数增减（含负号）不再引起宽度跳动 */
+  font-variant-numeric: tabular-nums;
+}
 
 /* stale：面板置灰（PLAN §6.2 降级语义） */
 .stale { opacity: 0.45; filter: grayscale(0.7); }

@@ -6,6 +6,8 @@
 3. **运动前置校验 + 值域钳制** —— 轴指令要求 MotionState∈{站立,RL控制} 且常规模式；
    值域在服务端二次截断（浏览器不是可信边界）
 4. **全量审计日志** —— 谁/何时/发了什么/结果，有界留存
+5. **设备供电开关专项**（2026-10-17 加，1101/3）—— 关闭需二次确认；
+   站立/RL 态禁关雷达（平衡参考输入，见 ``_check_device_switch``）
 
 **软急停永远可用**：安全手段优先于开关，L0 下也能发（ADR-004）。
 
@@ -20,9 +22,10 @@ from collections import deque
 from typing import Any, Callable, Deque, Dict, List, Optional
 
 from control import patrol_codec
-from errors import (ControlBlacklistError, ControlDisabledError, ControlError,
-                    ControlLeaseError, ControlPreconditionError,
-                    ControlTelemetryError)
+from control.command_log import CommandLog
+from errors import (ControlBlacklistError, ControlConfirmError,
+                    ControlDisabledError, ControlError, ControlLeaseError,
+                    ControlPreconditionError, ControlTelemetryError)
 from logging_setup import get_logger
 
 logger = get_logger("control.gateway")
@@ -59,14 +62,32 @@ class RecordingSink(ControlSink):
 
 
 class UdpControlSink(ControlSink):
-    """真实 UDP 出口（发往 AOS :30000）。"""
+    """真实 UDP 出口（发往 AOS :30000）。
 
-    def __init__(self, target_ip: str, target_port: int, sock: Any = None) -> None:
+    **2026-10-17 补上接收侧**：basic_server 把指令应答发回**请求的源地址**
+    （实测：从同一 socket 发 ``1101/7`` 就能在同一 socket 收到
+    ``{"Sleep":0,"Auto":false,"Time":10}``）。此前本类只发不收 —— 应答全堵在
+    socket 缓冲区里，报文记录因此永远标 ``no_response``。现在起一个守护线程
+    专收应答并转交 ``on_response`` 回调（范式与 ``UdpHeartbeatSource._rx_loop``
+    一致），指令链路与遥测链路仍是两个独立 socket，互不影响。
+
+    ⚠️ 回调运行在接收线程中：``CommandLog.on_response`` 已按"单次原子操作"
+    设计（deque/dict 的 append/popleft），可安全跨线程调用。
+    """
+
+    def __init__(self, target_ip: str, target_port: int, sock: Any = None,
+                 on_response: Optional[Callable[[bytes], None]] = None,
+                 timeout: float = 0.2) -> None:
         self.target_ip = target_ip
         self.target_port = target_port
         self._sock = sock
         self._owns_socket = sock is None
         self.failed = 0
+        self.received_responses = 0
+        self._on_response = on_response
+        self._timeout = float(timeout)
+        self._rx_thread: Optional[Any] = None
+        self._running = False
 
     def _ensure_socket(self) -> None:
         if self._sock is None:
@@ -75,6 +96,7 @@ class UdpControlSink(ControlSink):
 
     def send(self, payload: bytes) -> bool:
         self._ensure_socket()
+        self._ensure_rx()
         try:
             self._sock.sendto(payload, (self.target_ip, self.target_port))
             return True
@@ -83,7 +105,48 @@ class UdpControlSink(ControlSink):
             logger.warning("控制指令发送失败: %s", exc)
             return False
 
+    # ------------------------------------------------------------ 接收侧
+    def _ensure_rx(self) -> None:
+        """惰性启动接收线程（首次发送时）—— 不发送就没有应答可收。"""
+        if self._running or self._on_response is None:
+            return
+        import threading
+        self._ensure_socket()
+        # 必须设超时，否则 close() 时线程会永久阻塞在 recvfrom 上
+        self._sock.settimeout(self._timeout)
+        self._running = True
+        self._rx_thread = threading.Thread(target=self._rx_loop,
+                                           name="m20-ctrl-rx", daemon=True)
+        self._rx_thread.start()
+        logger.info("控制出口接收线程已启动（收指令应答 → 报文记录）")
+
+    def _rx_loop(self) -> None:
+        while self._running:
+            try:
+                data, _addr = self._sock.recvfrom(65535)
+            except OSError:
+                # timeout（正常轮询）或 socket 已关闭 → 退出
+                if not self._running:
+                    break
+                continue
+            except Exception as exc:  # noqa: BLE001 - 接收线程绝不拖死主流程
+                logger.warning("控制出口接收异常: %s", exc)
+                continue
+            if not data:
+                continue
+            self.received_responses += 1
+            if self._on_response is None:
+                continue
+            try:
+                self._on_response(data)
+            except Exception as exc:  # noqa: BLE001 - 回调异常不影响接收循环
+                logger.warning("指令应答回调异常: %s", exc)
+
+    def stats(self) -> Dict[str, int]:
+        return {"failed": self.failed, "received_responses": self.received_responses}
+
     def close(self) -> None:
+        self._running = False
         if self._sock is not None and self._owns_socket:
             self._sock.close()
         self._sock = None
@@ -97,6 +160,8 @@ class ControlGateway:
                  axis_min: float = -0.40, axis_max: float = 0.40,
                  state_provider: Optional[Callable[[], Dict[str, Any]]] = None,
                  telemetry_provider: Optional[Callable[[], bool]] = None,
+                 device_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+                 command_log: Optional[CommandLog] = None,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self._sink = sink
         self._enabled = bool(enabled)
@@ -108,6 +173,12 @@ class ControlGateway:
         self._telemetry_provider = telemetry_provider
         self._clock = clock
 
+        #: 供"设备开关是否真的在关闭"的精确判定读取当前 ``DevEnable``
+        #: （见 ``_check_device_switch``：只看目标值会把"保持不变"误判成关闭）
+        self._device_provider = device_provider
+        #: 报文记录（2026-10-17 加）：留下发出的原始字节帧 + 机器人响应。
+        #: ``None`` = 不记录（mock/单测可关）
+        self.command_log = command_log
         self._lease_until = 0.0
         self._estop = False
         self._audit: Deque[Dict[str, Any]] = deque(maxlen=int(audit_size))
@@ -127,11 +198,8 @@ class ControlGateway:
 
     def disable(self) -> None:
         """停用：先补发零位，再关闭开关。"""
-        try:
-            self._send_raw(patrol_codec.encode("axis", {
-                "x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}))
-        except ControlError:
-            pass
+        # 复用 send_safety_zero：它已豁免全部闸并落报文记录（留证"停用前最后发了什么"）
+        self.send_safety_zero(actor="gateway", reason="disable")
         self._enabled = False
         self._lease_until = 0.0
         logger.info("控制通道已停用（回到 L0 只监）")
@@ -159,7 +227,13 @@ class ControlGateway:
     def emergency_stop(self) -> Dict[str, Any]:
         """软急停：**不受开关限制**（安全手段优先）。"""
         self._estop = True
-        ok = self._send_raw(patrol_codec.encode("soft_estop"))
+        msg = patrol_codec.build("soft_estop")
+        payload = patrol_codec.encode("soft_estop")
+        self._log_sent("soft_estop", msg, payload, actor="web", forced=True)
+        ok = self._send_raw(payload)
+        if not ok and self.command_log is not None:
+            self.command_log.record_send_failed(
+                "soft_estop", msg["type"], msg["command"], msg["items"], payload)
         self._audit_append("soft_estop", {}, "ok" if ok else "send_failed", forced=True)
         return {"ok": ok, "estop": True}
 
@@ -176,13 +250,20 @@ class ControlGateway:
         与正在控制的通道一致，确保同一订阅方立刻看到零位。
         """
         params = {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}
-        ok = self._send_raw(patrol_codec.encode(command, params))
+        payload = patrol_codec.encode(command, params)
+        msg = patrol_codec.build(command, params)
+        # 安全零位帧也必须留证：事故复盘时"停机前最后发的是什么"是关键证据
+        self._log_sent(command, msg, payload, actor=actor, forced=True)
+        ok = self._send_raw(payload)
+        if not ok and self.command_log is not None:
+            self.command_log.record_send_failed(
+                command, msg["type"], msg["command"], msg["items"], payload)
         self._audit_append(command, params, "ok" if ok else "send_failed",
                            actor=actor, forced=True, reason=reason or "safety_zero")
         return ok
 
-    def precheck(self, name: str, params: Optional[Dict[str, Any]] = None
-                 ) -> Optional[Dict[str, Any]]:
+    def precheck(self, name: str, params: Optional[Dict[str, Any]] = None,
+                 confirmed: bool = False) -> Optional[Dict[str, Any]]:
         """仅过闸、不发送（供"先验后行"场景：定时移动等需要即时反馈的入口）。
 
         返回 ``None`` = 通过；否则返回与 ``execute()`` 同构的拒绝信息。
@@ -197,6 +278,8 @@ class ControlGateway:
             self._check_telemetry(name)
             self._check_lease(name)
             self._check_precondition(name)
+            self._check_device_switch(name, params, confirmed)
+            self._check_confirm(name, params, confirmed)
             return None
         except ControlError as exc:
             self.rejected_packets += 1
@@ -218,9 +301,24 @@ class ControlGateway:
             self._check_telemetry(name)
             self._check_lease(name)
             self._check_precondition(name)
-            params = self._clamp_params(name, params)
-            payload = patrol_codec.encode(name, params)
+            self._check_device_switch(name, params, confirmed)
+            self._check_confirm(name, params, confirmed)
+            try:
+                params = self._clamp_params(name, params)
+                payload = patrol_codec.encode(name, params)
+            except (KeyError, ValueError) as exc:
+                # 编码层白名单/值域校验失败 = 调用方参数问题，不是安全事件，
+                # 但同样要走审计与计数（前端"点了没反应"要能查到原因）。
+                raise ControlError(str(exc), reason="BAD_PARAMS", status=400)
+            # 报文记录：先落"已生成报文"，再发送 —— 顺序反了会漏掉
+            # "socket 刚发出去那一下"的记录（send_failed 也要有据可查）。
+            msg = patrol_codec.build(name, params)
+            self._log_sent(name, msg, payload, actor=actor, confirmed=confirmed)
             ok = self._send_raw(payload)
+            if not ok and self.command_log is not None:
+                self.command_log.record_send_failed(
+                    name, msg["type"], msg["command"], msg["items"], payload,
+                    detail="UDP socket 发送失败")
             result = "ok" if ok else "send_failed"
             self.sent_packets += 1
             self.last_command = name
@@ -233,9 +331,16 @@ class ControlGateway:
         except ControlError as exc:
             self.rejected_packets += 1
             self.last_error = str(exc)
+            reason = getattr(exc, "reason", "rejected")
             self._audit_append(name, params, "rejected", actor=actor,
-                               confirmed=confirmed, reason=getattr(exc, "reason", "rejected"))
-            return {"ok": False, "command": name, "reason": getattr(exc, "reason", "rejected"),
+                               confirmed=confirmed, reason=reason)
+            # 被拦下的也进报文记录（frame_hex=None）—— 否则用户"点了没反应"
+            # 在报文面板里完全看不到，只会以为面板坏了。
+            if self.command_log is not None:
+                self.command_log.record_rejected(
+                    name, params, reason=reason, detail=str(exc),
+                    actor=actor, confirmed=confirmed)
+            return {"ok": False, "command": name, "reason": reason,
                     "detail": str(exc), "status": getattr(exc, "status", 403)}
 
     def _check_blacklist(self, name: str, params: Dict[str, Any]) -> None:
@@ -303,6 +408,76 @@ class ControlGateway:
             raise ControlPreconditionError(
                 "轴指令仅支持常规模式（ControlUsageMode=0），当前=%s" % mode)
 
+    def _check_device_switch(self, name: str, params: Dict[str, Any],
+                             confirmed: bool) -> None:
+        """闸 5：设备供电开关（1101/3）的安全约束。
+
+        这条指令能**物理断电**任何设备，比运动指令更"硬"——断错的后果不可逆
+        （相机断电 → /dev/video* 消失 + 推流 404；雷达断电 → 感知输入消失）。
+
+        两条约束：
+        1. **关闭必须二次确认** —— 断电不可逆，前端 confirm 后才会带 confirmed=True。
+        2. **运动中禁关雷达** —— 站立/RL 态下雷达是运控的平衡参考输入，
+           保守起见直接拒绝（开启随时允许）。厂商 App 不拦，但我们拦：
+           真机连摔过两次，这类风险不该交给"手快点错"。
+        """
+        if name != "device_switch":
+            return
+        items = params.get("items") or {}
+        # ★必须带上"当前 DevEnable"再判定"是否在关闭"：Items 是**整键覆写**，
+        #   开前相机时会带上 {"Back":0}（保持后相机原本就关着），只看目标值会
+        #   把这个 0 误判成关闭操作 → 要求二次确认 → 前端没弹框就发 → 用户看到
+        #   "点开启被拒"（2026-10-17 真踩，回归测试已锁）。
+        current = None
+        if self._device_provider is not None:
+            try:
+                current = (self._device_provider() or {}).get("dev_enable")
+            except Exception:  # noqa: BLE001 - 状态读取异常不阻塞安全判定
+                current = None
+        if not patrol_codec.device_switch_turns_off(items, current):
+            return                      # 纯开启 / 调高 / 状态未变，不设额外闸
+        if not confirmed:
+            raise ControlConfirmError(
+                "关闭设备供电属不可逆操作，需前端二次确认（confirmed=true）")
+        if self._state_provider is None:
+            return
+        state = self._state_provider() or {}
+        basic = state.get("basic") if "basic" in state else state
+        basic = basic or {}
+        motion_state = basic.get("motion_state")
+        # 运动锁同样按"当前是否开着"判定：关正在运行的雷达才算危险动作
+        cur_lid = (current or {}).get("Lidar")
+        cur_lid = cur_lid if isinstance(cur_lid, dict) else {}
+        locked = [k for k in patrol_codec.DEVICE_SWITCH_MOTION_LOCKED
+                  if any(patrol_codec._as_int(v) == 0
+                         and (current is None or patrol_codec._as_int(cur_lid.get(s)) != 0)
+                         for s, v in (items.get(k) or {}).items())]
+        if locked and motion_state in (patrol_codec.MOTION_STAND,
+                                       patrol_codec.MOTION_RL):
+            raise ControlPreconditionError(
+                "运动中禁止关闭 %s 供电（当前 MotionState=%s，站立/RL 态下雷达是"
+                "运控平衡参考输入）；请先「趴下」或「软急停」再关"
+                % ("/".join(locked), motion_state))
+
+    def _check_confirm(self, name: str, params: Dict[str, Any],
+                       confirmed: bool) -> None:
+        """闸 6：整车行为类指令的二次确认（2026-10-18 加）。
+
+        与闸 5（设备供电）分工：闸 5 管"会不会掉硬件"，本闸管"整车会不会
+        改变行为/丢掉安全动作"。只对**危险方向**拦——
+          · 整车休眠（1101/6）：车侧依次关 LED→风扇→视频→关节供电，会趴下；
+          · 关掉"首次站立前回零"（1101/10）：下次开机不标定直接站立。
+        反向操作（唤醒、开启回零）不拦。
+        """
+        if not patrol_codec.needs_confirm(name, params):
+            return
+        why = {
+            "sleep": "整车休眠会依次关闭 LED/风扇/视频/关节供电并趴下",
+            "auto_reset_set": "关闭后开机首次站立不再回零，关节位置未经标定",
+        }.get(name, "该操作会改变整车行为")
+        if not confirmed:
+            raise ControlConfirmError("%s，需前端二次确认（confirmed=true）" % why)
+
     def _clamp_params(self, name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """闸 3：值域钳制（服务端二次截断）——两条轴通道同构，都要钳。"""
         if name in ("axis", "axis_real"):
@@ -315,6 +490,17 @@ class ControlGateway:
 
     def _send_raw(self, payload: bytes) -> bool:
         return self._sink.send(payload)
+
+    def _log_sent(self, name: str, msg: Dict[str, Any], payload: bytes,
+                  actor: str = "web", confirmed: bool = False,
+                  forced: bool = False) -> None:
+        """把一条已编码指令落入报文记录（``command_log`` 为 None 时静默跳过）。"""
+        if self.command_log is None:
+            return
+        self.command_log.record_sent(
+            name=name, type_=msg["type"], command=msg["command"],
+            items=msg.get("items"), frame=payload, actor=actor,
+            confirmed=confirmed, forced=forced)
 
     # ------------------------------------------------------ 审计 / 状态
     def _audit_append(self, name: str, params: Dict[str, Any], result: str,

@@ -5,13 +5,14 @@
 协议真相（PROTOCOL.md §1/§2，docs/04 §1.3 原文核实）：
     16 字节二进制帧头 + UTF-8 JSON 信封 {"PatrolDevice": {Type, Command, Time, Items}}
     帧头 = EB 91 EB 90(4) + dataSize LE16(2) + messageID LE16(2) + protocolType(1) + RESERVE(7×00)
+    ⚠️ 帧头 magic 有第二个取值 ``EB 90 EB 90``（厂商 App），DeviceControl 类
+    指令（1101/3）只认它 —— 见 ``HEAD_TAG_AUTHORIZED``。
 
 本文件同时提供帧头编解码原语（``encode_frame`` / ``decode_frame``）；控制出口
 ``patrol_codec`` 复用 ``encode_frame``，避免帧格式在两处各写一遍。
 
 ⚠️ Python 3.8 兼容（196 实测 3.8.10）。
 """
-
 from __future__ import annotations
 
 import json
@@ -25,7 +26,29 @@ from logging_setup import get_logger
 logger = get_logger("ingestion.parser")
 
 # ---------------------------------------------------------------- 帧格式常量
+#: 默认帧头 magic —— 第三方/SDK 客户端标识（控制台一直用这个，运动/查询类指令均正常）。
 HEAD_TAG = b"\xeb\x91\xeb\x90"
+#: 授权帧头 magic —— **厂商 App 使用的客户端标识**。
+#:
+#: 2026-10-17 真机取证（tcpdump 抓厂商 App + 我们自己下发对照）：
+#: basic_server 对 **DeviceControl 类指令（Type=1101 / Command=3 设备开关写入）**
+#: 会校验该 magic —— 用 ``EB 91 EB 90`` 一律回
+#: ``ErrorCode 57351 / "No operation permission"``；换成 ``EB 90 EB 90`` 立即执行。
+#:
+#: 实测该 magic 对其余指令**完全等价**（心跳 100/100、休眠查询 1101/7、照明灯 1101/2
+#: 两种 magic 都返回 ErrorCode 0），所以只在 DeviceControl 类指令上按需切换，
+#: 绝不全局替换（心跳链路已验证过，不动它 = 零回归）。
+HEAD_TAG_AUTHORIZED = b"\xeb\x90\xeb\x90"
+#: **接收侧**要认的全部 magic。
+#:
+#: 2026-10-17 抓包实证：basic_server **按「客户端注册时用的 magic」回复该客户端** ——
+#: 厂商 App 用 EB90EB90 注册，它收到的 2714 帧（含状态上报）全是 EB90EB90；
+#: 我们用心跳 socket 的 EB91EB90 注册，遥测帧就是 EB91EB90。
+#: 后果：`1101/3` 我们用授权 magic 发出去，**应答也回 EB90EB90** ——
+#: 解码器若只认 EB91EB90 就解析失败，报文记录会永远停在 ``no_response``
+#: （2026-10-17 实际踩到）。故接收侧必须两种都认。
+#: ⚠️ 放宽的是"客户端标识"，**不是完整性校验**：帧体仍要 JSON 解析通过才算合法。
+HEAD_TAGS = (HEAD_TAG, HEAD_TAG_AUTHORIZED)
 HEADER_SIZE = 16
 PROTOCOL_TYPE_JSON = 0x01
 #: struct 小端：4s 标签 + H dataSize + H messageID + B protocolType + 7x 保留
@@ -70,6 +93,94 @@ DIRECTION = {0: "正向为前进正方向", 1: "后向为前进正方向"}
 OOA = {0: "未启动", 1: "空闲", 2: "未触发避障", 3: "主动避障中"}
 POWER_MANAGEMENT = {0: "常规", 1: "单电池"}
 SLEEP_STATE = {0: "未休眠", 1: "已休眠", 2: "进入休眠中"}
+
+# ------------------------------------------------------------------------
+# 关节回零（2026-10-17 取证）
+# 1) 车侧默认开启自动回零：/opt/robot/share/basic_server/conf/basic_server.toml
+#    第 14 行 `autoResetJointsZero = true` —— 这就是"开机后第一次站立要先回零"的成因。
+# 2) BasicStatus 上报里确实带 `ResetJointsZero` 字段（真机抓包实测 = 0）。
+# 3) 运控 rl_deploy 二进制含 qw_m20::ZeroCalibrationState 状态机与 `state=SetZero`；
+#    basic_server 含 cmdHandle_ResetJointsZero / GetAutoResetJointsZero /
+#    SetAutoResetJointsZero，且约束原文
+#    "can not reset joints zero unless standing or lying down"。
+# ⚠️ 值域**未见任何官方文档**（docs/04 未收录该字段），故这里不臆造标签：
+#    只标注 0 的实测含义，其余原样透传数值 + "未知"。
+RESET_JOINTS_ZERO = {0: "无需回零"}
+
+# ---------------------------------------------------------------- GPS 卫星系统
+#: GPSMode = GNSS **系统掩码**（哪些星座参与定位）。
+#:
+#: ★来源不是推测：车侧 GNSS 驱动配置文件
+#: ``/opt/robot/share/node_driver/config/gps.yaml`` 的 ``system.sysMask`` 注释原文
+#: （2026-10-17 取证）——
+#:     bit0-GPS L1CA, bit4-BDS B1I, bit8-GLONASS L1, bit12-GALILEO E1, bit16-QZSS
+#:     默认值 0x11111 表示启用所有系统(GN模式)
+#: 该值与 ``DeviceStatus.DevEnable.GPSMode`` 上报、``1101/3`` 的 ``GPSMode`` 键同源。
+GPS_SYSTEM_BITS = (
+    (0x00001, "GPS"),       # L1CA
+    (0x00010, "BDS"),       # 北斗 B1I
+    (0x00100, "GLONASS"),   # L1
+    (0x01000, "Galileo"),   # E1
+    (0x10000, "QZSS"),      # L1
+)
+
+#: 合法位全集
+GPS_SYSTEM_MASK_ALL = 0x11111
+
+#: 预设名（同样取自 gps.yaml 的 ``system.presets`` 原文）
+GPS_MODE_PRESETS = {
+    0x00001: "仅 GPS",
+    0x00010: "仅 北斗（BDS）",
+    0x00100: "仅 GLONASS",
+    0x01000: "仅 Galileo",
+    0x10000: "仅 QZSS",
+    0x11111: "全系统（GN 模式）",
+}
+
+
+def gps_mode_systems(mode: Optional[int]) -> List[str]:
+    """掩码 → 已启用星座的中文/通用名列表（未知高位忽略）。"""
+    if mode is None:
+        return []
+    try:
+        m = int(mode)
+    except (TypeError, ValueError):
+        return []
+    return [name for bit, name in GPS_SYSTEM_BITS if m & bit]
+
+
+def gps_mode_label(mode: Optional[int]) -> Optional[str]:
+    """掩码 → 人话。
+
+    优先用官方预设名；否则列出星座组合；0 = 全关；含未知位时**显式标注**，
+    绝不假装看懂了（与 ``RESET_JOINTS_ZERO`` 处理未知值同一原则）。
+
+        0x11111 → "全系统（GN 模式）"
+        0x00001 → "仅 GPS"
+        0x00011 → "GPS + BDS"
+        0       → "全部关闭（无定位）"
+        0x20001 → "仅 GPS（含未知位 0x20000）"
+    """
+    if mode is None:
+        return None
+    try:
+        m = int(mode)
+    except (TypeError, ValueError):
+        return None
+    if m == 0:
+        return "全部关闭（无定位）"
+    systems = gps_mode_systems(m)
+    if m in GPS_MODE_PRESETS:
+        base = GPS_MODE_PRESETS[m]
+    elif not systems:
+        base = "未启用任何已知星座"
+    else:
+        base = " + ".join(systems)
+    unknown = m & ~GPS_SYSTEM_MASK_ALL
+    if unknown:
+        base = "%s（含未知位 0x%X）" % (base, unknown)
+    return base
+
 
 #: 轮足：4 腿 × 4 自由度（含轮毂），共 16 关节 —— 与 lite3 的 12 关节不同
 JOINT_LEGS = ("LF", "RF", "LB", "RB")
@@ -123,8 +234,13 @@ FIELD_CONFIDENCE: Dict[str, Dict[str, str]] = {
 
 # ---------------------------------------------------------------- 帧级编解码
 def encode_frame(type_: int, command: int, items: Optional[Dict[str, Any]] = None,
-                 message_id: int = 0, time_str: str = "") -> bytes:
-    """把 PatrolDevice 消息编码为「16 字节帧头 + JSON」字节流。"""
+                 message_id: int = 0, time_str: str = "",
+                 head_tag: bytes = HEAD_TAG) -> bytes:
+    """把 PatrolDevice 消息编码为「16 字节帧头 + JSON」字节流。
+
+    ``head_tag`` 默认 ``HEAD_TAG``；DeviceControl 类指令需传
+    ``HEAD_TAG_AUTHORIZED``（见该常量说明）。
+    """
     envelope = {
         "PatrolDevice": {
             "Type": int(type_),
@@ -134,7 +250,8 @@ def encode_frame(type_: int, command: int, items: Optional[Dict[str, Any]] = Non
         }
     }
     body = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
-    header = HEADER_STRUCT.pack(HEAD_TAG, len(body), message_id & 0xFFFF, PROTOCOL_TYPE_JSON)
+    header = HEADER_STRUCT.pack(head_tag, len(body), message_id & 0xFFFF,
+                                PROTOCOL_TYPE_JSON)
     return header + body
 
 
@@ -146,7 +263,7 @@ def decode_frame(data: bytes) -> Dict[str, Any]:
     if len(data) < HEADER_SIZE:
         raise ProtocolError("帧长 %d < 帧头 16 字节" % len(data))
     tag, data_size, message_id, protocol_type = HEADER_STRUCT.unpack_from(data, 0)
-    if tag != HEAD_TAG:
+    if tag not in HEAD_TAGS:
         raise ProtocolError("帧头标签不匹配: %s" % tag.hex())
     if protocol_type != PROTOCOL_TYPE_JSON:
         raise ProtocolError("protocolType=%d 非 JSON（本期只支持 0x01）" % protocol_type)
@@ -166,10 +283,25 @@ def decode_frame(data: bytes) -> Dict[str, Any]:
         "time": msg.get("Time", ""),
         "items": msg.get("Items", {}) or {},
         "message_id": message_id,
+        #: 实际帧头 magic —— 让上层能看出这条帧走的是默认还是授权通道
+        "head_tag": tag.hex(),
     }
 
 
 # ---------------------------------------------------------------- 字段映射
+def _hex16(value: Any) -> Optional[str]:
+    """整数 → ``0x11111`` 形式（按 5 位十六进制，与 gps.yaml 的写法保持一致）。
+
+    非整数原样返回 ``str`` —— 协议字段的类型不该在这一层被"修正"。
+    """
+    if value is None:
+        return None
+    try:
+        return "0x%05X" % int(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def _label(table: Dict[int, str], value: Any) -> str:
     try:
         return table.get(int(value), "未知(%s)" % value)
@@ -195,6 +327,13 @@ def _map_basic(items: Dict[str, Any]) -> Dict[str, Any]:
         "sleep": s.get("Sleep"),
         "sleep_label": _label(SLEEP_STATE, s.get("Sleep")),
         "version": s.get("Version"),
+        # 关节回零（docs/04 未收录；真机 BasicStatus 实测存在）
+        "status_code": s.get("StatusCode"),
+        "reset_joints_zero": s.get("ResetJointsZero"),
+        "reset_joints_zero_label": (
+            _label(RESET_JOINTS_ZERO, s.get("ResetJointsZero"))
+            if s.get("ResetJointsZero") == 0 else "回零中/待回零(%s)" % s.get("ResetJointsZero")
+        ),
     }
 
 
@@ -246,6 +385,25 @@ def _map_device(items: Dict[str, Any]) -> Dict[str, Any]:
     bs = items.get("BatteryStatus", {}) or {}
     temps = items.get("DeviceTemperature", {}) or {}
     motors = temps.get("Motor")
+    # ---- 分设备使能（2026-10-17 取证）----
+    # DevEnable 真机实测结构：
+    #   {"FanSpeed":100,"LoadPower":1,"LedHost":1,"LedExt":1,"FP":1,
+    #    "Lidar":{"Front":0,"Back":0},"GPS":1,"GPSMode":69905,
+    #    "Video":{"Front":1,"Back":1}}
+    # ⚠️ 关键结论：这是**供电使能状态**，但协议 docs/04 只暴露整车休眠(1101/6)
+    #    作为开关手段；basic_server 内部虽按 VIDEO_POWER / LIDAR_POWER /
+    #    JOINTS_POWER / LED_FILL / FAN_SPEED 分通道控制（见其运行日志），
+    #    UDP 侧未公开单设备开关指令编号。故此处只做**状态呈现**，不做下发。
+    dev = items.get("DevEnable") or {}
+    lidar = dev.get("Lidar") or {}
+    video = dev.get("Video") or {}
+    fill = (items.get("Led") or {}).get("Fill") or {}
+    # GPS（1002/5 DeviceStatus.GPS）：真机实测字段
+    #   {"Latitude":0.0,"Longitude":0.0,"Speed":0.0,"Course":0.0,"FixQuality":0,
+    #    "NumSatellites":0,"Altitude":0.0,"HDOP":0.0,"VDOP":0.0,"PDOP":0.0,
+    #    "VisibleSatellites":0}
+    # ⚠️ 单位未见官方文档（docs/04 未收录 GPS 字段说明）→ 不做任何换算，原样透传。
+    gp = items.get("GPS") or {}
     return {
         "batteries": batteries,
         "battery_count": len(batteries),
@@ -264,8 +422,44 @@ def _map_device(items: Dict[str, Any]) -> Dict[str, Any]:
         "motor_temperatures": list(motors) if isinstance(motors, list) else [],
         "temperature_keys": sorted(temps.keys()),
         "gps": items.get("GPS"),
+        # 细粒度：供 GPS 标签页逐项呈现
+        "gps_latitude": gp.get("Latitude"),
+        "gps_longitude": gp.get("Longitude"),
+        "gps_speed": gp.get("Speed"),
+        "gps_course": gp.get("Course"),
+        "gps_fix_quality": gp.get("FixQuality"),
+        "gps_num_satellites": gp.get("NumSatellites"),
+        "gps_altitude": gp.get("Altitude"),
+        "gps_hdop": gp.get("HDOP"),
+        "gps_vdop": gp.get("VDOP"),
+        "gps_pdop": gp.get("PDOP"),
+        "gps_visible_satellites": gp.get("VisibleSatellites"),
         "led": items.get("Led"),
         "dev_enable": items.get("DevEnable"),
+        # ★补光灯（前后照明）：1101/2 下发、设备帧 Led.Fill 回读（2026-10-18 实证）
+        # 真机实测 items.Led = {"Fill":{"Front":1,"Back":1}} —— 下发 1101/2
+        # {"Front":1,"Back":1} 后约 1s 内该值同步翻转，可作为**闭环校验**依据。
+        # ⚠️ 它不在 DevEnable 里（DevEnable 只有 LedHost/LedExt 两个**指示灯**），
+        #    别把两者混为一谈：LedHost 是电源指示灯，Led.Fill 是照明补光灯。
+        "fill_front": (fill or {}).get("Front"),
+        "fill_back": (fill or {}).get("Back"),
+        # 细粒度：供前端按标签页分区展示（相机页 / 运动控制页 / GPS 页）
+        "video_front": video.get("Front"),
+        "video_back": video.get("Back"),
+        "lidar_front": lidar.get("Front"),
+        "lidar_back": lidar.get("Back"),
+        "gps_enable": dev.get("GPS"),
+        "gps_mode": dev.get("GPSMode"),
+        # GPSMode 是人看不懂的系统掩码 → 解成"哪些星座在参与定位"（见 GPS_SYSTEM_BITS）
+        "gps_mode_hex": _hex16(dev.get("GPSMode")),
+        "gps_mode_label": gps_mode_label(dev.get("GPSMode")),
+        "gps_systems": gps_mode_systems(dev.get("GPSMode")),
+        "led_host": dev.get("LedHost"),
+        "led_ext": dev.get("LedExt"),
+        "load_power": dev.get("LoadPower"),
+        "fan_speed": dev.get("FanSpeed"),
+        # 对频模块（遥控器配对）供电；真机 DevEnable 里字段名就是 FP
+        "fp": dev.get("FP"),
         "cpu": items.get("CPU"),
     }
 

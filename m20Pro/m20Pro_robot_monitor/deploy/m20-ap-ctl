@@ -1,0 +1,377 @@
+#!/bin/bash
+# m20-ap-ctl —— M20 自身 WiFi 热点的**受控**读写入口（root:root 0755）
+#
+# 为什么要有它：改热点要 root，控制台跑在普通用户 user。给 nmcli 全权不合适，
+# 于是收成"只干 AP 这一件事"的入口，sudoers 只放行它。
+#
+# 用法：
+#   m20-ap-ctl status
+#   echo -e 'ssid=xxx\npassword=yyy' | m20-ap-ctl set --confirmed
+#
+# ★ 新值走 **stdin** 而不是命令行参数，两个原因：
+#   1. 密码出现在 argv 里 = 任何本地用户 `ps` 一下就能看见 WiFi 密码；
+#   2. 走 stdin 后 sudoers 只需放行两条**不含通配符**的命令 ——
+#      参数化命令行必须在 sudoers 里写 `set --ssid * --confirmed`，
+#      而 sudoers 的 `*` 是能跨空格匹配的，那是条不该开的口子。
+#
+# ============================================================
+# ★★ 改热点必须用**厂商自己的路径**，不能 nmcli con modify ★★
+#    （2026-10-18 真机取证，两条路都实跑过）
+#
+#   厂商把热点名与密码存在两个**明文文件**里，靠重建连接生效：
+#     名：/var/opt/robot/conf/host_name      （取前 12 字节，会自动补 _24G 后缀）
+#     密：/opt/robot/scripts/wifi/password   （取前 16 字节）
+#     生效：/opt/robot/scripts/board_resources/wifi/ap_start.sh start 24G
+#           它先 `nmcli c delete myap...` 再 `nmcli c add` 重建。
+#
+#   为什么不能用 nmcli con modify（实测结论，别再试一遍）：
+#     · 连接处于激活态时改 SSID 不生效，`con up` 也不会重新应用；
+#     · 先 `con down` 再改，会撞上"AP 关停 → wlan0 消失 → 连接短暂不存在"
+#       的窗口，`nmcli con modify` 直接报 unknown connection（rc=10）；
+#     · 就算改成了，机器重启时 host_start.sh 又会照着文件重建，改的东西丢。
+#
+#   实测结果：走文件 + ap_start.sh，**上联 p2p0 全程 100 connected 不掉**。
+#
+# ★ 三条实测纪律：
+#   1. SSID 会被强制补 `_24G` 后缀 —— 传进来的名字要先剥掉后缀存 base；
+#   2. ap_start.sh 返回后 AP 要几秒才 activated，**必须轮询**，
+#      采一次就下结论会把正常操作误判成失败；
+#   3. 全程只碰 AP，绝不碰上行；改完必须复查上行仍在，不在就回滚救上行。
+#
+# 输出：key=value 文本（与 backend/net/ap_ctl.py 约定的协议）。
+set -u
+
+AP_SCRIPT=/opt/robot/scripts/board_resources/wifi/ap_start.sh
+HOST_NAME_FILE=/var/opt/robot/conf/host_name
+PASSWORD_FILE=/opt/robot/scripts/wifi/password
+
+# ---------------------------------------------------------------- 取值工具
+# ⚠️ 全文件统一"先捕获再兜底"，绝不写 `cmd || echo fallback`：
+#    命令失败时它自己会打印一次、|| 又补一次，输出里会出现 `000000unknown`
+#    这种两行粘在一起的脏数据（同一种坑在本项目里踩过三次）。
+grab() {  # grab <命令...> -> 输出，失败给空串
+  local v
+  v=$("$@" 2>/dev/null || true)
+  printf '%s' "${v:-}"
+}
+
+field() { printf '%s' "$(grab "$@" | head -1 | tr -d '\r')"; }
+
+# ---------------------------------------------------------------- 发现连接
+ap_connection() {
+  # 名字不能直接写死：不同批次/频段可能叫 myap24G / myap50G。
+  # 判据 = 802-11-wireless.mode == ap（而不是靠名字里有没有 "ap"）。
+  local con mode
+  while IFS=: read -r con _rest; do
+    [ -n "$con" ] || continue
+    mode=$(field nmcli -g 802-11-wireless.mode connection show "$con")
+    if [ "$mode" = "ap" ]; then
+      printf '%s' "$con"
+      return 0
+    fi
+  done < <(grab nmcli -t -f NAME,TYPE connection show | tr '\r' '\n')
+  return 1
+}
+
+uplink_connection() {
+  # 上行 = **当前活跃的**无线连接里，设备不是 AP 那个口的那条，输出 "con:dev"。
+  #
+  # ⚠️ 别拿 802-11-wireless.mode 当判据（真机踩过）：station 连接一般不写
+  #    mode 字段（默认就是 infrastructure），nmcli -g 返回空 → 判等 "managed"
+  #    永远不成立 → 上联永远"找不到"。真正可靠的只有**活跃连接表里的设备列**。
+  #
+  # 也只看活跃连接：关心的是"上联现在连着吗"，配置里存着多少条 WiFi 无所谓。
+  local con dev
+  while IFS=: read -r con dev; do
+    [ -n "$con" ] || continue
+    [ -n "$dev" ] || continue
+    [ "$con" = "${AP_CON:-}" ] && continue
+    [ "$dev" = "${AP_DEV:-}" ] && continue
+    printf '%s:%s' "$con" "$dev"
+    return 0
+  done < <(grab nmcli -t -f NAME,DEVICE connection show --active | tr '\r' '\n')
+  return 1
+}
+
+active_dev() {
+  # 活跃连接表里取设备名；拿不到再退回 profile 里写死的 interface-name。
+  local dev
+  dev=$(grab nmcli -t -f NAME,DEVICE connection show --active |
+    grep "^$1:" | head -1 | cut -d: -f2 | tr -d '\r')
+  if [ -n "$dev" ]; then printf '%s' "$dev"; return 0; fi
+  field nmcli -g connection.interface-name connection show "$1"
+}
+
+con_state() {
+  if nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep -q "^$1:"; then
+    echo activated
+  else
+    echo deactivated
+  fi
+}
+dev_state() {
+  # -t 输出的是 "GENERAL.STATE:100 (connected)"，必须剥掉字段名前缀 ——
+  # 否则后端拿到的字符串不以 100 开头，会被判成"未连接"（真机抓到）。
+  local v
+  v=$(field nmcli -t -f GENERAL.STATE device show "$1")
+  v=${v#GENERAL.STATE:}
+  printf '%s' "${v:-unknown}"
+}
+dev_activated() { case "$(dev_state "$1")" in 100*) return 0 ;; *) return 1 ;; esac; }
+dev_ip() { grab ip -4 -br addr show dev "$1" | awk '{print $3}' | head -1; }
+
+# ---------------------------------------------------------------- status
+do_status_uplink() {
+  UPLINK_CON=${UPLINK_CON:-}
+  if [ -z "$UPLINK_CON" ]; then
+    UPLINK_CON=${UPLINK_CON:-}
+  fi
+  if [ -z "$UPLINK_CON" ]; then
+    local pair
+    pair=$(uplink_connection 2>/dev/null || true)
+    UPLINK_CON=${pair%%:*}
+    UPLINK_DEV=${pair#*:}
+    [ "$UPLINK_CON" = "$UPLINK_DEV" ] && UPLINK_DEV=""
+  fi
+  if [ -z "$UPLINK_CON" ]; then
+    echo "uplink.found=0"
+    UPLINK_DEV=""
+    export UPLINK_CON UPLINK_DEV
+    return 0
+  fi
+  export UPLINK_CON UPLINK_DEV
+  echo "uplink.found=1"
+  echo "uplink.con=$UPLINK_CON"
+  echo "uplink.dev=${UPLINK_DEV:-unknown}"
+  echo "uplink.state=$(dev_state "${UPLINK_DEV:-none}")"
+  echo "uplink.ip=$(dev_ip "${UPLINK_DEV:-none}")"
+}
+
+do_status() {
+  AP_CON=${AP_CON:-}
+  if [ -z "$AP_CON" ]; then
+    AP_CON=$(ap_connection 2>/dev/null || true)
+  fi
+  if [ -z "$AP_CON" ]; then
+    echo "ap.found=0"
+    echo "ap.state=no_ap_connection"
+    AP_CON=""
+    AP_DEV=""
+    do_status_uplink
+    return 0
+  fi
+  AP_DEV=$(active_dev "$AP_CON")
+  UPLINK_CON=""
+  UPLINK_DEV=""
+  do_status_uplink
+  export AP_CON AP_DEV
+
+  echo "ap.found=1"
+  echo "ap.con=$AP_CON"
+  echo "ap.dev=${AP_DEV:-unknown}"
+  echo "ap.state=$(con_state "$AP_CON")"
+  echo "ap.ssid=$(field nmcli -g 802-11-wireless.ssid connection show "$AP_CON")"
+  echo "ap.band=$(field nmcli -g 802-11-wireless.band connection show "$AP_CON")"
+  echo "ap.security=$(field nmcli -g 802-11-wireless-security.key-mgmt connection show "$AP_CON")"
+  # ⚠️ 只报"有没有设密码"，**绝不回显密码本身** —— 状态会被推到浏览器。
+  if [ -n "$(field nmcli -s -g 802-11-wireless-security.psk connection show "$AP_CON")" ]; then
+    echo "ap.password_set=1"
+  else
+    echo "ap.password_set=0"
+  fi
+  echo "ap.managed_by_vendor=1"
+
+  if [ -n "$AP_DEV" ]; then
+    echo "ap.ip=$(dev_ip "$AP_DEV")"
+    # 实际工作的信道（被上行绑架，常与配置值不同）——这是必须暴露的反直觉事实
+    local ch
+    ch=$(grab iw dev "$AP_DEV" info | grep -o 'channel [0-9]* ([0-9]* MHz)' | head -1)
+    echo "ap.channel=${ch#channel }"
+    echo "ap.clients=$(grab iw dev "$AP_DEV" station dump | grep -c '^Station')"
+  fi
+
+  # 同射频证据：AP 与上行的 wiphy 是否同一个（决定"信道能不能独立改"）
+  # ⚠️ set -u 下必须先初始化：用 `&&` 短路赋值时，条件不成立那次根本不会赋值，
+  #    后面再引用就是 unbound variable（真机直接崩在这一行）。
+  local w1="" w2=""
+  [ -n "$AP_DEV" ] && w1=$(grab iw dev "$AP_DEV" info | grep -o 'wiphy [0-9]*' | head -1)
+  [ -n "${UPLINK_DEV:-}" ] && w2=$(grab iw dev "$UPLINK_DEV" info | grep -o 'wiphy [0-9]*' | head -1)
+  if [ -n "$w1" ] && [ -n "$w2" ]; then
+    if [ "${w1#wiphy }" = "${w2#wiphy }" ]; then
+      echo "ap.shared_radio=1"
+    else
+      echo "ap.shared_radio=0"
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------- set
+die() {
+  echo "ap.set_result=failed"
+  echo "ap.set_reason=$1"
+  exit 1
+}
+
+# 把改动落到厂商的两个明文文件里，再调 ap_start.sh 重建连接。
+# 这是**唯一**能生效且能扛住重启的路径（理由见文件头）。
+apply_vendor_ap() {
+  local base=$1 pwd=$2 want_ssid=$3 want_pwd=$4 old_name=$5 old_pwd=$6
+  if [ "$want_ssid" = "1" ]; then
+    printf '%s' "$base" > "$HOST_NAME_FILE" || return 1
+  fi
+  if [ "$want_pwd" = "1" ]; then
+    printf '%s' "$pwd" > "$PASSWORD_FILE" || return 1
+  fi
+  # 脚本内部的 delete/add 会打印自己的输出，一律吞掉，我们只认最终结果
+  "$AP_SCRIPT" start 24G >/dev/null 2>&1
+  return 0
+}
+
+restore_vendor_files() {
+  local old_name=$1 old_pwd=$2
+  if [ -n "$old_name" ]; then printf '%s' "$old_name" > "$HOST_NAME_FILE"; fi
+  if [ -n "$old_pwd" ]; then printf '%s' "$old_pwd" > "$PASSWORD_FILE"; fi
+}
+
+do_set() {
+  local confirmed=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --confirmed) confirmed=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  [ "$confirmed" = "1" ] || die "CONFIRM_REQUIRED"
+
+  # ---- 从 stdin 取新值（格式：每行 key=value，key ∈ ssid|password）
+  local ssid="" password="" want_ssid=0 want_pwd=0 line key val
+  while IFS= read -r line; do
+    line=${line%$'\r'}
+    [ -n "$line" ] || continue
+    key=${line%%=*}
+    val=${line#*=}
+    case "$key" in
+      ssid) ssid=$val; want_ssid=1 ;;
+      password) password=$val; want_pwd=1 ;;
+    esac
+  done
+  [ "$want_ssid" = "1" ] || [ "$want_pwd" = "1" ] || die "NOTHING_TO_SET"
+
+  [ -x "$AP_SCRIPT" ] || die "VENDOR_SCRIPT_MISSING"
+
+  AP_CON=$(ap_connection 2>/dev/null || true)
+  AP_DEV=""
+  if [ -n "$AP_CON" ]; then
+    AP_DEV=$(active_dev "$AP_CON")
+  fi
+  local up_pair
+  up_pair=$(uplink_connection 2>/dev/null || true)
+  UPLINK_CON=${up_pair%%:*}
+  UPLINK_DEV=${up_pair#*:}
+  [ "$UPLINK_CON" = "$UPLINK_DEV" ] && UPLINK_DEV=""
+  export AP_CON AP_DEV UPLINK_CON UPLINK_DEV
+
+  # ---- 值域校验
+  #   厂商脚本是 `head -c 12` 读名字、`head -c 16` 读密码，超出会被静默截断，
+  #   与其让它悄悄截，不如在这里就挡掉。
+  local base=""
+  if [ "$want_ssid" = "1" ]; then
+    # 剥掉厂商会自动补的频段后缀，存 base —— 否则会出现 MyName_24G_24G
+    base=$ssid
+    base=${base%_24G}
+    base=${base%_5G}
+    local n=${#base}
+    [ "$n" -ge 1 ] && [ "$n" -le 12 ] || die "BAD_SSID_LENGTH"
+    # 只挡**不可打印字符**（换行会把我们的 key=value 输出搅烂）
+    local nonprint
+    nonprint=$(printf '%s' "$base" | LC_ALL=C tr -d '\040-\176')
+    [ -z "$nonprint" ] || die "BAD_SSID_CHARS"
+  fi
+  if [ "$want_pwd" = "1" ]; then
+    local m=${#password}
+    [ "$m" -ge 8 ] && [ "$m" -le 16 ] || die "BAD_PASSWORD_LENGTH"
+  fi
+
+  # ---- 备份（回滚用；文件可能是空的，空串也要记住）
+  local old_name="" old_pwd=""
+  [ -f "$HOST_NAME_FILE" ] && old_name=$(grab head -c 12 "$HOST_NAME_FILE")
+  [ -f "$PASSWORD_FILE" ] && old_pwd=$(grab head -c 16 "$PASSWORD_FILE")
+
+  # ---- ① 落文件 + 重建（不做 con down：那会撞上 wlan0 消失的窗口）
+  apply_vendor_ap "$base" "$password" "$want_ssid" "$want_pwd" \
+                  "$old_name" "$old_pwd" || die "APPLY_FAILED"
+
+  # ---- ② 轮询到 activated（ap_start.sh 返回后 AP 还要几秒才起来）
+  local i ap_ok=0
+  AP_CON=$(ap_connection 2>/dev/null || true)
+  if [ -n "$AP_CON" ]; then
+    AP_DEV=$(active_dev "$AP_CON")
+  fi
+  for i in $(seq 1 30); do
+    if [ -n "$AP_DEV" ] && dev_activated "$AP_DEV"; then ap_ok=1; break; fi
+    sleep 1
+  done
+
+  # ---- ③ 上行复查（我们的 SSH 就走它，绝不能被连带打掉）
+  if [ -n "${UPLINK_DEV:-}" ] && [ -n "${UPLINK_CON:-}" ]; then
+    local up_ok=0
+    for i in $(seq 1 20); do
+      if dev_activated "$UPLINK_DEV"; then up_ok=1; break; fi
+      sleep 1
+    done
+    if [ "$up_ok" != "1" ]; then
+      # 上行掉了：立刻回滚文件并重建 AP，再自救上行 —— 上行优先级高于 AP
+      restore_vendor_files "$old_name" "$old_pwd"
+      "$AP_SCRIPT" start 24G >/dev/null 2>&1 || true
+      nmcli con up "$UPLINK_CON" >/dev/null 2>&1 || true
+      sleep 2
+      echo "ap.set_result=rolled_back"
+      echo "ap.set_reason=uplink_lost"
+      AP_CON=""
+      AP_DEV=""
+      do_status
+      exit 0
+    fi
+  fi
+
+  # ---- ④ 校验 SSID 真的生效了（拿 iw 的实际值，而不是 NM 配置值）
+  if [ "$ap_ok" = "1" ] && [ "$want_ssid" = "1" ] && [ -n "$AP_DEV" ]; then
+    local real
+    real=$(grab iw dev "$AP_DEV" info | grep -o 'ssid .*' | head -1)
+    real=${real#ssid }
+    if [ "$real" != "${base}_24G" ]; then
+      restore_vendor_files "$old_name" "$old_pwd"
+      "$AP_SCRIPT" start 24G >/dev/null 2>&1 || true
+      echo "ap.set_result=rolled_back"
+      echo "ap.set_reason=ssid_not_applied"
+      AP_CON=""
+      AP_DEV=""
+      do_status
+      exit 0
+    fi
+  fi
+
+  if [ "$ap_ok" != "1" ]; then
+    restore_vendor_files "$old_name" "$old_pwd"
+    "$AP_SCRIPT" start 24G >/dev/null 2>&1 || true
+    echo "ap.set_result=rolled_back"
+    echo "ap.set_reason=ap_not_activated"
+  else
+    echo "ap.set_result=applied"
+    echo "ap.set_reason="
+  fi
+  AP_CON=""
+  AP_DEV=""
+  do_status
+}
+
+# ---------------------------------------------------------------- main
+case "${1:-status}" in
+  status) do_status ;;
+  set) shift; do_set "$@" ;;
+  *)
+    echo "usage: m20-ap-ctl status | ... | m20-ap-ctl set --confirmed" >&2
+    echo "       (set 从 stdin 读：每行 ssid=xxx 或 password=yyy)" >&2
+    exit 2
+    ;;
+  esac

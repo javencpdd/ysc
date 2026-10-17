@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# ============================================================================
+# m20-video-ctl —— 视频推流服务受控控制入口（供 m20pro-console 调用）
+#
+# 为什么需要它：两条视频链路都以 root 运行，而控制台服务跑在普通用户 `user`。
+# 直接给控制台 root 或给它 systemctl 全权都不合适，于是收成一个**只干视频服务
+# 这一件事、参数被严格白名单**的小入口，sudoers 只放行它。
+#
+#   m20-video-ctl status              两条链的状态（含"是否真的在出流"）
+#   m20-video-ctl start   local|relay
+#   m20-video-ctl stop    local|relay
+#   m20-video-ctl restart local|relay
+#
+# 两条链（**不是一回事**，别混）：
+#   local —— 厂商本地推流：mediamtx + push_video.sh
+#            把相机画面推到本机 MediaMTX，**控制台「相机画面」页靠它**。
+#   relay —— 自研外推中继：m20video.service（rtmp_1012）
+#            把 MediaMTX 的画面转发到远端 RTMP 服务器（172.31.68.227:1936）。
+#            关掉它，**控制台画面照旧**，只是外部看不到。
+#
+# ⚠️ 命名禁忌：厂商 stop.sh 会执行 `pkill -f v4l2` / `pkill -f push_video`，
+#    本脚本及其调用链的**命令行里不能出现那些字样**，否则会把自己杀掉。
+#    故本脚本用 `local` / `relay` 这两个词，绝不写完整进程名。
+#
+# 输出：一行一个 `key=value`（好解析、不怕引号）；错误信息走 stderr。
+# ============================================================================
+set -u
+
+D="/opt/robot/scripts/board_resources/rtsp_service"
+APP="/home/user/rtmp_1012"
+UNIT="m20video.service"
+HLS="http://127.0.0.1:8888"
+
+# ---------------------------------------------------------------- 工具
+http_code() {   # $1=url -> 三位状态码，失败给 000
+    # ⚠️ 不能写 `curl ... || echo 000`：curl 超时时**既**会按 -w 打印 000、
+    #    又返回非 0 退出码，于是又补一个 000 → 输出 "000000"（2026-10-17 真踩）。
+    local c
+    c=$(curl -s -o /dev/null -m 4 -w '%{http_code}' "$1" 2>/dev/null) || true
+    echo "${c:-000}"
+}
+
+count_proc() {  # $1=正则 -> 匹配到的进程数（用 [x] 技巧避免 pgrep 匹配到自身）
+    pgrep -f "$1" 2>/dev/null | wc -l
+}
+
+# ---------------------------------------------------------------- 状态
+# local：进程活着 ≠ 真的在出流（经典故障是"管道活着不出数据"），
+#        所以**必须**同时报 HLS 可拉取性，这才是"控制台能不能看到画面"的真相。
+local_status() {
+    local n; n=$(count_proc '[r]tsp_service')
+    # 只数**接相机**的 gst（v4l2src）。不能笼统数 gst-launch —— relay 的拉流
+    # 进程也是 gst-launch，混进来会把"本地推流没起来"显示成"起来了"。
+    local g; g=$(count_proc 'gst-launch.*[v]4l2src')
+    local h1 h2
+    h1=$(http_code "$HLS/video1/index.m3u8")
+    h2=$(http_code "$HLS/video2/index.m3u8")
+
+    local ready=no
+    [ "$h1" = "200" ] && [ "$h2" = "200" ] && ready=yes
+
+    echo "local.processes=$n"
+    echo "local.gst=$g"
+    echo "local.hls_video1=$h1"
+    echo "local.hls_video2=$h2"
+    echo "local.ready=$ready"
+    # 有进程、但拉不到流 = 那个经典故障；显式标出来，别让上层自己猜
+    local stuck=no
+    [ "$n" -gt 0 ] && [ "$ready" = "no" ] && stuck=yes
+    echo "local.stuck=$stuck"
+}
+
+relay_status() {
+    # ⚠️ 与 http_code 同一类坑：`systemctl is-active` 对**未运行**的单元会
+    #    打印 "inactive" **并且**返回非 0 → `|| echo unknown` 会再补一行
+    #    "unknown"，输出变脏（2026-10-17 真踩，这是本文件第三次同型错误）。
+    #    一律改成"先捕获、再补默认值"。
+    local u; u=$(systemctl is-active "$UNIT" 2>/dev/null) || true
+    u=${u:-unknown}
+    local n; n=$(count_proc '[r]tmp_forward')
+    echo "relay.unit=$u"
+    echo "relay.processes=$n"
+    # ⚠️ 刻意**不报** relay 的 gst 进程数：relay 是"拉流失败→退避重试"循环，
+    #    采样正好落在重试间隙时会读到 0，看起来像"没在转发"而实际只是没采样到
+    #    （2026-10-17 真踩：日志明明在 Sending PLAY request，计数却是 0）。
+    #    判断 relay 该看 unit + 目标可达性，不看瞬时进程数。
+    echo "relay.target=172.31.68.227:1936"
+    local tcp=no
+    timeout 3 bash -c 'echo > /dev/tcp/172.31.68.227/1936' 2>/dev/null && tcp=yes
+    echo "relay.target_tcp=$tcp"
+    local en; en=$(systemctl is-enabled "$UNIT" 2>/dev/null) || true
+    echo "relay.enabled=${en:-unknown}"
+}
+
+do_status() { local_status; relay_status; }
+
+# ---------------------------------------------------------------- 动作
+# ⚠️ 不用厂商 start_server.sh：它会 `sudo ./mediamtx &` **再起一个 mediamtx**
+#    （本机 8554/8888 上早已有一个在跑）→ 端口冲突。而且它会「等 PTP 同步最多
+#    60s」再**前台运行**推流脚本，直接把控制台 HTTP 线程挂住。
+#    push_video.sh 自身就是带自愈的 supervisor（每路独立监控 + 指数退避重连 +
+#    trap 清理），直接后台跑它即可；mediamtx 只在确实不在时补启。
+mediamtx_running() { pgrep -x mediamtx >/dev/null 2>&1; }
+
+ensure_mediamtx() {
+    mediamtx_running && return 0
+    ( cd "$D" && setsid nohup ./mediamtx >/var/log/m20-mediamtx.log 2>&1 & )
+    sleep 3
+}
+
+# 只看推流 supervisor 自己（`[p]` 技巧：正则不会匹配到 pgrep/本脚本的命令行）
+stream_pids() { pgrep -f "[p]ush_video\.sh" 2>/dev/null; }
+
+start_local() {
+    ensure_mediamtx
+    # ★幂等：已经有 supervisor 在跑就**绝不再起一个**。
+    #   多个 supervisor 会抢同一批 /dev/video*，互相把对方的 gst 踢掉，
+    #   表现为"出流几秒又断"的来回震荡（2026-10-17 真踩：三方并存，
+    #   gst 数 2 → 0 → 2 反复，HLS 200 一闪就没）。
+    if [ -n "$(stream_pids)" ]; then
+        sleep 3
+        return 0
+    fi
+    setsid nohup "$D/push_video.sh" >/var/log/m20-video-local.log 2>&1 &
+    sleep 6
+}
+
+stop_local() {
+    # 用厂商自己的停脚本（它正好只清 v4l2/推流进程，不碰 mediamtx），
+    # 不自创更宽的 pkill 规则 —— 少一条自己写错的规则就少一种误杀。
+    "$D/stop.sh" >/dev/null 2>&1 || true
+    # ⚠️ 厂商 pkill 是异步的，而且**会留下孤儿**：父进程先死、子进程被 init
+    #    收养后继续跑（2026-10-17 实测残留了整整两组）。不确认清干净，
+    #    下次 start 就会和这些孤儿抢设备。这里只对本脚本精确匹配的进程复查。
+    local i
+    for i in 1 2 3 4 5; do
+        [ -z "$(stream_pids)" ] && break
+        sleep 1
+    done
+    if [ -n "$(stream_pids)" ]; then
+        kill -TERM $(stream_pids) 2>/dev/null || true
+        sleep 2
+    fi
+    if [ -n "$(stream_pids)" ]; then
+        kill -KILL $(stream_pids) 2>/dev/null || true
+        sleep 1
+    fi
+}
+
+restart_local() {
+    stop_local
+    start_local
+}
+
+start_relay() {
+    systemctl start "$UNIT" 2>&1
+    sleep 3
+}
+
+stop_relay() {
+    systemctl stop "$UNIT" 2>&1
+    sleep 2
+}
+
+restart_relay() {
+    systemctl restart "$UNIT" 2>&1
+    sleep 3
+}
+
+# ---------------------------------------------------------------- 入口
+case "${1:-}" in
+    status)
+        [ $# -eq 1 ] || { echo "参数过多" >&2; exit 2; }
+        do_status
+        ;;
+    start|stop|restart)
+        [ $# -eq 2 ] || { echo "用法: $0 $1 local|relay" >&2; exit 2; }
+        case "$2" in
+            local) "${1}_local" ;;
+            relay) "${1}_relay" ;;
+            *) echo "未知目标: $2（只允许 local / relay）" >&2; exit 2 ;;
+        esac
+        # 动作后输出**两条链的完整状态**：上层要据此刷新整个面板，
+        # 只给被操作的那一条会让另一条被误读成"没数据/未运行"
+        do_status
+        ;;
+    *)
+        echo "用法: $0 {status|start|stop|restart} [local|relay]" >&2
+        exit 2
+        ;;
+esac

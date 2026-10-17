@@ -76,6 +76,18 @@ class ControlBlacklistError(ControlError):
                          reason="BLACKLISTED", status=403)
 
 
+class ControlConfirmError(ControlError):
+    """不可逆操作缺二次确认（2026-10-17 加：设备供电关闭）。
+
+    设备开关（1101/3）能物理断电相机 / 雷达 / GPS / 风扇，断错的后果不可逆，
+    因此"关闭"一律要求前端 confirm 后带 ``confirmed=true``。
+    """
+
+    def __init__(self, message: Optional[str] = None) -> None:
+        super().__init__(message or "该操作不可逆，需二次确认",
+                         reason="CONFIRM_REQUIRED", status=409)
+
+
 class ControlPreconditionError(ControlError):
     """前置条件不满足（如未站立、非常规模式）。"""
 

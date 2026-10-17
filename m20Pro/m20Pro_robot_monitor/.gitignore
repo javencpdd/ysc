@@ -16,5 +16,9 @@ hls/
 .env
 .env.local
 
+# 浏览器核对（playwright-cli）的会话产物与配置
+.playwright-cli/
+playwright-cli.json
+
 # 抓包/回放的临时文件（归档 fixtures 放 tools/capture/ 并入库）
 /tmp-*.jsonl

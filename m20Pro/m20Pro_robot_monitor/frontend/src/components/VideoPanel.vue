@@ -11,6 +11,47 @@
     </div>
 
     <template v-if="cfg.enabled">
+      <!-- 相机供电 / 整车休眠 / 单相机开关（2026-10-17 取证）：
+           相机随车供电 —— 进入休眠时 basic_server 会关掉 VIDEO_POWER，画面必然黑。
+           退出整车休眠用 1101/6；**单独开/关某一路相机**用 1101/3 的
+           {"Video":{"Front":..,"Back":..}}（抓包破解，车侧日志实证
+           「设置广角相机开关 front:1 back:1」）。两者都就地暴露，省得切页。 -->
+      <div class="devbar">
+        <span>相机供电：</span>
+        <DeviceToggle
+          label="前相机"
+          :value="videoFront ?? null"
+          :disabled="!ctrl.enabled"
+          :busy="!!devBusy"
+          @set="(v) => setCam('Front', v)"
+        />
+        <DeviceToggle
+          label="后相机"
+          :value="videoBack ?? null"
+          :disabled="!ctrl.enabled"
+          :busy="!!devBusy"
+          @set="(v) => setCam('Back', v)"
+        />
+        <span :class="sleeping ? 'warn' : 'dim'">
+          整车{{ sleepLabel }}
+        </span>
+        <!-- 常驻显示（不再只在休眠时出现）：相机随车供电，"相机没画面"时的第一反应
+             就是确认整车是不是睡了；按钮也常驻，免得需要用的时候找不到。 -->
+        <button
+          :disabled="!ctrl.enabled"
+          :title="wakeTip"
+          @click="wakeUp"
+        >唤醒整车</button>
+        <span v-if="!ctrl.enabled" class="hint">
+          需先在「运动控制」页开启控制（L1）
+        </span>
+        <span v-if="devMsg" class="hint">{{ devMsg }}</span>
+        <span v-if="devErr" class="hint err">{{ devErr }}</span>
+      </div>
+
+      <!-- 推流服务开关（2026-10-17）：本地推流喂本页画面，外推中继只对外 -->
+      <VideoServicePanel />
+
       <div class="vbar">
         <button :class="{ active: layout === 'both' }" @click="layout = 'both'">并排双路</button>
         <button :class="{ active: layout === 'front' }" @click="layout = 'front'">仅前</button>
@@ -45,7 +86,11 @@
 
           <div v-if="runtime[s.key]?.state === 'failed'" class="verr">
             ⚠ {{ runtime[s.key].detail || '取流失败' }}
-            <div class="hint">机器人休眠时相机不通电 —— 需先「唤醒」</div>
+            <div class="hint">
+              {{ sleeping
+                ? '整车休眠中 —— 相机不通电，点上方「唤醒整车」'
+                : '整车未休眠：多为推流管道或相机 USB 问题（可先点「重连」）' }}
+            </div>
           </div>
           <div v-else class="hint">{{ runtime[s.key]?.detail || '' }}</div>
         </div>
@@ -55,10 +100,62 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import Hls from 'hls.js'
 import { getJson } from '../api/index.js'
 import { createWhepPlayer, isWebRtcSupported } from '../webrtc/whep.js'
+import DeviceToggle from './DeviceToggle.vue'
+import VideoServicePanel from './VideoServicePanel.vue'
+import { useDeviceSwitch } from '../composables/useDeviceSwitch.js'
+
+// ---- 整车状态透传（2026-10-17 加）：相机随车供电，休眠就没画面 ----
+const props = defineProps({
+  device: { type: Object, default: () => ({}) },
+  basic: { type: Object, default: () => ({}) },
+  control: { type: Object, default: () => ({}) },
+  sendCommand: { type: Function, default: null }
+})
+
+// ---- 单相机供电开关（1101/3，2026-10-17 抓包破解）----
+// ⚠️ 必须**解构到顶层**：Vue 3 模板只对顶层 setup 绑定做 ref 解包，
+// 写成 `dev.busy` 拿到的是 Ref 对象本身（恒真）→ `:disabled` 永远为真 → 按钮全按不了。
+// 这正是 2026-10-17 用户反馈"供电开关按钮我按不了"的根因。
+const { busy: devBusy, msg: devMsg, err: devErr,
+        flash: devFlash, setPair } = useDeviceSwitch(props)
+
+const ctrl = ref(props.control)
+watch(() => props.control, (v) => { ctrl.value = v || {} }, { deep: true })
+
+const onoff = (v) => (v == null ? '—' : (Number(v) ? '开' : '关'))
+const videoFront = computed(() => props.device?.video_front)
+const videoBack = computed(() => props.device?.video_back)
+const camValue = (side) => (side === 'Front' ? videoFront.value : videoBack.value)
+const camOther = (side) => (side === 'Front' ? videoBack.value : videoFront.value)
+// 1101/3 是**整键覆写**，必须把另一路当前值一起带上，否则会把没点的那路也关掉
+function setCam (side, v) {
+  setPair('Video', side, v, camOther(side))
+}
+// Sleep: 0=未休眠 1=已休眠 2=进入休眠中
+const sleeping = computed(() => Number(props.basic?.sleep || 0) !== 0)
+const sleepLabel = computed(() => props.basic?.sleep_label || '—')
+const wakeTip = computed(() => {
+  if (!ctrl.value.enabled) return '需先在「运动控制」页开启控制（L1）'
+  return sleeping.value
+    ? '退出整车休眠（1101/6）—— 会同时恢复相机 / 雷达 / GPS / 关节供电'
+    : '整车未休眠时下发也安全（1101/6 幂等）；用于强制恢复相机 / 雷达供电'
+})
+async function wakeUp () {
+  if (!props.sendCommand) return
+  devFlash('唤醒下发中…')
+  try {
+    const res = await props.sendCommand('wake_up')
+    devFlash(res && res.ok
+      ? '唤醒已下发（1101/6）—— 供电恢复需数秒，稍后点「重连」'
+      : `被拒：${(res && res.reason) || '未知'} ${(res && res.detail) || ''}`, !(res && res.ok))
+  } catch (err) {
+    devFlash('唤醒请求失败：' + (err && err.message ? err.message : err), true)
+  }
+}
 
 const cfg = ref({ enabled: false, webrtc: {}, hls: {}, streams: [] })
 const layout = ref('both')                 // both | front | back
@@ -232,6 +329,28 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.devbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border, #d8dce3);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--panel-2, #f7f8fa);
+}
+.devbar .warn {
+  color: var(--warn, #c47f17);
+  font-weight: 600;
+}
+.devbar .dim {
+  opacity: 0.75;
+}
+.devbar .hint.err {
+  color: var(--danger, #d0453b);
+}
 .vbar {
   display: flex;
   gap: 6px;

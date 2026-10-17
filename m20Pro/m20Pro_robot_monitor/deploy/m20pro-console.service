@@ -3,6 +3,11 @@ Description=M20 Pro Robot Console (FastAPI + Vue3)
 Documentation=file:/home/djw/monitor/note/
 After=network-online.target
 Wants=network-online.target
+# 开机顺序：等厂商 start.service 把数据源拉起来再启动自己。
+# start.service(forking, enabled) 会拉起 basic_server(UDP 30000 状态源) 与
+# mediamtx(RTSP 8554 相机源)。仅 After 不加 Requires —— 厂商服务起不来时
+# 控制台照常启动（只监不控，界面显示"链路断开"才是真实情况），绝不拖死开机。
+After=start.service
 
 [Service]
 Type=simple

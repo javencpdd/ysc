@@ -94,6 +94,13 @@ class ControlSettings(BaseSettings):
     axis_timeout_ms: int = 250
     # 审计日志条数（有界）
     audit_size: int = 500
+    # 指令报文记录条数（有界）。报文带 hex 原文，比审计条目大，故默认给小一点
+    packet_log_size: int = 200
+    # 报文响应超时（毫秒）：超过即标 ``no_response``。
+    # 真机响应在毫秒级，2s 足够宽容；再长只会让用户干等。
+    # ⚠️ ``no_response`` **不代表车没执行** —— basic_server 对部分指令
+    # （如运动状态转换）执行了但并不回帧，详见 command_log 模块文档。
+    packet_timeout_ms: int = 2000
     # 轴指令值域钳制边界（安全上限，2026-10-15 真机实测：
     #   0.25≈0.32m/s 舒适档 / 0.40≈0.54m/s 上限 / ≥0.70≈1.1m/s 已实测危险）
     axis_min: float = -0.40

@@ -1,0 +1,14 @@
+[Unit]
+Description=RTMP relay connection health guard (restart on zombie upstream stall)
+Documentation=file:/usr/local/sbin/rtmp-conn-guard.sh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 显式指定守护目标 = Lite3 的外推服务（系统级）。
+# 不依赖脚本内 DEFAULT_SVC 自动识别：其候选为 m20video.service / rtsp_stream.service，
+# 而 120 上没有 m20video，会自动选中 rtsp_stream.service —— 该服务不产生到 :1936 的连接，
+# 结果就是看门狗失效，且僵尸时会去重启错的（本地 RTSP）服务。
+# 这里显式传参 rtmp-forward.service 从根本上杜绝误选。
+ExecStart=/usr/local/sbin/rtmp-conn-guard.sh rtmp-forward.service

@@ -37,7 +37,7 @@
   </div>
 
   <!-- 标签页（参考 lite3 monitor）：
-       · 三个面板按"只读遥测 / 只读视频 / 写方向控制"分层，写方向放最后并用警示色；
+       · 四个面板按"只读遥测 / 只读视频 / 只读 GPS / 写方向控制"分层，写方向放最后并用警示色；
        · 刻意不写 localStorage 记住上次标签：每次加载都回到只读的「传感器监控」，
          避免重新打开页面直接落在写方向页上误触指令（lite3 同款取舍）。 -->
   <nav class="tabs">
@@ -45,11 +45,20 @@
             @click="tab = 'monitor'">传感器监控</button>
     <button class="tab" :class="{ active: tab === 'video' }" type="button"
             @click="tab = 'video'">相机画面</button>
+    <!-- GPS 是只读遥测，放在写方向的「运动控制」之前 -->
+    <button class="tab" :class="{ active: tab === 'gps' }" type="button"
+            @click="tab = 'gps'">GPS 定位</button>
     <button class="tab risk" :class="{ active: tab === 'motion' }" type="button"
             @click="tab = 'motion'">
       <span class="risk-dot" />
       运动控制
       <span v-if="timedActive" class="tab-badge">{{ Math.ceil(timedRemaining) }}s</span>
+    </button>
+    <!-- 机器人设置：改的是整车行为与网络配置，风险不低于运动控制，排在它后面 -->
+    <button class="tab risk" :class="{ active: tab === 'config' }" type="button"
+            @click="tab = 'config'">
+      <span class="risk-dot" />
+      机器人设置
     </button>
   </nav>
 
@@ -62,8 +71,25 @@
     <JointPanel :topic="topic" :is-stale="isStale" />
   </div>
 
+  <!-- 相机页也拿到整车状态：相机随车供电，休眠时没有画面（2026-10-17 取证：
+       进入休眠会依次关 VIDEO_POWER / JOINTS_POWER / LED_FILL / FAN_SPEED）。
+       就地给「唤醒整车」入口，省得为了开相机还要切到运动控制页。 -->
   <div v-show="tab === 'video'" class="pane">
-    <VideoPanel />
+    <VideoPanel
+      :device="topic('device')"
+      :basic="topic('basic')"
+      :control="control"
+      :send-command="sendCommand"
+    />
+  </div>
+
+  <!-- GPS：呈现 M20 上报的 GPS 数据包 + GPS 供电开关（1101/3，2026-10-17 抓包破解） -->
+  <div v-show="tab === 'gps'" class="pane">
+    <GpsPanel
+      :device="topic('device')"
+      :control="control"
+      :send-command="sendCommand"
+    />
   </div>
 
   <div v-show="tab === 'motion'" class="pane">
@@ -88,17 +114,39 @@
       :watchdog="watchdog"
       :motion="topic('motion')"
       :basic="topic('basic')"
+      :device="topic('device')"
       :active="tab === 'motion'"
     />
   </div>
+
+  <!-- 机器人设置：补光灯 / 首启回零 / 休眠 / WiFi 热点。
+       同样用 v-show —— 它需要 2Hz 设备帧里的补光灯状态，卸载会丢数据源。 -->
+  <div v-show="tab === 'config'" class="pane">
+    <div class="risk-warn">
+      本页<b>会改变整车行为与网络配置</b>：
+      「立即休眠」会让机器人趴下并断电；改 WiFi 热点会让已连设备掉线。
+      改热点不会动上行链路（我们 SSH 的通路），但两者共用一块射频，脚本会自动复查并在失败时回滚。
+    </div>
+    <RobotConfigPanel
+      :control="control"
+      :device="topic('device')"
+    />
+  </div>
+
+  <!-- 指令报文记录（全局）：任何标签页发出的指令都能就地看到响应。
+       默认收起，只占一行；展开后才轮询后端。 -->
+  <PacketLogPanel />
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
 import RobotStatus from './components/RobotStatus.vue'
 import JointPanel from './components/JointPanel.vue'
+import GpsPanel from './components/GpsPanel.vue'
 import MotionPanel from './components/MotionPanel.vue'
 import VideoPanel from './components/VideoPanel.vue'
+import RobotConfigPanel from './components/RobotConfigPanel.vue'
+import PacketLogPanel from './components/PacketLogPanel.vue'
 import { useRobotState } from './composables/useRobotState.js'
 
 const s = useRobotState()
