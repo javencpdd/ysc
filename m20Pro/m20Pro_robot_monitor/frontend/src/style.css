@@ -1,96 +1,636 @@
+/* ==========================================================================
+   M20 Pro 机器人控制台 · 全局设计令牌与基础组件样式
+   --------------------------------------------------------------------------
+   本文件只承载「展示层」：配色 / 字体 / 间距 / 圆角 / 阴影 / 交互反馈。
+   不含任何业务逻辑、接口调用与数据结构。
+
+   令牌使用约定：
+     · 颜色一律取变量，不在组件里写死色值（除渐变、遮罩等特例）
+     · 间距走 4pt 栅格（--sp-1 ~ --sp-6）；微对齐（1~3px）仅允许出现在
+       密集列表（.kv / 表格单元格）里，且必须在注释里说明原因
+     · 圆角只用 --r-xs / --r-sm / --r-md / --r-lg / --r-pill 五档
+     · 字号只用 --fs-11 ~ --fs-20 七档（10px 及以下一律视为违规）
+   ========================================================================== */
+
 :root {
-  --bg: #0f1720;
-  --panel: #17222e;
-  --panel-2: #1e2c3a;
-  --line: #2a3a4a;
-  --text: #e6edf3;
-  --muted: #8ba0b4;
+  color-scheme: dark;
+
+  /* ---------- 中性色（由深到浅） ---------- */
+  --bg: #0f1720;          /* 页面底色 */
+  --panel: #17222e;       /* 卡片/面板 */
+  --panel-2: #1e2c3a;     /* 卡片内嵌区、输入控件底 */
+  --panel-3: #263545;     /* 悬停态 */
+  --line: #2a3a4a;        /* 常规描边 */
+  --line-strong: #3a4d60; /* 强调描边 */
+
+  /* ---------- 文字 ---------- */
+  --text: #e6edf3;        /* 正文 */
+  --text-strong: #f8fafc; /* 强调数值 */
+  --muted: #93a7ba;       /* 标签 / 说明文字（对 --panel 对比度 6.5:1） */
+
+  /* ---------- 语义色 ---------- */
   --ok: #22c55e;
+  --ok-soft: rgba(34, 197, 94, 0.14);
+  --ok-line: rgba(34, 197, 94, 0.45);
   --warn: #f59e0b;
+  --warn-soft: rgba(245, 158, 11, 0.14);
+  --warn-line: rgba(245, 158, 11, 0.45);
+  --warn-text: #fcd34d;         /* 警示框内的强调文字（amber-300） */
+  --warn-text-strong: #fde68a;  /* 警示框内的加粗文字（amber-200） */
   --danger: #ef4444;
+  --danger-solid: #b91c1c;      /* 危险按钮实心底（白字对比度 6.5:1） */
+  --danger-solid-hover: #dc2626;
+  --danger-soft: rgba(239, 68, 68, 0.14);
+  --danger-line: rgba(239, 68, 68, 0.5);
+  --warn-solid: #b45309;        /* 警示条 / 写方向标签实心底（白字对比度 5.0:1） */
+  --warn-solid-hover: #d97706;
   --accent: #38bdf8;
+  --accent-strong: #0369a1;      /* 主按钮实心底（白字对比度 5.9:1） */
+  --accent-strong-hover: #075985;
+  --accent-soft: rgba(56, 189, 248, 0.14);
+  --focus: #7dd3fc;              /* 键盘焦点环 */
+
+  /* ---------- 字体 ---------- */
+  --ff-sans: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --ff-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  --fs-11: 11px;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-15: 15px;
+  --fs-17: 17px;
+  --fs-20: 20px;
+
+  /* ---------- 间距（4pt 栅格） ---------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+
+  /* ---------- 圆角 ---------- */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-pill: 999px;
+
+  /* ---------- 阴影 ---------- */
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --sh-2: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --sh-3: 0 18px 48px rgba(0, 0, 0, 0.55);
+
+  /* ---------- 动效 ---------- */
+  --t-fast: 120ms ease;
+  --t: 180ms ease;
 }
 
 * { box-sizing: border-box; }
+
+html, body { height: auto; }
 
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
-  font-size: 14px;
+  font-family: var(--ff-sans);
+  font-size: var(--fs-14);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-#app { padding: 12px 16px 28px; }
+#app { padding: 0; }
 
+/* 页面外壳：超宽屏居中，避免信息被拉成一条 */
+.app-shell {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: var(--sp-4) var(--sp-5) var(--sp-6);
+}
+
+@media (max-width: 900px) {
+  .app-shell { padding: var(--sp-3) var(--sp-3) var(--sp-5); }
+}
+@media (max-width: 560px) {
+  .app-shell { padding: var(--sp-2) var(--sp-2) var(--sp-4); }
+}
+
+/* ==========================================================================
+   排版工具类
+   ========================================================================== */
+.mono { font-family: var(--ff-mono); }
+.num { font-variant-numeric: tabular-nums; }
+.text-muted { color: var(--muted); }
+.text-strong { color: var(--text-strong); font-weight: 600; }
+.spacer { flex: 1 1 auto; }
+
+/* ==========================================================================
+   面板
+   ========================================================================== */
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 12px 14px;
-  margin-bottom: 12px;
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-3);
+  box-shadow: var(--sh-1);
+  /* 键值栅格等内部布局按**本卡宽度**选列数（见 .grid 的 container query） */
+  container-type: inline-size;
 }
 
 .panel h3 {
-  margin: 0 0 10px;
-  font-size: 15px;
-  color: var(--accent);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-3);
+  padding-bottom: var(--sp-2);
+  font-size: var(--fs-15);
+  color: var(--text);
   font-weight: 600;
+  line-height: 1.4;
+  /* 标题下分隔线：让"面板标题 / 面板内容"的层级在密集数据区也一眼可辨 */
+  border-bottom: 1px solid var(--line);
 }
 
+.panel h3 small {
+  font-size: var(--fs-12);
+  font-weight: 400;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 面板内的分区小标题（与 h3 形成二级层级） */
+.block-title {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* 内嵌卡（面板里的功能分区） */
+.sub-card {
+  padding: var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  container-type: inline-size;
+}
+
+@media (max-width: 560px) {
+  .panel { padding: var(--sp-3); }
+}
+
+/* ==========================================================================
+   键值栅格
+   --------------------------------------------------------------------------
+   **列数由容器自身宽度决定（CSS container query），与视口解耦**：
+   同一个视口下，351px 的「基础状态」卡和 697px 的「车侧反馈」卡需要不同的
+   列数。此前用视口断点（max-width:1180/880/560）—— 在窄卡里 4 列栅格会
+   溢出近一倍（2026-10-20 实测：容器 317px / 内容 636px，数值被挤出卡片），
+   这就是"卡片格子排版没弄好"的直接观感。
+
+   断点按"轨道实际占宽"算：n 列需 150n + 12(n-1) ≤ 容器宽 - 32(卡片内边距)，
+   即 2 列 ≥360 / 3 列 ≥506 / 4 列 ≥668。各档留 14px 余量防抖动。
+   ========================================================================== */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 8px 12px;
+  grid-template-columns: minmax(150px, 1fr);
+  gap: var(--sp-2) var(--sp-3);
+}
+@container (min-width: 360px) {
+  .grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+}
+@container (min-width: 520px) {
+  .grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
+}
+@container (min-width: 680px) {
+  .grid { grid-template-columns: repeat(4, minmax(150px, 1fr)); }
 }
 
 /* 键值行：标签可截断、**数值绝不换行**。
-   2026-10-17 修复「实际 转向 ω 0.003 rad/s」动不动就折行：
-   ① 值 span 没有 nowrap，空间一紧就把 "0.003" 和 "rad/s" 拆成两行 → 行高突变；
-   ② 数字符号位（负号）出现/消失会改变占位宽度。
-   对策：值 `white-space: nowrap` + `flex: 0 0 auto`（永远完整显示），
-   标签 `flex: 1 1 auto` 且空间不足时省略号 —— **数值优先**。 */
-.kv { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.kv span:first-child {
+   值 span 用 nowrap + flex:0 0 auto，位数增减（含负号）也不会引起宽度跳动。
+   垂直 padding 2px 是有意的微对齐：遥测面板一屏可达 30+ 行，
+   4pt 栅格会让总高超出可视区（密集列表豁免，见文件头约定）。
+
+   flex-wrap:wrap 是窄轨道的救命闸：三列栅格里轨道约 226px，"姿态 R/P/Y"
+   配 "-0.003 / 0.012 / -89.1 °" 一行放不下时，**数值整块换到下一行**，
+   而不是把标签 ellipsis 吃到只剩 20px（2026-10-20 实测，标签没了比换行更难读）。 */
+.kv {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0 var(--sp-2);
+  padding: 2px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+}
+.kv > span:first-child {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
+  font-size: var(--fs-12);
 }
-.kv span:last-child {
+.kv > span:last-child {
   flex: 0 0 auto;
   white-space: nowrap;
-  /* 等宽数字：位数增减（含负号）不再引起宽度跳动 */
   font-variant-numeric: tabular-nums;
+  font-size: var(--fs-13);
+  color: var(--text-strong);
 }
 
-/* stale：面板置灰（PLAN §6.2 降级语义） */
-.stale { opacity: 0.45; filter: grayscale(0.7); }
+/* 数据停更：整块置灰（降级语义，详见 PLAN §6.2） */
+.stale { opacity: 0.5; filter: grayscale(0.7); }
 
-.banner {
-  background: var(--danger);
-  color: #fff;
-  padding: 8px 12px;
-  border-radius: 6px;
-  margin-bottom: 12px;
-  font-weight: 600;
-}
-
+/* ==========================================================================
+   按钮
+   ========================================================================== */
 button {
-  background: var(--panel-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 32px;
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  line-height: 1.2;
   color: var(--text);
+  background: var(--panel-2);
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 12px;
+  border-radius: var(--r-md);
   cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast),
+    color var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
 }
-button:hover { border-color: var(--accent); }
-button:disabled { opacity: 0.4; cursor: not-allowed; }
-button.danger { background: #7f1d1d; border-color: #b91c1c; }
-button.danger:hover { background: #991b1b; }
 
+button:hover:not(:disabled) {
+  background: var(--panel-3);
+  border-color: var(--line-strong);
+}
+
+/* 按下反馈：轻微下沉，给"已触发"的确认感 */
+button:active:not(:disabled) { transform: translateY(1px); }
+
+/* 键盘可达性：仅键盘聚焦时显示焦点环 */
+button:focus-visible,
+[tabindex]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(0.4);
+}
+
+/* 主操作 */
+.btn-primary,
+button.primary {
+  color: #fff;
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+.btn-primary:hover:not(:disabled),
+button.primary:hover:not(:disabled) {
+  background: var(--accent-strong-hover);
+  border-color: var(--accent-strong-hover);
+}
+
+/* 危险操作 */
+.btn-danger,
+button.danger {
+  color: #fff;
+  background: var(--danger-solid);
+  border-color: var(--danger-solid);
+}
+.btn-danger:hover:not(:disabled),
+button.danger:hover:not(:disabled) {
+  background: var(--danger-solid-hover);
+  border-color: var(--danger-solid-hover);
+}
+
+/* 次要 / 幽灵按钮 */
+.btn-ghost {
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--line);
+}
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+
+/* 尺寸 */
+.btn-sm { min-height: 26px; padding: var(--sp-1) var(--sp-3); font-size: var(--fs-12); }
+.btn-lg { min-height: 38px; padding: var(--sp-2) var(--sp-5); font-size: var(--fs-14); }
+
+/* 加载态：转圈 + 禁用点击，避免重复下发 */
+.btn-loading,
+button.loading {
+  position: relative;
+  color: var(--muted);
+  cursor: progress;
+  pointer-events: none;
+}
+.btn-loading::before,
+button.loading::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 通用小转圈（行内使用） */
+.spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: -1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* ==========================================================================
+   表单控件
+   ========================================================================== */
+input, select, textarea {
+  font-family: inherit;
+  font-size: var(--fs-13);
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 5px 9px;
+  min-height: 30px;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast),
+    background var(--t-fast);
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled) { border-color: var(--line-strong); }
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+input:disabled, select:disabled, textarea:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+input::placeholder, textarea::placeholder { color: var(--muted); }
+
+input[type='number'] { font-variant-numeric: tabular-nums; }
+
+/* 校验失败态 */
+.is-invalid,
+input.is-invalid,
+select.is-invalid {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+/* 表单行：标签 + 控件 + 说明 */
+.field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.field-label {
+  font-size: var(--fs-12);
+  color: var(--muted);
+}
+.field-msg {
+  font-size: var(--fs-11);
+  color: var(--muted);
+  line-height: 1.5;
+}
+.field-msg.err { color: var(--danger); }
+.field-msg.ok { color: var(--ok); }
+
+/* ==========================================================================
+   表格
+   ========================================================================== */
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
-th { color: var(--muted); font-weight: 500; }
+
+th, td {
+  text-align: left;
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-13);
+}
+
+th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: var(--fs-12);
+  background: var(--panel-2);
+  white-space: nowrap;
+}
+
+tbody tr { transition: background var(--t-fast); }
+tbody tr:hover { background: var(--panel-2); }
+
+/* ==========================================================================
+   徽标 / 状态点
+   ========================================================================== */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  border: 1px solid currentColor;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+}
+.pill-ok { color: var(--ok); background: var(--ok-soft); }
+.pill-warn { color: var(--warn); background: var(--warn-soft); }
+.pill-bad { color: var(--danger); background: var(--danger-soft); }
+.pill-info { color: var(--accent); background: var(--accent-soft); }
+.pill-muted { color: var(--muted); background: transparent; }
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+.status-dot.ok { color: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.status-dot.warn { color: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.status-dot.bad { color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+.status-dot.off { color: var(--muted); }
+/* 中性信息点：既不是"正常/异常"，只是"当前值是什么"（如当前步态、充电状态） */
+.status-dot.info { color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* 脉冲：运动/执行中的状态点 */
+.status-dot.pulse { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ==========================================================================
+   提示条（说明 / 警示 / 错误）
+   ========================================================================== */
+.note {
+  font-size: var(--fs-12);
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.hint {
+  font-size: var(--fs-12);
+  color: var(--muted);
+}
+
+.warn-box,
+.danger-box,
+.info-box {
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-12);
+  line-height: 1.65;
+  border-radius: var(--r-sm);
+  border: 1px solid;
+}
+.info-box { color: var(--text); background: var(--accent-soft); border-color: rgba(56, 189, 248, 0.35); }
+.warn-box { color: var(--warn); background: var(--warn-soft); border-color: var(--warn-line); }
+.danger-box { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
+
+/* ==========================================================================
+   空状态 / 加载占位
+   ========================================================================== */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  padding: var(--sp-5) var(--sp-4);
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-12);
+  background: var(--panel-2);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+}
+.empty-state .empty-icon {
+  font-size: var(--fs-20);
+  line-height: 1;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+/* 空状态图标语言（全站统一，2026-10-20）：
+   ✓ = 查过了、没问题；∅ = 没有数据。
+   不用 emoji —— 自带配色会破坏深色主题的色板纪律。 */
+.empty-state .empty-title { color: var(--text); font-weight: 600; font-size: var(--fs-13); }
+.empty-state .empty-desc { max-width: 42em; line-height: 1.6; }
+
+/* ==========================================================================
+   布局工具
+   ========================================================================== */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.stack { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+/* ==========================================================================
+   标签页内容区
+   --------------------------------------------------------------------------
+   **flex-wrap + grow + stretch**，不用 grid auto-fit：
+   ① auto-fit 会为"可能存在的下一列"留位 —— 传感器监控 3 张卡只占 3/4 列，
+      右侧空一整列（2026-10-20 实测空 ~307px）；
+   ② flex 的列数随宽度**连续**变化，不会像 auto-fit 那样"差几个像素突然换行"；
+   ③ align-items:stretch 让同一行卡片**底边对齐**（原来高 178/280/210 参差）。
+   通栏卡（.span-all）用 flex-basis:100% 独占一行。
+   ========================================================================== */
+.pane {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  align-items: stretch;
+}
+.pane > .panel {
+  flex: 1 1 320px;
+  min-width: 0;
+  margin-bottom: 0;
+}
+/* 表格 / 视频 / 设置这类信息量大的面板，独占整行 */
+.pane > .span-all { flex-basis: 100%; }
+.pane > .risk-warn { flex-basis: 100%; }
+
+@media (max-width: 720px) {
+  .pane > .panel { flex-basis: 100%; }
+}
+
+/* ==========================================================================
+   双列独立流（运动控制 / 机器人设置共用）
+   --------------------------------------------------------------------------
+   为什么不用 grid 两列：grid 按**行**排布，行高 = 该行最高卡片，矮卡片不拉伸
+   ⇒ 行内出现大空洞（2026-10-20 实测运动控制页行内空洞 302px / 335px）。
+   两个独立的纵向流各自按内容高度堆叠，容器高 = 两列较高者，空洞只剩两列的
+   高度差（实测配平后 15px）。列内顺序即 DOM 顺序，读屏与窄屏不受影响。
+   ========================================================================== */
+.mgrid {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+.mgcol {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.mgcol > * { margin-bottom: 0; }
+/* 竖排（窄屏）必须 stretch：列内卡片带 container-type:inline-size（内联尺寸包含），
+   父级若按内容定宽（fit-content），卡片会塌到只剩内边距 —— 2026-10-20 实测
+   980px 下卡片宽 26px（= 12px 内边距 ×2 + 2px 边框），整页挤成细条。 */
+@media (max-width: 980px) {
+  .mgrid { flex-direction: column; align-items: stretch; }
+}
+
+/* 设备开关条（多面板共用骨架） */
+.devbar {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-size: var(--fs-12);
+  background: var(--panel-2);
+}

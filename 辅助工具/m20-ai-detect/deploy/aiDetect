@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# aiDetect —— m20-ai-detect 的终端运维命令（在 GOS 10.21.31.104 上以 user 执行）
+# aiDetect —— 本项目的终端运维命令（参考部署：GOS 10.21.31.104，以业务账户执行）
 #
 # 提权模型（与 ADR-005 / ADR-007 一致）：
 #   * 服务动作（启停/重启/开机自启开关）一律经 sudoers 精确白名单调 root helper
@@ -20,10 +20,29 @@ if [[ -z "$BASE" && -f "$ENV_FILE_DEFAULT" ]]; then
   BASE="$(sed -n 's/^M20AI_BASE_DIR=//p' "$ENV_FILE_DEFAULT" | head -1 | tr -d '"' || true)"
 fi
 BASE="${BASE:-/home/djw/m20-ai-detect}"
+
+# ---- 身份解析（ADR-017）------------------------------------------------------
+# 单元名 / env 名 / helper 名 / sudoers 名全部由 app_id 派生。缺省值先按
+# 老部署（m20）摆好；$BASE/deploy/identity.sh 存在时用它反查真实身份
+# （env 文件内的 M20AI_APP_ID > 文件名前缀 > 缺省 m20）。老机器的代码里
+# 没有这个文件 → 走缺省分支，行为与改造前逐字一致。
+APP_ID=m20
 ENV_FILE="$BASE/m20-ai-detect.env"
-HELPER="${M20AI_HELPER:-/usr/local/sbin/m20-ai-console-helper}"
+CONSOLE_ENV_FILE="$BASE/m20-ai-console.env"
+HELPER="/usr/local/sbin/m20-ai-console-helper"
+SUDOERS="/etc/sudoers.d/m20-ai-console"
 SAMPLER=m20-ai-detect
 CONSOLE=m20-ai-console
+if [[ -f "$BASE/deploy/identity.sh" ]]; then
+  # shellcheck source=deploy/identity.sh
+  . "$BASE/deploy/identity.sh"
+  detect_identity "$BASE" 2>/dev/null || true
+  SAMPLER="$UNIT_NAME"
+  CONSOLE="$CONSOLE_UNIT_NAME"
+fi
+# 手工逃生门：多身份同机/调试时显式指定（优先级高于反查结果）
+ENV_FILE="${M20AI_ENV_FILE:-$ENV_FILE}"
+HELPER="${M20AI_HELPER:-$HELPER}"
 
 if [[ -z "$BASE" || "$BASE" == "/" ]]; then
   echo "aiDetect: BASE 非法：'$BASE'" >&2
@@ -51,7 +70,7 @@ svc_action() {  # $1=sampler|console  $2=start|stop|restart|enable|disable
 }
 
 act_hint() {  # $1=unit  $2=动作描述（服务动作失败时的可操作提示）
-  die "「$2」失败。检查：① /etc/sudoers.d/m20-ai-console 白名单是否含对应子命令（重跑 deploy/console-bootstrap.sh）；② journalctl -u $1 -n 20"
+  die "「$2」失败。检查：① $SUDOERS 白名单是否含对应子命令（重跑 deploy/console-bootstrap.sh）；② journalctl -u $1 -n 20"
 }
 
 report_svc() {  # $1=unit  $2=标签
@@ -260,7 +279,7 @@ cmd_status() {
   echo "        采集开关  $(if [[ "$(state_of "$SAMPLER")" == "active" ]]; then echo 运行中; else echo 已关闭（默认）; fi)（切换：aiDetect collect on|off 或控制台网页）"
   echo "        开机自启 控制台 $(enabled_of "$CONSOLE") · 采集器不设自启（手动启动：aiDetect up）"
   ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-  port="$(sed -n 's/^M20AIC_PORT=//p' "$BASE/m20-ai-console.env" 2>/dev/null | head -1 || true)"
+  port="$(sed -n 's/^M20AIC_PORT=//p' "$CONSOLE_ENV_FILE" 2>/dev/null | head -1 || true)"
   port="${port:-5050}"
   if [[ -n "${ip:-}" ]]; then
     echo "        控制台地址 http://$ip:$port（机器人内网）"
@@ -345,8 +364,9 @@ cmd_doctor() {
 }
 
 usage() {
-  cat <<'EOF'
-aiDetect —— m20-ai-detect 终端运维命令（GOS 10.21.31.104）
+  # 非 quoted heredoc：正文里没有 $ 与反引号，可安全插值 $APP_ID/$HELPER/$BASE
+  cat <<EOF
+aiDetect —— $APP_ID 终端运维命令（当前身份 APP_ID=$APP_ID，BASE=$BASE）
 
 用法：aiDetect <子命令> [参数]
 
@@ -373,7 +393,7 @@ aiDetect —— m20-ai-detect 终端运维命令（GOS 10.21.31.104）
   aiDetect log -g FAIL -n 300    在最近 300 行里找失败记录
 
 说明：
-  * 服务动作与自启开关经 sudoers 白名单（/usr/local/sbin/m20-ai-console-helper）免密执行；
+  * 服务动作与自启开关经 sudoers 白名单（$HELPER）免密执行；
   * up/down/restart/enable/disable 只作用于**控制台**；采集（采样器）由 collect 或网页开关控制，
     默认关闭（ADR-010）——不再有 --all 参数；
   * reset 与网页「清理数据」勾 spool 等价：仅当采集在运行时 停采集 → 删 spool/*.jpg → 恢复启动；

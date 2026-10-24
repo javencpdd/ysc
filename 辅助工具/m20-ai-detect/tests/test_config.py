@@ -222,6 +222,56 @@ class TestSaveMode(unittest.TestCase):
         cfg = Config.from_env(base_env(M20AI_SAVE_MODE="off", M20AI_SAVE_RESULT_IMAGE="true"))
         self.assertEqual(cfg.save_mode, "off")
 
+    def test_spool_max_files_bounds(self):
+        """spool 积压上限（防空磁盘被 AI 故障写爆）：默认 600，范围 50~10000。"""
+        from m20_ai_detect.config import ConfigError
+
+        cfg = Config.from_env(base_env())
+        self.assertEqual(cfg.spool_max_files, 600)
+        cfg = Config.from_env(base_env(M20AI_SPOOL_MAX_FILES="200"))
+        self.assertEqual(cfg.spool_max_files, 200)
+        for bad in ("10", "20000"):
+            with self.assertRaises(ConfigError):
+                Config.from_env(base_env(M20AI_SPOOL_MAX_FILES=bad))
+
+
+class TestConfigIdentity(unittest.TestCase):
+    """身份联动（ADR-017）：app_id 从 env 进 Config，非法值在校验阶段被拦。"""
+
+    def test_default_app_id(self):
+        cfg = Config.from_env(base_env())
+        self.assertEqual(cfg.app_id, "m20")
+        self.assertEqual(cfg.identity.unit, "m20-ai-detect.service")
+        self.assertEqual(cfg.identity.helper, "/usr/local/sbin/m20-ai-console-helper")
+
+    def test_app_id_from_env(self):
+        cfg = Config.from_env(base_env(M20AI_APP_ID="lite3"))
+        self.assertEqual(cfg.app_id, "lite3")
+        self.assertEqual(cfg.identity.unit_name, "lite3-ai-detect")
+        self.assertEqual(cfg.identity.console_unit_name, "lite3-ai-console")
+
+    def test_empty_app_id_falls_back(self):
+        self.assertEqual(Config.from_env(base_env(M20AI_APP_ID="   ")).app_id, "m20")
+
+    def test_bad_app_id_is_config_error(self):
+        """必须是 ConfigError（而非裸 ValueError），控制台才把它当"配置非法"处理。"""
+        for bad in ("my app", "a/b", "-x"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ConfigError):
+                    Config.from_env(base_env(M20AI_APP_ID=bad))
+
+    def test_platform_and_profile(self):
+        cfg = Config.from_env(
+            base_env(M20AI_PLATFORM_NAME="巡检车 01", M20AI_PROFILE="ipc-generic")
+        )
+        self.assertEqual(cfg.platform_name, "巡检车 01")
+        self.assertEqual(cfg.profile, "ipc-generic")
+        self.assertEqual(cfg.identity.display, "巡检车 01")
+
+    def test_identity_carries_base_dir(self):
+        cfg = Config.from_env(base_env(M20AI_BASE_DIR="/home/ysc/x"))
+        self.assertEqual(cfg.identity.base_dir, "/home/ysc/x")
+
 
 if __name__ == "__main__":
     unittest.main()

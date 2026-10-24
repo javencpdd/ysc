@@ -1,0 +1,83 @@
+{
+  "version": 2,
+  "console": {
+    "bind": "0.0.0.0",
+    "port": 8090,
+    "allowed_cidrs": [
+      "192.168.1.0/24"
+    ],
+    "session_ttl_s": 43200,
+    "token": "CHANGE_ME_ON_TARGET_HOST"
+  },
+  "source": {
+    "type": "rtsp",
+    "rtsp_url": "rtsp://192.168.1.120:8554/test",
+    "file_path": "",
+    "codec": "h264",
+    "decoder": "hw",
+    "transport": "udp",
+    "latency_ms": 200,
+    "out_width": 640,
+    "out_height": 360,
+    "read_timeout_ms": 5000,
+    "reconnect": {
+      "enabled": true,
+      "backoff_ms": 1000,
+      "backoff_max_ms": 30000
+    }
+  },
+  "detect": {
+    "conf_threshold": 0.4,
+    "classes": [
+      0
+    ]
+  },
+  "snapshot": {
+    "enabled": true,
+    "cooldown_ms": 2000,
+    "cooldown_ms_per_class": 1000,
+    "daily_quota": 500,
+    "retention_days": 7,
+    "min_free_gb": 5,
+    "save_meta": true,
+    "save_annotated": true
+  },
+  "stream": {
+    "rtmp": true,
+    "rtmp_url": "rtmp://172.31.68.227:1936/live/lite3_yolo",
+    "rtmp_bitrate": 1000000,
+    "rtmp_sink": "rtmpsink",
+    "out_width": 640,
+    "out_height": 360,
+    "fps": 30,
+    "ros2_image": false,
+    "ros2_every": 3,
+    "reconnect": {
+      "backoff_ms": 1000,
+      "backoff_max_ms": 30000
+    }
+  },
+  "model": {
+    "engine": "../model/yolov8n_arm.engine",
+    "pending_reload": false,
+    "imgsz": 640
+  },
+  "pic_dir": "../pic",
+  "trash_retention_days": 7,
+  "_notice": "P0 迁移生成。当前 worker 尚未消费本文件（计划书 v2.1 P2 接入），生效仍以 deploy/yolo-publish.env 为准；接入后以本文件为唯一运行期配置。",
+  "migrated_from": {
+    "env_file": "deploy/yolo-publish.env",
+    "mode": "rtmp",
+    "rtmp_enabled": true,
+    "ros2_image_enabled": false,
+    "rtsp_url_origin": "GStreamerWrapper.py 硬编码默认值（真机实测可达）"
+  },
+  "updated_at": "2026-10-24T02:30:52+08:00",
+  "retention": {
+    "pic_max_mb": 2048,
+    "pic_keep_days": 30,
+    "trash_keep_days": 7,
+    "prune_interval_s": 600
+  },
+  "_migration_notice": "迁移包：console.token 已脱敏为占位符，部署到目标机后必须修改；allowed_cidrs / source.rtsp_url / stream.rtmp_url 也需按目标机网络改写。权威流程见 note/23-yolo8移植部署流程.md。"
+}

@@ -69,6 +69,31 @@ MSG: Dict[str, Tuple[str, str]] = {
         "purge contains unknown kinds: {bad} (allowed: {scopes})",
     ),
     "err.nothing": ("没有可保存的项", "Nothing to save"),
+    # ---- 视频源管理（POST /api/sources，ADR-016）----
+    "src.action_bad": (
+        "未知动作 {action}（可用：{actions}）",
+        "Unknown action {action} (allowed: {actions})",
+    ),
+    "src.name_required": ("缺少 name 字段（源逻辑名）", "Missing the name field"),
+    "src.name_bad": (
+        "源名 {name} 非法：只能含字母/数字/下划线/连字符，最长 32 位，且以字母或数字开头",
+        "Invalid source name {name}: letters/digits/_/- only, max 32 chars, starting with a letter or digit",
+    ),
+    "src.dup": ("源 {name} 已存在（改地址请用 update）", "Source {name} already exists (use update to change it)"),
+    "src.last_one": (
+        "至少保留一路视频源（全删掉采集无从开始）",
+        "Keep at least one source (the sampler cannot run with none)",
+    ),
+    "src.fps_bad": (
+        "fps={v} 不是数字（范围 0~30；留空 = 继承全局）",
+        "fps={v} is not a number (0-30; empty = inherit the global value)",
+    ),
+    "src.scope_bad": (
+        "scope 只能是 local / auto / host:<ip>[:port]",
+        "scope must be local / auto / host:<ip>[:port]",
+    ),
+    "src.timeout_bad": ("timeout_s / budget_s 不是数字", "timeout_s / budget_s is not a number"),
+    "src.written": ("已写入 env", "Saved to env"),
     # ---- 快照（snapshot.py 的 code → 本目录）----
     "snap.no_cameras": (
         "没有启用任何相机（在「相机与采集」里勾选前视/后视后保存）",

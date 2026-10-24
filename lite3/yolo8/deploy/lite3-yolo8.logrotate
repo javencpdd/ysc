@@ -1,0 +1,13 @@
+/home/test/yolo8/logs/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    # logs/ 是 group-writable，不写 su 的话 logrotate 会以
+    # "parent directory has insecure permissions" 拒绝轮转（103 实测踩过）。
+    # 安装脚本会按 logs/ 的实际属主改写这一行。
+    su ysc ysc
+}

@@ -3,13 +3,19 @@
     <h3>
       GPS 定位
       <small>（只读 · 显示 M20 上报的 GPS 数据包）</small>
+      <span class="spacer" />
+      <span v-if="hasGps" class="pill" :class="located ? 'pill-ok' : 'pill-warn'">
+        <span class="status-dot" :class="located ? 'ok' : 'warn pulse'" />
+        {{ located ? '已定位' : '未定位' }}
+      </span>
+      <span v-else class="pill pill-muted">无数据</span>
     </h3>
 
     <!-- GPS 供电开关（1101/3，2026-10-17 抓包破解）：
          GPS 模块随车供电，可以单独开/关。注意这与「GPS 时间同步」(1101/16)
          是两回事——那条只影响时钟，不动供电。 -->
     <div class="devbar">
-      <span>GPS 供电：</span>
+      <span class="devbar-label">GPS 供电</span>
       <DeviceToggle
         label="GPS 模块"
         :value="gps.gps_enable ?? null"
@@ -23,17 +29,22 @@
     </div>
 
     <!-- 未拿到设备状态：给明确提示，绝不白屏 -->
-    <div v-if="!hasGps" style="color: var(--warn); padding: 8px 0">
-      ⚠ 暂未收到 GPS 数据（设备状态未就绪或本机型未装配 GPS 模块）
+    <div v-if="!hasGps" class="empty-state">
+      <span class="empty-icon">∅</span>
+      <span class="empty-title">暂未收到 GPS 数据</span>
+      <span class="empty-desc">
+        设备状态帧尚未就绪，或本机型未装配 GPS 模块。若机器人已开机且链路正常，请稍候数秒。
+      </span>
     </div>
 
     <template v-if="hasGps">
       <!-- 定位状态一眼可见：不看懂 HDOP 也能判断"能不能信" -->
-      <div v-if="!located" class="gps-warn">
+      <div v-if="!located" class="warn-box" style="margin-bottom: var(--sp-3)">
         ⚠ 当前<b>未定位</b>（经纬度为 0、卫星数 {{ satText }}）——
         室内 / 冷启动 / 天线遮挡都会导致无定位，数值仅供参考
       </div>
 
+      <div class="block-title" style="margin-bottom: var(--sp-2)">定位结果</div>
       <div class="grid">
         <div class="kv"><span>纬度 Latitude</span><span>{{ n6(gps.gps_latitude) }}</span></div>
         <div class="kv"><span>经度 Longitude</span><span>{{ n6(gps.gps_longitude) }}</span></div>
@@ -45,12 +56,14 @@
         <div class="kv"><span>可见卫星数</span><span>{{ dash(gps.gps_visible_satellites) }}</span></div>
       </div>
 
-      <div class="block-title" style="margin: 12px 0 6px">精度因子（越小越好）</div>
+      <div class="block-title" style="margin: var(--sp-4) 0 var(--sp-2)">
+        精度因子（越小越好）
+      </div>
       <div class="grid">
         <div class="kv"><span>HDOP 水平</span><span>{{ n2(gps.gps_hdop) }}</span></div>
         <div class="kv"><span>VDOP 垂直</span><span>{{ n2(gps.gps_vdop) }}</span></div>
         <div class="kv"><span>PDOP 位置</span><span>{{ n2(gps.gps_pdop) }}</span></div>
-        <div class="kv"><span>GPS 使能 DevEnable</span><span>{{ onoff(gps.gps_enable) }}</span></div>
+        <div class="kv"><span>GPS 供电开关</span><span>{{ onoff(gps.gps_enable) }}</span></div>
         <div class="kv"><span>卫星系统模式</span><span>{{ modeLabel }}</span></div>
       </div>
 
@@ -58,16 +71,16 @@
            位定义来自车侧 gps.yaml 的 sysMask 注释：bit0 GPS / bit4 BDS / bit8 GLONASS
            / bit12 Galileo / bit16 QZSS。这里**只显示星座真名**，不显示 69905 这种代号；
            原始掩码挪到下方原始数据包区。 -->
-      <div class="devbar" style="margin-top: 10px">
-        <span>卫星系统：</span>
+      <div class="devbar" style="margin-top: var(--sp-3)">
+        <span class="devbar-label">卫星系统</span>
         <template v-for="opt in gpsModes" :key="opt.mask">
           <button
             class="mode-btn"
-            :class="{ active: Number(gps.gps_mode) === opt.mask }"
+            :class="{ active: Number(gps.gps_mode) === opt.mask, 'btn-loading': devBusy === 'GPSMode' }"
             :disabled="!ctrl.enabled || !!devBusy"
             :title="modeTip(opt)"
             @click="setMode(opt.mask)"
-          >{{ opt.label }}</button>
+          >{{ devBusy === 'GPSMode' ? '切换中…' : opt.label }}</button>
         </template>
         <span class="mask-hex">掩码 {{ gps.gps_mode_hex || '—' }}</span>
         <span v-if="!ctrl.enabled" class="hint">需先在「运动控制」页开启控制（L1）</span>
@@ -75,21 +88,23 @@
       <div v-if="activeSystems.length" class="sys-chips">
         当前参与定位：<b v-for="sys in activeSystems" :key="sys" class="chip">{{ sys }}</b>
       </div>
-      <div class="mode-note">
+      <div class="note mode-note">
         读数是<b>车侧实际生效值</b>（basic_server 收到 GNSS 节点上报后才更新，切换后约 1–2s 才收敛）。
         位定义取自车侧 <code>gps.yaml</code>：bit0 GPS · bit4 BDS · bit8 GLONASS · bit12 Galileo · bit16 QZSS。
       </div>
 
       <!-- 原始数据包：排查"上报了但解析错了"时看这里 -->
-      <div class="block-title" style="margin: 12px 0 6px">
-        原始数据包（DeviceStatus.GPS 原样透传）
-        <button class="toggle" @click="showRaw = !showRaw">{{ showRaw ? '收起' : '展开' }}</button>
+      <div class="raw-head">
+        <span class="block-title">原始数据包（DeviceStatus.GPS 原样透传）</span>
+        <button class="btn-sm btn-ghost" type="button" @click="showRaw = !showRaw">
+          {{ showRaw ? '收起' : '展开' }}
+        </button>
       </div>
       <pre v-if="showRaw" class="raw">{{ rawJson }}</pre>
 
-      <div class="gps-note">
+      <div class="warn-box" style="margin-top: var(--sp-3)">
         ⚠ 字段<b>单位未见官方文档</b>（docs/04 未收录 GPS 字段说明），此处不做任何换算、
-        原样显示上报值。GPS 同步开关是另一条指令（`1101/16` GPS 时间同步），与定位数据无关。
+        原样显示上报值。GPS 同步开关是另一条指令（<code>1101/16</code> GPS 时间同步），与定位数据无关。
       </div>
     </template>
   </div>
@@ -113,8 +128,10 @@ const props = defineProps({
 // ⚠️ 必须解构到顶层：Vue 3 模板只对**顶层** setup 绑定做 ref 解包，
 // 写成 `dev.busy` 拿到的是 Ref 对象本身（恒真）→ `:disabled` 永远为真。
 // 这正是 2026-10-17 用户反馈"供电开关按钮按不了"的根因。
+// ⚠️ `flash` 同样必须解构：此前 setMode 里调用了 devFlash 但并未解构出来，
+// 一旦触发会直接抛 ReferenceError（界面改造时一并补上）。
 const { busy: devBusy, msg: devMsg, err: devErr,
-        apply: devApply } = useDeviceSwitch(props)
+        flash: devFlash, apply: devApply } = useDeviceSwitch(props)
 const ctrl = computed(() => props.control || {})
 
 const showRaw = ref(false)
@@ -208,104 +225,89 @@ const rawJson = computed(() => {
 </script>
 
 <style scoped>
-.devbar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-  padding: 6px 8px;
-  border: 1px solid var(--border, #d8dce3);
-  border-radius: 6px;
-  font-size: 12px;
-  background: var(--panel-2, #f7f8fa);
+.devbar-label {
+  font-weight: 600;
+  color: var(--text);
 }
-.devbar .hint.err {
-  color: var(--danger, #d0453b);
-}
-.gps-warn {
-  margin-bottom: 10px;
-  padding: 6px 8px;
-  font-size: 12px;
-  color: var(--warn, #c47f17);
-  background: var(--panel-2, #f7f8fa);
-  border: 1px solid var(--border, #d8dce3);
-  border-radius: 6px;
-}
+
+.hint.err { color: var(--danger); }
+
 .mode-btn {
-  padding: 2px 9px;
+  min-height: 26px;
+  padding: var(--sp-1) var(--sp-3);
   font-family: inherit;
-  font-size: 12px;
-  color: var(--muted, #888);
+  font-size: var(--fs-12);
+  color: var(--muted);
   background: transparent;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-pill);
+}
+.mode-btn:hover:not(:disabled):not(.active) {
+  color: var(--text);
+  background: var(--panel-3);
+  border-color: var(--line-strong);
 }
 .mode-btn.active {
   color: #fff;
-  background: var(--accent, #2f6fed);
-  border-color: var(--accent, #2f6fed);
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  font-weight: 600;
 }
-.mode-btn:disabled { opacity: 0.5; }
+.mode-btn:disabled { opacity: 0.45; }
+
 .mask-hex {
-  margin-left: 4px;
-  color: var(--muted, #888);
+  margin-left: var(--sp-1);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
+  font-size: var(--fs-12);
 }
-.sys-chips { margin-top: 4px; font-size: 12px; color: var(--muted, #888); }
-.mode-note { margin-top: 4px; font-size: 12px; line-height: 1.6; color: var(--muted, #888); }
+
+.sys-chips {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-12);
+  color: var(--muted);
+}
+.mode-note { margin-top: var(--sp-2); }
 .mode-note code {
-  padding: 0 3px;
-  background: var(--panel-2, #f7f8fa);
-  border: 1px solid var(--border, #d8dce3);
-  border-radius: 3px;
+  padding: 0 4px;
+  font-family: var(--ff-mono);
+  font-size: var(--fs-11);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
 }
+
 .sys-chips .chip {
   display: inline-block;
-  margin-left: 4px;
-  padding: 1px 7px;
-  color: var(--text, #222);
-  background: var(--panel, #fff);
-  border: 1px solid var(--border, #d8dce3);
-  border-radius: 10px;
-}
-.gps-note {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.toggle {
-  margin-left: 8px;
+  margin-left: var(--sp-1);
   padding: 1px 8px;
-  font-size: 11px;
-  font-family: inherit;
-  color: var(--muted);
-  background: transparent;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--panel-2);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--r-pill);
 }
+
+.raw-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin: var(--sp-4) 0 var(--sp-2);
+}
+
 .raw {
   max-height: 320px;
   margin: 0;
-  padding: 8px 10px;
+  padding: var(--sp-2) var(--sp-3);
   overflow: auto;
-  font-size: 12px;
+  font-family: var(--ff-mono);
+  font-size: var(--fs-12);
   line-height: 1.5;
-  background: var(--panel-2, #f7f8fa);
-  border: 1px solid var(--border, #d8dce3);
-  border-radius: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
 }
-/* 与运动控制页一致：固定列数，避免 auto-fill 的列数跳变 */
-.grid {
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
-}
-@media (max-width: 1180px) {
-  .grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
-}
-@media (max-width: 880px) {
-  .grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
-}
-@media (max-width: 560px) {
-  .grid { grid-template-columns: minmax(150px, 1fr); }
-}
+
+/* .grid 的固定列数规则已收敛到全局 style.css，本面板不再重复定义 */
 </style>

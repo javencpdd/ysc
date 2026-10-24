@@ -2,12 +2,18 @@
   <div class="panel">
     <h3>
       相机画面
-      <small>（前后双路 · {{ webrtcOn ? 'WebRTC 低延迟' : 'HLS 兜底' }}）</small>
+      <small>（前后双路）</small>
+      <span class="spacer" />
+      <span class="pill" :class="webrtcOn ? 'pill-info' : 'pill-warn'"
+            :title="webrtcOn ? '当前走 WebRTC（WHEP）低延迟通道，延迟通常低于 500ms' : 'WebRTC 不可用，已降级 HLS（延迟约 2–3s）'">
+        {{ webrtcOn ? 'WebRTC 低延迟' : 'HLS 兜底' }}
+      </span>
     </h3>
 
-    <!-- 整体未开启 / 配置不可用：给明确提示，绝不白屏（PLAN §6.3 / T3.4） -->
-    <div v-if="!cfg.enabled" style="color: var(--warn); padding: 8px 0">
-      ⚠ 视频功能未开启（后端 `M20_VIDEO__ENABLED=false`）
+    <!-- 整体未开启 / 配置不可用：给明确提示，绝不白屏（PLAN §6.3 / T.4） -->
+    <div v-if="!cfg.enabled" class="warn-box">
+      ⚠ 视频功能未开启（后端 <code>M20_VIDEO__ENABLED=false</code>）——
+      开启并重启服务后本页才会出现画面。
     </div>
 
     <template v-if="cfg.enabled">
@@ -17,7 +23,7 @@
            {"Video":{"Front":..,"Back":..}}（抓包破解，车侧日志实证
            「设置广角相机开关 front:1 back:1」）。两者都就地暴露，省得切页。 -->
       <div class="devbar">
-        <span>相机供电：</span>
+        <span class="devbar-label">相机供电</span>
         <DeviceToggle
           label="前相机"
           :value="videoFront ?? null"
@@ -32,19 +38,21 @@
           :busy="!!devBusy"
           @set="(v) => setCam('Back', v)"
         />
-        <span :class="sleeping ? 'warn' : 'dim'">
+        <span class="pill" :class="sleeping ? 'pill-warn' : 'pill-muted'"
+              :title="sleeping ? '整车休眠中：相机不通电，画面全黑属正常现象' : '整车未休眠，相机应正常供电'">
+          <span class="status-dot" :class="sleeping ? 'warn' : 'off'" />
           整车{{ sleepLabel }}
         </span>
         <!-- 常驻显示（不再只在休眠时出现）：相机随车供电，"相机没画面"时的第一反应
              就是确认整车是不是睡了；按钮也常驻，免得需要用的时候找不到。 -->
         <button
-          :disabled="!ctrl.enabled"
+          class="btn-sm"
+          :class="{ 'btn-loading': waking }"
+          :disabled="!ctrl.enabled || waking"
           :title="wakeTip"
           @click="wakeUp"
-        >唤醒整车</button>
-        <span v-if="!ctrl.enabled" class="hint">
-          需先在「运动控制」页开启控制（L1）
-        </span>
+        >{{ waking ? '唤醒中…' : '唤醒整车' }}</button>
+        <span v-if="!ctrl.enabled" class="hint">需先在「运动控制」页开启控制（L1）</span>
         <span v-if="devMsg" class="hint">{{ devMsg }}</span>
         <span v-if="devErr" class="hint err">{{ devErr }}</span>
       </div>
@@ -53,17 +61,74 @@
       <VideoServicePanel />
 
       <div class="vbar">
-        <button :class="{ active: layout === 'both' }" @click="layout = 'both'">并排双路</button>
-        <button :class="{ active: layout === 'front' }" @click="layout = 'front'">仅前</button>
-        <button :class="{ active: layout === 'back' }" @click="layout = 'back'">仅后</button>
-        <button @click="reloadAll">重连</button>
+        <span class="vbar-group">
+          <button
+            class="btn-sm"
+            :class="{ 'btn-primary': layout === 'both' }"
+            :aria-pressed="layout === 'both'"
+            title="同时显示前、后两路画面"
+            @click="layout = 'both'"
+          >双路并排</button>
+          <button
+            class="btn-sm"
+            :class="{ 'btn-primary': layout === 'front' }"
+            :aria-pressed="layout === 'front'"
+            title="只显示前相机画面（两路仍在拉流，想省带宽请用「暂停拉流」）"
+            @click="layout = 'front'"
+          >只看前相机</button>
+          <button
+            class="btn-sm"
+            :class="{ 'btn-primary': layout === 'back' }"
+            :aria-pressed="layout === 'back'"
+            title="只显示后相机画面（两路仍在拉流，想省带宽请用「暂停拉流」）"
+            @click="layout = 'back'"
+          >只看后相机</button>
+        </span>
+
+        <button
+          class="btn-sm"
+          :class="{ 'btn-loading': reconnecting }"
+          :disabled="reconnecting"
+          title="断开并重新建立取流连接（画面黑屏 / 卡住时先试这个）"
+          @click="reloadAll"
+        >{{ reconnecting ? '重连中…' : '重新连接' }}</button>
+
+        <!-- 拉流开关（2026-10-18 加）：省 196 的上行带宽。
+             实测单路 WHEP ≈ 50KB/s、HLS ≈ 25KB/s，两路常开约 100KB/s。
+             除了这个手动开关，切走标签页/切走浏览器窗口也会自动停（见 flowReason）。 -->
+        <button
+          class="btn-sm"
+          :class="flowWanted ? '' : 'btn-danger'"
+          :disabled="!cfg.enabled"
+          :title="flowTip"
+          :aria-pressed="!flowWanted"
+          @click="toggleFlow"
+        >{{ flowWanted ? '暂停拉流' : '恢复拉流' }}</button>
+
         <span class="hint">
           源：MediaMTX {{ locationHost }} ·
-          WHEP :{{ cfg.webrtc.port }} / HLS :{{ cfg.hls.port }}
+          WHEP <span class="num">:{{ cfg.webrtc.port }}</span> /
+          HLS <span class="num">:{{ cfg.hls.port }}</span>
         </span>
       </div>
 
-      <div class="vgrid" :class="{ single: layout !== 'both' }">
+      <!-- 没在拉流时说清楚为什么，别让人以为画面坏了 -->
+      <div v-if="!flowWanted" class="warn-box" style="margin-bottom: var(--sp-3)">
+        ⏸ {{ flowReason }}
+        <span class="hint">（恢复后自动重连，推流服务本身不受影响）</span>
+      </div>
+
+      <!-- 一路流都没配：明确空状态，而不是留两格黑框 -->
+      <div v-if="!streams.length" class="empty-state">
+        <span class="empty-icon">∅</span>
+        <span class="empty-title">未配置视频流</span>
+        <span class="empty-desc">
+          后端未返回任何流（<span class="mono">/api/v1/video/streams</span> 为空）。
+          请确认 MediaMTX 与推流服务已启动。
+        </span>
+      </div>
+
+      <div v-else class="vgrid" :class="{ single: layout !== 'both' }">
         <div
           v-for="s in streams"
           :key="s.key"
@@ -72,24 +137,31 @@
         >
           <div class="vhead">
             <b>{{ s.label }}</b>
-            <span class="badge" :class="badgeClass(s.key)">{{ badgeText(s.key) }}</span>
+            <span class="pill" :class="badgeClass(s.key)">{{ badgeText(s.key) }}</span>
           </div>
 
-          <video
-            :ref="(el) => setVideoEl(s.key, el)"
-            controls
-            muted
-            autoplay
-            playsinline
-            class="v"
-          ></video>
+          <div class="vframe">
+            <video
+              :ref="(el) => setVideoEl(s.key, el)"
+              controls
+              muted
+              autoplay
+              playsinline
+              class="v"
+            ></video>
+            <!-- 连接中/重连中：覆盖式加载反馈，避免"黑屏 = 坏了"的误判 -->
+            <div v-if="isBusyState(s.key)" class="vmask">
+              <span class="spinner" />
+              <span>{{ runtime[s.key]?.detail || '正在建立连接…' }}</span>
+            </div>
+          </div>
 
           <div v-if="runtime[s.key]?.state === 'failed'" class="verr">
             ⚠ {{ runtime[s.key].detail || '取流失败' }}
             <div class="hint">
               {{ sleeping
                 ? '整车休眠中 —— 相机不通电，点上方「唤醒整车」'
-                : '整车未休眠：多为推流管道或相机 USB 问题（可先点「重连」）' }}
+                : '整车未休眠：多为推流管道或相机 USB 问题（可先点「重新连接」）' }}
             </div>
           </div>
           <div v-else class="hint">{{ runtime[s.key]?.detail || '' }}</div>
@@ -113,7 +185,9 @@ const props = defineProps({
   device: { type: Object, default: () => ({}) },
   basic: { type: Object, default: () => ({}) },
   control: { type: Object, default: () => ({}) },
-  sendCommand: { type: Function, default: null }
+  sendCommand: { type: Function, default: null },
+  // 相机标签页当前是否可见（App.vue 用 v-show 切页，组件不卸载，得自己知道）
+  active: { type: Boolean, default: true }
 })
 
 // ---- 单相机供电开关（1101/3，2026-10-17 抓包破解）----
@@ -144,16 +218,24 @@ const wakeTip = computed(() => {
     ? '退出整车休眠（1101/6）—— 会同时恢复相机 / 雷达 / GPS / 关节供电'
     : '整车未休眠时下发也安全（1101/6 幂等）；用于强制恢复相机 / 雷达供电'
 })
+
+// 唤醒 / 重连的加载态（仅展示用，不改变下发逻辑）
+const waking = ref(false)
+const reconnecting = ref(false)
+
 async function wakeUp () {
   if (!props.sendCommand) return
+  waking.value = true
   devFlash('唤醒下发中…')
   try {
     const res = await props.sendCommand('wake_up')
     devFlash(res && res.ok
-      ? '唤醒已下发（1101/6）—— 供电恢复需数秒，稍后点「重连」'
+      ? '唤醒已下发（1101/6）—— 供电恢复需数秒，稍后点「重新连接」'
       : `被拒：${(res && res.reason) || '未知'} ${(res && res.detail) || ''}`, !(res && res.ok))
   } catch (err) {
     devFlash('唤醒请求失败：' + (err && err.message ? err.message : err), true)
+  } finally {
+    waking.value = false
   }
 }
 
@@ -171,6 +253,7 @@ const webrtcOn = computed(() => cfg.value.webrtc?.enabled && isWebRtcSupported()
 const locationHost = computed(() => (typeof window !== 'undefined' ? window.location.hostname : ''))
 
 const isShown = (key) => layout.value === 'both' || layout.value === key
+const isBusyState = (key) => ['connecting', 'reconnecting'].includes(runtime[key]?.state)
 
 // ⚠️ 主机名必须取 location.hostname：写死 127.0.0.1 会让浏览器连自己（致命）
 const scheme = () => (typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'https:' : 'http:')
@@ -285,9 +368,81 @@ async function startAll () {
 }
 
 function reloadAll () {
+  reconnecting.value = true
   for (const s of streams.value) stopStream(s.key)
   startAll()
+  // 连接是异步完成的；这里只给一个短时的视觉反馈，真实状态仍以 runtime 为准
+  setTimeout(() => { reconnecting.value = false }, 800)
 }
+
+// ---------------------------------------------------------------- 拉流开关
+// （2026-10-18 加，省 196 的上行带宽）
+//
+// 为什么需要：App.vue 用 v-show 切标签页（**不卸载组件**），而停流写在
+// onUnmounted 里 → 控制台一开着，两路视频就一直在拉，不管你停在哪个标签页。
+// 实测单路 WHEP ≈ 50KB/s、HLS ≈ 25KB/s，两路约 100KB/s 上行 —— 对走 WiFi
+// 上联的 196 不是小数。
+//
+// 三个"想不想拉"的来源，取与：
+//   · props.active   切到别的标签页 → 停（最常见的"我在干别的"）
+//   · docHidden      切到别的浏览器标签/最小化 → 停（Page Visibility API）
+//   · pulled         用户手动点「暂停拉流」→ 停（想停在相机页但不想占带宽）
+const pulled = ref(true)
+const docHidden = ref(false)
+const flowing = ref(false)
+
+const flowWanted = computed(() => props.active && pulled.value && !docHidden.value)
+
+const flowReason = computed(() => {
+  if (!props.active) return '已切到其他标签页 —— 拉流已暂停，回到「相机画面」自动恢复'
+  if (docHidden.value) return '浏览器窗口已切走或最小化 —— 拉流已暂停，回到本窗口自动恢复'
+  if (!pulled.value) return '已手动暂停拉流 —— 点「恢复拉流」继续'
+  return ''
+})
+
+const flowTip = computed(() => flowWanted.value
+  ? '暂停后不再从 196 拉视频（两路实测约 100KB/s 上行）；推流服务不受影响'
+  : '恢复从 196 拉取前后两路视频')
+
+function toggleFlow () {
+  pulled.value = !pulled.value
+}
+
+function onVisibility () {
+  docHidden.value = document.hidden
+}
+
+/** 探一次：上游恢复后自动重挂。仅在拉流中才跑。 */
+async function probeOnce () {
+  await loadCfg()
+  for (const s of streams.value) {
+    const st = runtime[s.key]?.state
+    if (st === 'failed' || st === 'idle') startStream(s)
+  }
+}
+
+function startFlow () {
+  if (flowing.value) return
+  flowing.value = true
+  loadCfg().then(startAll)
+  if (timer) clearInterval(timer)
+  timer = setInterval(probeOnce, 5000)
+}
+
+function stopFlow () {
+  flowing.value = false
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+  }
+  // 逐路真拆：WHEP 走 DELETE 资源 + close PC，HLS 走 destroy
+  for (const s of streams.value) stopStream(s.key)
+}
+
+watch(flowWanted, (want) => {
+  if (want) startFlow()
+  else stopFlow()
+})
 
 function badgeText (key) {
   const rt = runtime[key] || {}
@@ -304,111 +459,113 @@ function badgeText (key) {
 
 function badgeClass (key) {
   const st = runtime[key]?.state
-  if (st === 'connected') return 'ok'
-  if (st === 'failed') return 'bad'
-  return 'warn'
+  if (st === 'connected') return 'pill-ok'
+  if (st === 'failed') return 'pill-bad'
+  return 'pill-warn'
 }
 
 onMounted(async () => {
-  await loadCfg()
-  await startAll()
-  // 每 5s 探一次：上游（MediaMTX/相机）恢复后自动重挂
-  timer = setInterval(async () => {
-    await loadCfg()
-    for (const s of streams.value) {
-      const st = runtime[s.key]?.state
-      if (st === 'failed' || st === 'idle') startStream(s)
-    }
-  }, 5000)
+  // 浏览器窗口切走/最小化也停流（"我在干别的"最常见的形态）
+  document.addEventListener('visibilitychange', onVisibility)
+  docHidden.value = document.hidden
+  // flowWanted 初值就是 true 时 watch 不会触发，这里显式起一次
+  if (flowWanted.value) startFlow()
 })
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
-  for (const key of Object.keys(runtime)) stopStream(key)
+  document.removeEventListener('visibilitychange', onVisibility)
+  stopFlow()
 })
 </script>
 
 <style scoped>
-.devbar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-  padding: 6px 8px;
-  border: 1px solid var(--border, #d8dce3);
-  border-radius: 6px;
-  font-size: 12px;
-  background: var(--panel-2, #f7f8fa);
-}
-.devbar .warn {
-  color: var(--warn, #c47f17);
+.devbar-label {
   font-weight: 600;
+  color: var(--text);
 }
-.devbar .dim {
-  opacity: 0.75;
-}
-.devbar .hint.err {
-  color: var(--danger, #d0453b);
-}
+.devbar .hint.err { color: var(--danger); }
+
 .vbar {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   align-items: center;
   flex-wrap: wrap;
-  margin-bottom: 8px;
+  margin-bottom: var(--sp-3);
 }
-.vbar button.active {
-  background: var(--accent, #2f6fed);
-  color: #fff;
+
+.vbar-group {
+  display: inline-flex;
+  gap: var(--sp-1);
+  padding: 2px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
 }
+
 .vgrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: var(--sp-3);
 }
-.vgrid.single {
-  grid-template-columns: 1fr;
-}
+.vgrid.single { grid-template-columns: 1fr; }
+
 @media (max-width: 900px) {
-  .vgrid {
-    grid-template-columns: 1fr;
-  }
+  .vgrid { grid-template-columns: 1fr; }
 }
-.vcell {
-  min-width: 0;
-}
+
+.vcell { min-width: 0; }
+
 .vhead {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
-  font-size: 13px;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-13);
 }
+
+.vframe { position: relative; }
+
 .v {
+  display: block;
   width: 100%;
   background: #000;
-  border-radius: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
   min-height: 200px;
   aspect-ratio: 4 / 3;
 }
-.badge {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  border: 1px solid currentColor;
+
+/* 取流中：半透明遮罩 + 转圈，明确"在努力连"而不是"坏了" */
+.vmask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-12);
+  color: var(--text);
+  background: rgba(8, 13, 19, 0.68);
+  border-radius: var(--r-md);
 }
-.badge.ok { color: var(--ok, #2e9e5b); }
-.badge.warn { color: var(--warn, #c8901e); }
-.badge.bad { color: var(--danger, #d0453b); }
+
 .hint {
-  color: var(--muted, #888);
-  font-size: 12px;
-  margin-top: 4px;
+  color: var(--muted);
+  font-size: var(--fs-12);
+  margin-top: var(--sp-1);
+  line-height: 1.6;
 }
+
 .verr {
-  color: var(--danger, #d0453b);
-  font-size: 13px;
-  margin-top: 6px;
+  margin-top: var(--sp-2);
+  padding: var(--sp-2);
+  font-size: var(--fs-12);
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-sm);
 }
+.verr .hint { color: var(--muted); margin-top: var(--sp-1); }
 </style>

@@ -5,17 +5,25 @@
 #   bash deploy/pack.sh /tmp/m20console.tgz
 #   scp /tmp/m20console.tgz m20pro-f20-0-196:/tmp/
 #   scp deploy/_apply.sh   m20pro-f20-0-196:/tmp/
-#   ssh m20pro-f20-0-196 "printf \"'\n\" | sudo -S bash /tmp/_apply.sh /tmp/m20console.tgz"
+#   ssh m20pro-f20-0-196 "printf \"'\n\" | sudo -S bash /tmp/_apply.sh /tmp/m20console.tgz [安装目录]"
+#
+# 安装目录默认 /home/djw/monitor；**换机器务必显式传**（不同 AOS 镜像的
+# 家目录 / 用户名可能不同）。
 #
 # ⚠️ 本脚本**自己解压 tarball**。曾经的坑：只 scp 新包却复用上一次解压的目录，
 #    结果改动的代码没上车、页面还是旧的，而日志显示"部署成功"——最难查的一类。
+#
+# ⚠️ 本脚本**不装系统级 helper**（/usr/local/sbin/m20-ap-ctl 等）。
+#    新机器首次部署请先跑 deploy/install.sh；只换应用目录时补跑
+#    deploy/install_helpers.sh。末尾会做一次可用性自检并提示。
 set -euo pipefail
 
 TGZ="${1:-/tmp/m20console.tgz}"
+DST="${2:-/home/djw/monitor}"
 SRC=/tmp/m20pro_console
-DST=/home/djw/monitor
 
 [[ -f "$TGZ" ]] || { echo "找不到部署包：$TGZ" >&2; exit 1; }
+[[ -d "$DST" ]] || { echo "安装目录不存在：$DST（首次部署请用 deploy/install.sh）" >&2; exit 1; }
 
 echo "[0/5] 解压 $TGZ ..."
 rm -rf "$SRC"
@@ -50,4 +58,19 @@ echo "[5/5] 重启控制台服务 ..."
 systemctl restart m20pro-console
 sleep 2
 systemctl is-active m20pro-console
+
+# ---- 收尾自检：系统级 helper 是**独立安装**的，别假设它一定在
+echo "[自检] 受控提权 helper ..."
+for h in m20-ap-ctl m20-video-ctl; do
+    if [[ -x "/usr/local/sbin/$h" ]]; then
+        echo "       $h 已安装"
+    else
+        echo "  ⚠️  $h 缺失 —— 热点/推流面板将不可写。"
+        echo "      补装：sudo bash $DST/deploy/install_helpers.sh \$(stat -c %U "$DST")"
+    fi
+done
+if ! ls /etc/sudoers.d/m20-ap-ctl /etc/sudoers.d/m20-video-ctl >/dev/null 2>&1; then
+    echo "  ⚠️  sudoers 白名单缺失 —— 同上，跑 install_helpers.sh"
+fi
+
 echo "APPLY_OK"

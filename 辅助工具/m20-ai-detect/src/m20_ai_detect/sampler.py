@@ -11,7 +11,7 @@ import os
 import socket
 import time
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .capture import Capture
 from .config import Camera, Config
@@ -44,7 +44,11 @@ class Sampler:
         self.log = log or print
         self.hostname = hostname or _default_hostname()
         self.captures: List[Capture] = []
-        self._backoff = cfg.retry_base
+        # ★逐路退避（ADR-016 §5）：按 cam.name 分组。
+        # 原因：只有一把全局退避时，一路坏源（相机掉电、流断了）会把**所有**源一起
+        # 拖慢，表现为"另一路明明好的也不出帧"。现在每路各退各的。
+        self._backoffs: Dict[str, float] = {}
+        self._backoff = cfg.retry_base  # 旧字段保留：给外部只读/旧测试看，不再参与决策
         self._running = True
         self.ts_offset = cfg.ts_offset_sec
         self._last_prune = 0.0
@@ -88,16 +92,16 @@ class Sampler:
         self.calibrate_clock()
         self.log(
             "start cap=%s cameras=%s base=%s ring=%.0fMB"
-            % (cfg.cap_id, [c.name for c in cfg.cameras], cfg.base_dir, cfg.ring_max_bytes / 1048576)
+            % (cfg.cap_id, [c.name for c in cfg.enabled_cameras], cfg.base_dir, cfg.ring_max_bytes / 1048576)
         )
-        for cam in cfg.cameras:
+        for cam in cfg.enabled_cameras:
             self.captures.append(
                 Capture(cam, cfg, self.store.spool_for(cam.name), self.log)
             )
         try:
             while self._running:
                 progressed = False
-                for cam, capture in zip(cfg.cameras, self.captures):
+                for cam, capture in zip(cfg.enabled_cameras, self.captures):
                     if not capture.alive:
                         if not capture.ensure_running():
                             continue
@@ -149,6 +153,25 @@ class Sampler:
             names = sorted(n for n in os.listdir(spool) if n.endswith(".jpg"))
         except OSError:
             return False
+        # spool 防爆：AI 长时间不可用时抽帧仍在继续，若无上限会无限增长撑爆磁盘。
+        # 超限丢最旧的（信息价值最低），并限流记日志（每分钟最多一条）。
+        limit = getattr(self.cfg, "spool_max_files", 600)
+        if len(names) > limit:
+            drop = names[:len(names) - limit]
+            for n in drop:
+                try:
+                    os.unlink(os.path.join(spool, n))
+                except OSError:
+                    pass
+            self._spool_dropped = getattr(self, "_spool_dropped", 0) + len(drop)
+            now2 = time.time()
+            if now2 - getattr(self, "_spool_log_at", 0.0) >= 60.0:
+                self._spool_log_at = now2
+                self.log(
+                    "spool 超限：丢弃最旧 %d 帧（上限 %d，累计已丢 %d）cam=%s"
+                    % (len(drop), limit, self._spool_dropped, cam.name)
+                )
+            names = names[len(drop):]
         now = time.time()
         for name in names:
             if not self._running:
@@ -169,17 +192,26 @@ class Sampler:
             if not result.ok:
                 self._on_failure(cam, name, result)
                 break  # 退避期间停止发送，帧留在 spool 等重试
-            self._backoff = self.cfg.retry_base
+            self._set_backoff(cam, self.cfg.retry_base)
             self._on_success(cam, name, path, data, result)
             progressed = True
         return progressed
 
     # ------------------------------------------------------------ 回调
+    def _backoff_of(self, cam: Camera) -> float:
+        """该路当前的退避秒数（未记过则为配置的初始退避）。"""
+        return self._backoffs.get(cam.name, self.cfg.retry_base)
+
+    def _set_backoff(self, cam: Camera, value: float) -> None:
+        self._backoffs[cam.name] = value
+        self._backoff = value  # 镜像给旧字段（兼容旧的外部观察者）
+
     def _on_failure(self, cam: Camera, name: str, result: DetectResult) -> None:
-        self._backoff = min(self._backoff * 2, self.cfg.retry_max)
+        cur = self._backoff_of(cam)
+        self._set_backoff(cam, min(cur * 2, self.cfg.retry_max))
         self.log(
             "detect FAIL cam=%s frame=%s err=%s backoff=%.0fs"
-            % (cam.name, name, result.error, self._backoff)
+            % (cam.name, name, result.error, self._backoff_of(cam))
         )
         ts, ts_host = self._now_pair()
         self.store.append(
@@ -197,7 +229,7 @@ class Sampler:
                 "e2e_ms": result.wall_ms,
             }
         )
-        time.sleep(self._backoff)
+        time.sleep(self._backoff_of(cam))
 
     def _on_success(self, cam: Camera, name: str, path: str, data: bytes, result: DetectResult) -> None:
         payload = result.payload or {}

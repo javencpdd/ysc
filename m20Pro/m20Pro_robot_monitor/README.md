@@ -101,9 +101,11 @@ m20Pro_robot_monitor/
 │           ├── DeviceToggle.vue # 设备开关（状态+动作分离，高亮当前态；==0 才判关）
 │           └── VideoPanel.vue   # 前后双路：WebRTC(WHEP) 主 + HLS 兜底 + 布局切换
 ├── deploy/
+│   ├── install_remote.sh      # **PC 侧：一条命令远程首次安装**（连通性→预检→上传→install.sh→验收）
 │   ├── pack.sh                # PC 侧：打精简部署包（自动剔除 node_modules / venv）
-│   ├── _apply.sh              # 196 侧：应用部署包（**自己解压 tarball**，避免"传新包用旧目录"）
-│   ├── install.sh             # 196 侧：一键安装（venv + http 镜像装依赖 + systemd + m20monitor 命令）
+│   ├── _apply.sh              # 机器侧：应用部署包（**自己解压 tarball**；末尾自检 helper）
+│   ├── install.sh             # 机器侧：一键安装（8 步：venv/依赖/systemd/m20monitor/helper）
+│   ├── install_helpers.sh     # **装 /usr/local/sbin 的两个 helper + sudoers（用户名参数化）**
 │   ├── deploy_196.sh          # PC 侧：日常迭代增量同步（rsync backend + dist → restart）
 │   ├── deploy_196_tar.sh      # PC 侧：无 rsync 降级版（tar over scp，Windows 用这个）
 │   ├── m20monitor             # 服务管理命令（up/down/reset/status/log/enable/disable）
@@ -116,14 +118,23 @@ m20Pro_robot_monitor/
 ├── tools/
 │   ├── probe_asdu.py          # 独立探针（仅标准库）：上机只读探测 + 抓包到 JSONL
 │   ├── probe_cmd.py           # 指令探针：先发心跳注册再发目标指令，可监听 1002/5 设备帧
+│   ├── preflight_new_host.sh  # **换机预检（只读）**：版本/厂商链/相机/网络/装机现状
 │   ├── re_cmdtable.py         # 逆向：从 objdump 反汇编还原 (Type,Command) → handler 地址表
 │   ├── re_cmdname.py          # 逆向：地址 → cmdHandle_* 函数名
 │   ├── analyze_capture.py     # 抓包分析：按消息类型统计 + 与映射表比对
 │   ├── verify_deploy.py       # 部署验收 13 项（在 196 本地或 LAN 跑）
+│   ├── verify_ownership.sh    # **控制权归属验收**：模拟 A/B 两终端争抢控制权（11 步）
 │   └── capture/               # 真机抓包 fixtures（226 帧，测试用）
-├── tests/                     # pytest 212 项（解析 / 状态 / 契约 / 控制 / 看门狗 / 视频 / 机器人设置 / 热点 / 回归）
-├── docs/                      # 开发者文档：architecture / deployment / debugging / replay
-├── note/                      # 计划书（母文档）+ DESIGN/PROTOCOL 指引桩
+├── tests/                     # pytest 244 项（解析 / 状态 / 契约 / 控制 / **控制权归属** / 看门狗 / 视频 / 机器人设置 / 热点 / 逆向工具 / 回归）
+├── docs/                      # 开发者文档（**不上机**）：architecture / deployment / debugging / replay
+├── note/                      # 文档（**随包上机**）：计划书 + 取证笔记 + 移植流程 + DESIGN/PROTOCOL 桩
+│   ├── M20 Pro Web 控制台 — 计划书v1.md   # 母文档：为什么这么设计（含 ADR-001~027）
+│   ├── 逆向与真机取证笔记.md              # ★车侧实际是什么：42 条指令全表 / 实测结论 / 25 条踩坑
+│   ├── 移植部署流程.md                    # ★换机部署：复制什么 / 路径要求 / 运行用户 / 常见坑
+│   ├── 控制安全闸与控制权归属.md          # ★开启/停用控制是什么 + 多终端互斥（ADR-028）
+│   ├── cmdtable-42.txt                   # 上表的机器可读原始数据（re_cmdname.py 输出）
+│   ├── T2.7 控制实测记录（2026-10-15）.md # 运动标定原始记录
+│   └── evidence-20261015/                # 抓包 fixtures
 ├── config.example.toml        # 配置示例（真实配置只走环境变量或 *.example）
 └── requirements.txt
 ```
@@ -334,8 +345,7 @@ sudoers 只放行它，且**逐条列出、不用通配符**（`deploy/sudoers-m
 只剩「刷新」可点**，用户原话就是"只能刷新不能停止"。动作与状态读取是**独立**的：
 该让它去试、失败再报错，不要先替它断定不可用。
 
-**⚠️ 不受控制闸约束（有意为之）**：这不是机器人指令，是 AOS 本机服务，与机器人运动无关。
-而且"画面黑了想重启推流"很可能正好发生在控制通道没打开（L0）的时候 ——
+**⚠️ 不受控制闸约束（有意为之）**：这不是机器人指令，是 AOS 本机服务，与机器人运动无关。而且"画面黑了想重启推流"很可能正好发生在控制通道没打开（L0）的时候 ——
 把恢复手段锁在 L1 后面才是错的。`stop` 仍需二次确认。
 
 **故障排查顺序（画面黑时）**：
@@ -358,13 +368,53 @@ sudoers 只放行它，且**逐条列出、不用通配符**（`deploy/sudoers-m
 > 过一段时间 USB 自己回来了 —— **车侧 `restartVideoServer` 后设备重新枚举有滞后**，
 > 别急着判硬件故障。
 
-### 3.5 机器人设置页（2026-10-18，逆向 42 条指令表后新增）
+#### 3.4.1 拉流开关：主动停掉浏览器侧的取流（2026-10-18）
 
+**问题**：`App.vue` 用 `v-show` 切标签页（不卸载组件），而停流写在
+`VideoPanel.onUnmounted` 里 → **控制台一开着，两路视频就一直在拉，不管你停在哪个标签页**。
+196 的上联是 WiFi（`p2p0`），这不是小数。
+
+**实测代价**（真机，单浏览器两路）：
+
+| 状态 | `p2p0` tx |
+|---|---|
+| 相机页在拉流 | **694 KB/s** |
+| 点「暂停拉流」 | **423 KB/s** |
+| 恢复 | 746 KB/s |
+
+→ **两路拉流约占 270 KB/s（≈2.2 Mbps）上行**。单路 WHEP ≈ 135 KB/s、HLS ≈ 一半。
+
+**三个"想不想拉"的来源，取与**（`VideoPanel` 的 `flowWanted`）：
+
+| 来源 | 场景 |
+|---|---|
+| `props.active` | 切到别的标签页 → 停（最常见的"我在干别的"） |
+| `document.hidden` | 切到别的浏览器标签/最小化 → 停（Page Visibility API） |
+| `pulled` | 手动点「暂停拉流」→ 停（想停在相机页但不占带宽） |
+
+停流是**真拆**：WHEP 走 `DELETE <resourceUrl>` + `pc.close()`，HLS 走 `hls.destroy()`，
+再把 `<video>.srcObject` 置空——不是"隐藏但还在解码"。
+恢复时自动重连（多等 0.3~2s），**推流服务本身不受影响**（`local` 那条链照跑）。
+
+界面在暂停时显示黄条说明原因（"已切到其他标签页…" / "已手动暂停拉流…"），
+别让人以为画面坏了。
+
+> ⚠️ 注意区分两件事：**本页拉流**（浏览器↔196，本开关管这个）与
+> **外推中继 relay**（196→172.31.68.227，用上面的 `VideoServicePanel` 启停）。
+> 后者才是 24h 常推的那条，实测约 55 KB/s。
+
+### 3.5 机器人设置页（2026-10-18，逆向 42 条指令表后新增）
 2026-10-18 用 `nm` + `objdump -d` 反汇编 `/opt/robot/share/basic_server/bin/basic_server`
 （符号未剥离）还原出**整张指令注册表共 42 条**，方法：注册结构是
 `unordered_map<int, unordered_map<int, std::function>>`，以**内层 map 的 `operator[]`
 调用为锚点**向前找两个不同栈槽的 `str` 即得 (Type, Command)，再用 `nm` 把 handler 地址
 映射回 `cmdHandle_*` 函数名。工具在 `tools/re_cmdtable.py` / `tools/re_cmdname.py`。
+
+> 📄 **完整指令表、各指令实测结论、25 条踩坑已独立成文**：
+> [`note/逆向与真机取证笔记.md`](note/逆向与真机取证笔记.md)（原始数据 `note/cmdtable-42.txt`）。
+> 那份笔记回答"车侧实际是什么"，与计划书（"为什么这么设计"）分工；
+> 其中的「车侧静默行为汇总」是排查诡异问题时的第一入口。
+
 新增的四个功能全部**真机实证**后才进界面。
 
 #### 补光灯（`1101 / 2`）——唯一能闭环校验的一项
@@ -468,6 +518,9 @@ channel 40（5200 MHz）。
 ## 四、快速开始
 
 > 完整步骤（含验证与排错）见 [QUICKSTART.md](QUICKSTART.md)。
+> **换一台 M20 部署**见 [`note/移植部署流程.md`](note/移植部署流程.md)。
+> 远程一键装（`user@ip` 形式，先 `--check` 测通再装）：
+> `bash deploy/install_remote.sh --check user@192.168.0.196`
 
 ```bash
 # ① PC：构建前端（196 的 Node 未验证 + 时钟问题，前端必须本地构建）
@@ -509,7 +562,7 @@ ssh m20pro-f20-0-196 "printf \"'\n\" | sudo -S bash /tmp/_apply.sh /tmp/m20conso
 
 ```bash
 # PC：需要 fastapi/pydantic/httpx/pytest 的环境
-python -m pytest tests/ -q          # 212 项
+python -m pytest tests/ -q          # 225 项
 ```
 
 **无真机演练（本地 Mock）**：
@@ -566,6 +619,8 @@ M20__DATA_SOURCE=mock python -m uvicorn main:app --port 8080
 | 链路统计 | `curl -s http://127.0.0.1:8080/api/v1/status` |
 | 原始报文 | `curl -s 'http://127.0.0.1:8080/api/v1/raw?limit=20'` |
 | 部署验收 | `python3 /home/djw/monitor/tools/verify_deploy.py` |
+| 控制权归属验收 | `bash /home/djw/monitor/tools/verify_ownership.sh`（多终端互斥） |
+| 看谁在控制 | `curl -s http://127.0.0.1:8080/api/v1/control/status` → `control.owner` |
 | 唤醒机器人（相机通电） | `python3 /home/djw/monitor/tools/probe_asdu.py --send 1101/6 --items '{"Sleep":false}'` |
 
 > 196 上 `sudo` 需要密码且非交互场景必须走管道：`printf "'\n" | sudo -S <cmd>`。
@@ -652,6 +707,7 @@ M20__DATA_SOURCE=mock python -m uvicorn main:app --port 8080
 | `M20_CONTROL__ENABLED` | **`false`** | L0 只监默认；开启 L1 需同时改前端二次确认流程 |
 | `M20_CONTROL__LEASE_SECONDS` | `5.0` | 控制租约（WS 断开即失效；前端每 2s 自动续约） |
 | `M20_CONTROL__AXIS_TIMEOUT_MS` | `250` | 看门狗超时 → 零位停发（等待恢复，不软急停） |
+| `M20_CONTROL__LIDAR_DEFAULT_OFF` | **`false`** | 雷达默认关闭策略（见 §3.6）；`false` = 不改变既有开机行为 |
 | `M20_VIDEO__ENABLED` | `false` | 视频代理开关（196 部署为 `true`） |
 | `M20_VIDEO__RTSP_URL` | `rtsp://127.0.0.1:8554/video1` | 取流源（196 本机 MediaMTX） |
 | `M20_VIDEO__HLS_DIR` | `/tmp/m20-hls` | **后端 ffmpeg 兜底**的 HLS 产物目录（196 上为 `/home/djw/monitor/hls`） |
@@ -679,6 +735,36 @@ M20__DATA_SOURCE=mock python -m uvicorn main:app --port 8080
    `MINUTES_OUT_OF_RANGE` 挡掉（车侧会静默夹取，见 §3.5）。
    两条**只读查询**（`1101/7`、`1101/11`）标 `always_allowed`，豁免 L1 与租约闸 ——
    它们不改车上任何东西，锁在"先开控制"后面纯属自找麻烦。
+7. **系统策略通道**（2026-10-20 加，见 §3.6）：`execute_system_device()` 只保留安全类闸
+   （黑名单 + 设备开关专项闸，含运动锁），绕过授权类闸（L1 / 归属 / 租约 / 遥测 / 急停态）。
+   目前唯一使用者是雷达默认关闭策略；通道本身限定"只准 `device_switch` 且 Items 只含
+   `Lidar`、且只能是关闭"，审计里 `actor=system` 可逐条追溯。
+
+### 3.6 雷达默认关闭（显式配置开关，2026-10-20）
+
+**它管"以后"，不管"现在"**：开启后，后端在两个时机自动下发一次
+`1101/3 {"Lidar":{"Front":0,"Back":0}}` —— ① 服务启动并首次收到设备帧时；
+② 任何人点「唤醒整车」之后（取证结论：唤醒会恢复传感器供电）。
+刻意**不做周期巡检**：那会和"操作员刚手动打开雷达"对着干。
+
+| 入口 | 说明 |
+|---|---|
+| `M20_CONTROL__LIDAR_DEFAULT_OFF` | 部署级开关（systemd `Environment=`），默认 `false` |
+| 「机器人设置」页 → 雷达默认关闭 | 运行时开关（重启后回到部署配置值），可「立即应用一次」 |
+| `GET /api/v1/robot/config` | 状态随配置一起返回（`lidar_default` 字段） |
+| `POST /api/v1/robot/lidar-default` | `{enabled, confirmed, apply_now}`，需二次确认 |
+
+**三重自我保护 + 一道共享闸**：开关没开发 / 雷达已关 / 站立·RL 态 / 两次之间限速 10s
+—— 一律不发。其中"站立·RL 态禁关"与人工操作共用 `_check_device_switch` 的同一条判定，
+没有为策略单独放宽。
+
+**影响面（两台主机实测）**：关雷达 = 建图 / 定位 / 导航 / 自动回充失去输入
+（`lio-perception`、`height_map_nav`、`localization`、`astar_node`、`localPlanner`、
+`pcl_remove`、`charge_manager`；`rslidar` 持续刷 `ERRCODE_MSOPTIMEOUT`）。
+遥测 / 控制 / 相机 / 推流 / GPS / 网页控制台**不受影响**。
+
+实现：`backend/control/lidar_default.py`（策略）+ `ControlGateway.execute_system_device`
+（系统通道）+ `main.py`（启动线程 / 唤醒触发 / API）。测试：`tests/test_lidar_default.py`。
 
 ### 8.1 指令报文记录（2026-10-17 加）
 
@@ -759,7 +845,7 @@ M20__DATA_SOURCE=mock python -m uvicorn main:app --port 8080
 ## 九、测试与验收
 
 ```bash
-# 本地跑测试（212 项）
+# 本地跑测试（225 项）
 python -m pytest tests/ -q          # 在项目根执行；需 fastapi/pydantic/httpx 依赖
 
 # 196 上跑部署验收（13 项）
@@ -778,14 +864,14 @@ python3 tools/verify_deploy.py
 | `test_heartbeat_api.py` | **心跳让渡 API 契约**：未确认拒暂停且不真停 / **暂停前先零位停发正在进行的控制** / 暂停中轴指令被 `TELEMETRY_PAUSED` 拒而软急停放行 / 恢复清除 degraded / mock 源 `NOT_SUPPORTED` / 状态端点 |
 | `test_pipeline.py` | mock → 解析 → 状态 → 快照 全链路 |
 | `test_real_capture.py` | 226 帧真机抓包回归（fixtures） |
-| `test_video_proxy.py` | ffmpeg 命令构造（posixpath / 不转码）/ 进程托管 |
+| `test_video_proxy.py` | ffmpeg 命令构造（posixpath / 不转码）/ 进程托管 / **重启退避**：秒退时 `2→4→8→16→30` 翻倍封顶（旧写法 Popen 成功就重置退避 → 源站没推流时 2s 一次无限重启，真机连刷到第 14 次）/ 活够 `STABLE_SECONDS` 才重置回 2s / 退避不低于 2s / 上限可配 |
 | `test_video_streams.py` | 双路取流 API：前后两路 / 三档链路 / **地址要素不得含主机名**（写死会让浏览器连错机器） |
 | `test_device_switch.py` | **设备供电开关 `1101/3`**：授权 magic 只在该指令上生效（其余指令保持 `EB 91 EB 90`）/ 键名白名单与值域（`pair` 缺字段必须报错，**绝不默认 0**）/ 关闭需二次确认 / 站立态禁关雷达而趴下态放行 / 相机关闭只确认不拦 / 非法参数 `BAD_PARAMS` 且**一帧不出** / L1 与租约闸同样适用 / **Lidar 上报值 `2` 不得误判为关闭** / **★关闭判定必须对比当前状态**（开一路时另一路的 0 不算关闭·真关仍要确认·无当前值回退保守·运动锁只对运行中的雷达生效） |
 | `test_command_log.py` | **指令报文记录**：hex 可原样反解 / 响应三态（ok·error·no_response）/ **无 `ErrorCode` 的响应也算 ok** / 未匹配帧零副作用 / 惰性超时 / FIFO 匹配 / `send_failed` 立即判死 / 被拒留证无报文 / 环形有界 / 统计 / 网关集成（execute·急停·安全零位·停用补零·L0·无 log 静默）/ HTTP 契约 / **★出口必须能收应答（真实 UDP socket 对，锁 2026-10-17 踩的坑）** |
 | `test_robot_config.py` | **机器人设置页契约**：休眠时长越界**一帧不出**（车侧静默夹取，后端必须先拒）/ 5 与 30 边界放行 / 休眠与关回零需确认而唤醒与开回零不拦 / **确认闸拦下时零报文** / `1101/2`·`1101/6`·`1101/10` 编码 / 只读查询在 L1 关闭时仍可问 / 三段结构 `known=False` 不臆断 / 查询缓存带 `age_s` / `needs_confirm` 只看方向 |
 | `test_net_ap.py` | **热点受控读写契约**：**纯数字密码必须按字符串解析**（`00123456` 被 `int()` 掉会丢前导零，用户照着连就连不上）/ 连接名同理 / 其余数字字段仍是 int / 读不出原文时只标 `password_unreadable` 而不给 `password` / 没设密码时不多出 `password` 字段 / **`ap` 分组整个缺失 = 状态未知，不能说成"没开热点"** / `no_ap_connection` 是已知状态而非未知 / 上行已连接与掉线的摘要分级 |
 
-**当前状态（2026-10-18）**：**212 项**测试全绿；196 部署验收通过；LAN 访问正常；**视频升级为前后双路 + WebRTC**（浏览器直连 MediaMTX v1.4.2 的 WHEP `:8889`，HLS `:8888` 兜底，后端 ffmpeg 退为第三层兜底）；**电量面板已修**（逐块电池 + "未安装"识别 + 低电量告警）；**运动控制已真机实测**（轴指令驱动车体移动 + 速度标定 + 虚拟摇杆）；**新增定时移动**（`/axis/timed` 后端计时到点自动停）；**"左右平移无反应"已闭环定因**：横移能力由**步态**决定、与通道无关（0x1001 基础只原地调姿态，切 0x3002 平地敏捷即生效）→ 后端 `warning` 字段 + 前端摇杆区/定时区**实时黄框警示**已随本次上线；**看门狗"只停不趴"二次事故修正完成**（两次自动软急停事故复盘 → 机制整体切除）并真机行为验证通过；**分设备供电开关已上线**（`1101/3` 抓包破解，相机页/GPS 页/运动控制页三处独立开关 + 第五道闸，真机端到端验证通过、现场已恢复原状）；**指令报文记录已上线**（留下发出的原始字节帧 + 机器人响应六态标记，全局底部可折叠面板，真机验证 `1101/5` 1.2ms / `1101/7` 2.1ms 均标 `ok`）；**GPS 模式已语义化**（`0x11111` → 「全系统（GPS·BDS·GLONASS·Galileo·QZSS）」，GPS 页可切换 + 4s 生效校验）；**机器人设置页已上线**（逆向整张 42 条指令表后新增，见 §3.5）：补光灯 `1101/2` 真机闭环（下发 → `Led.Fill` 翻转回读）、首启回零 `1101/10+11`（写无应答 → 回读校验，真机 true/false 双向验证）、休眠 `1101/6+7`（读回 `{Sleep,Auto,Time}`，越界后端先拒）、WiFi 热点读写（双接口单射频实证，`m20-ap-ctl` 受控提权 + 失败自动回滚，真机改 `YSCTEST_24G` 后已精确还原 `CA9B_NO.1273_24G`，并实证**只改 SSID 时密码文件 md5 一字不变**）；**喇叭/音响确认无硬件**（无 PCM 设备，见 §3.5，不加也不造假）；**热点当前密码可回显**（前端默认掩码 + 「显示」展开；顺带修掉一个真 bug —— 纯数字密码被 `int()` 解析会丢前导零）。
+**当前状态（2026-10-18）**：**225 项**测试全绿；196 部署验收通过；LAN 访问正常；**视频升级为前后双路 + WebRTC**（浏览器直连 MediaMTX v1.4.2 的 WHEP `:8889`，HLS `:8888` 兜底，后端 ffmpeg 退为第三层兜底）；**电量面板已修**（逐块电池 + "未安装"识别 + 低电量告警）；**运动控制已真机实测**（轴指令驱动车体移动 + 速度标定 + 虚拟摇杆）；**新增定时移动**（`/axis/timed` 后端计时到点自动停）；**"左右平移无反应"已闭环定因**：横移能力由**步态**决定、与通道无关（0x1001 基础只原地调姿态，切 0x3002 平地敏捷即生效）→ 后端 `warning` 字段 + 前端摇杆区/定时区**实时黄框警示**已随本次上线；**看门狗"只停不趴"二次事故修正完成**（两次自动软急停事故复盘 → 机制整体切除）并真机行为验证通过；**分设备供电开关已上线**（`1101/3` 抓包破解，相机页/GPS 页/运动控制页三处独立开关 + 第五道闸，真机端到端验证通过、现场已恢复原状）；**指令报文记录已上线**（留下发出的原始字节帧 + 机器人响应六态标记，全局底部可折叠面板，真机验证 `1101/5` 1.2ms / `1101/7` 2.1ms 均标 `ok`）；**GPS 模式已语义化**（`0x11111` → 「全系统（GPS·BDS·GLONASS·Galileo·QZSS）」，GPS 页可切换 + 4s 生效校验）；**机器人设置页已上线**（逆向整张 42 条指令表后新增，见 §3.5）：补光灯 `1101/2` 真机闭环（下发 → `Led.Fill` 翻转回读）、首启回零 `1101/10+11`（写无应答 → 回读校验，真机 true/false 双向验证）、休眠 `1101/6+7`（读回 `{Sleep,Auto,Time}`，越界后端先拒）、WiFi 热点读写（双接口单射频实证，`m20-ap-ctl` 受控提权 + 失败自动回滚，真机改 `YSCTEST_24G` 后已精确还原 `CA9B_NO.1273_24G`，并实证**只改 SSID 时密码文件 md5 一字不变**）；**喇叭/音响确认无硬件**（无 PCM 设备，见 §3.5，不加也不造假）；**热点当前密码可回显**（前端默认掩码 + 「显示」展开；顺带修掉一个真 bug —— 纯数字密码被 `int()` 解析会丢前导零）。
 
 ---
 

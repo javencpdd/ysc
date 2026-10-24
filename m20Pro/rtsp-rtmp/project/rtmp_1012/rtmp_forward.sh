@@ -20,6 +20,9 @@
 #         （96 万条/2 分钟）并把 CPU 打到 73%。转码中继不能丢帧，
 #         丢了就破坏 H.265 解码链，必须保持完整有序。
 #   6. gst-launch 加 -e，收到 TERM 时发 EOS，让 RTMP 端干净断流
+#   7. 转码降压模式（config.env: TRANSCODE=true）：h264 源解码后降帧率+
+#      重编码再推，用于出口为弱 WiFi 链路的场景。厂商相机/mediamtx 不动，
+#      本地 RTSP/HLS 画质不变，只压外推。详见 build_pipeline 内注释。
 # ============================================================================
 set -u
 
@@ -64,7 +67,26 @@ mkdir -p "$LOG_DIR" "$PID_DIR"
 #   这里只写文件，避免与调用方的重定向叠加造成重复行。
 #   CONSOLE_LOG=1 时同时打到终端，便于手动调试。
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 日志轮转：统一交给 lib/m20-log.sh
+#   能力：单文件大小上限切分 + 保留最近 N 份 + 总空间硬上限 + 并发安全 +
+#         不中断「长期持有 fd」的写入方（copytruncate）
+#   兼容：旧的 LOG_MAX_BYTES 仍然有效（优先级低于 M20LOG_MAX_BYTES）
+#   兜底：库缺失时退回原始行为，保证脚本仍能正常启动
+# ---------------------------------------------------------------------------
+M20LOG_LIB="${M20LOG_LIB:-$SCRIPT_DIR/lib/m20-log.sh}"
+if [ -r "$M20LOG_LIB" ]; then
+    # shellcheck source=lib/m20-log.sh
+    . "$M20LOG_LIB"
+    : "${M20LOG_MAX_BYTES:=${LOG_MAX_BYTES:-10485760}}"
+fi
+
 rotate_log() {
+    if command -v m20log_rotate >/dev/null 2>&1; then
+        m20log_rotate "$LOG_FILE"
+        return 0
+    fi
+    # --- 以下为 m20-log.sh 不可用时的原始兜底逻辑 ---
     [ -f "$LOG_FILE" ] || return 0
     local size
     size=$(stat -c %s "$LOG_FILE" 2>/dev/null || echo 0)
@@ -77,7 +99,11 @@ rotate_log
 log() {
     local line
     line="$(date '+%Y-%m-%d %H:%M:%S') [forward-$STREAM] $*"
-    printf '%s\n' "$line" >>"$LOG_FILE" 2>/dev/null
+    if command -v m20log_emit >/dev/null 2>&1; then
+        m20log_emit "$LOG_FILE" "$line"
+    else
+        printf '%s\n' "$line" >>"$LOG_FILE" 2>/dev/null
+    fi
     [ "${CONSOLE_LOG:-0}" = "1" ] && printf '%s\n' "$line"
     return 0
 }
@@ -139,7 +165,7 @@ dump_diagnostics() {
         echo "目标        : $DST  (TCP $RTMP_HOST:$RTMP_PORT)"
         echo "原因        : 连续 $consecutive_failures 次无法建立到 $RTMP_HOST:$RTMP_PORT 的 TCP 连接"
         echo "阈值        : MAX_CONNECT_FAILURES=$MAX_CONNECT_FAILURES  PROBE_TIMEOUT=$PROBE_TIMEOUT"
-        echo "编码模式    : SOURCE_CODEC=$SOURCE_CODEC"
+        echo "编码模式    : SOURCE_CODEC=$SOURCE_CODEC TRANSCODE=${TRANSCODE:-false}"
         echo "上次 gst 退出码: ${last_exit_code:-未运行}"
         echo "--- ip route get $RTMP_HOST ---"
         ip route get "$RTMP_HOST" 2>&1 | head -3
@@ -164,13 +190,50 @@ build_pipeline() {
     # 注意：这里刻意不加 drop-on-latency —— 见文件头第 5 条
 
     if [ "$SOURCE_CODEC" = "h264" ]; then
-        # ---------------- 纯 remux（零转码，同 120 主机方案）----------------
-        PIPE+=(
-            ! rtph264depay
-            ! h264parse config-interval=-1
-            ! flvmux streamable=true
-            ! rtmpsink "location=$DST live=1"
-        )
+        if [ "${TRANSCODE:-false}" = "true" ]; then
+            # ---------- H.264 源 -> 解码重编码降压/降帧（弱链路外推模式）----------
+            # 用途：M20 唯一出口是 p2p0 WiFi（连 Tenda 5G，实测 -60dBm、RTT
+            #       mdev 12.4ms）。纯 remux 会把相机源码率（mpph264enc 目标
+            #       2Mbps，实测 ~2.4Mbps/路，双路合计 4.83Mbps）原样搬上这条
+            #       抖动链路，TCP 反复重传退避（实测 rto 54s/cwnd 1），RTMP
+            #       播出端周期性卡顿；本地 RTSP/HLS 走回环所以完全不卡。
+            #       本模式在 relay 内解码后降帧率+重编码，只压外推，
+            #       厂商相机/mediamtx 一行不动，本地画质不受影响。
+            # 成本：mppvideodec+mpph264enc 硬编硬解，实测约 10-15% 单核/路
+            #       （CPU 亲和 CPU_F/CPU_B 已避开相机管道占用的 4,5/6,7）。
+            # ⚠ 色度格式必须 I420，不能用 NV12（花屏坑见下方 h265 分支注释）。
+            # ⚠ 仍不用 drop-on-latency / queue leaky（见文件头第 5 条）。
+            PIPE+=(
+                ! rtph264depay
+                ! h264parse
+                ! queue
+                ! mppvideodec
+                ! videorate
+                ! "video/x-raw,framerate=${RELAY_FPS:-15}/1"
+                ! videoconvert
+                ! "video/x-raw,format=${PIX_FMT:-I420}"
+                ! mpph264enc
+                "rc-mode=${RC_MODE:-1}"
+                "bps=${RELAY_BPS:-1200000}"
+                "bps-max=${RELAY_BPS_MAX:-1500000}"
+                "gop=${RELAY_GOP:-15}"
+                "qp-min=${RELAY_QP_MIN:-24}"
+                "qp-max=${RELAY_QP_MAX:-45}"
+                "header-mode=each-idr"
+                ! h264parse config-interval=-1
+                ! flvmux streamable=true
+                ! queue
+                ! rtmpsink "location=$DST live=1"
+            )
+        else
+            # ---------------- 纯 remux（零转码，同 120 主机方案）----------------
+            PIPE+=(
+                ! rtph264depay
+                ! h264parse config-interval=-1
+                ! flvmux streamable=true
+                ! rtmpsink "location=$DST live=1"
+            )
+        fi
     else
         # ---------------- H.265 -> H.264 硬件转码 ----------------
         # 源是 loopback，无网络抖动，不需要丢帧；queue 用默认（不设 leaky）
@@ -292,7 +355,11 @@ log "======================================================"
 log "启动推流  通道: $LABEL"
 log "源: $SRC"
 log "目标: $DST"
-log "编码模式: $SOURCE_CODEC    CPU 亲和: $CPUSET"
+ENC_DESC=""
+if [ "${TRANSCODE:-false}" = "true" ]; then
+    ENC_DESC=" (转码降压: FPS=${RELAY_FPS:-15} BPS=${RELAY_BPS:-1200000}/${RELAY_BPS_MAX:-1500000} GOP=${RELAY_GOP:-15} QP=${RELAY_QP_MIN:-24}-${RELAY_QP_MAX:-45})"
+fi
+log "编码模式: $SOURCE_CODEC$ENC_DESC    CPU 亲和: $CPUSET"
 log "参数: LATENCY=${LATENCY} RETRY=${RETRY_SECONDS}s MAX_FAIL=${MAX_CONNECT_FAILURES} 看门狗=$WATCHDOG_ON"
 log "======================================================"
 

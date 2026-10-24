@@ -1,8 +1,11 @@
 <template>
-  <div class="panel" :class="{ stale: isStale('motion') }">
-    <h3>运控状态 <small>（1002/4 · 10Hz · 轮足 16 关节）</small></h3>
+  <div class="panel span-all" :class="{ stale: isStale('motion') }">
+    <h3>
+      运控状态
+      <small>（1002/4 · 10Hz · 轮足 16 关节）</small>
+    </h3>
 
-    <div class="grid" style="margin-bottom: 10px">
+    <div class="grid" style="margin-bottom: var(--sp-3)">
       <div class="kv"><span>姿态 R/P/Y</span>
         <span>{{ fmt(m.roll) }} / {{ fmt(m.pitch) }} / {{ fmt(m.yaw) }}</span></div>
       <div class="kv"><span>线速度 X/Y</span><span>{{ fmt(m.linear_x) }} / {{ fmt(m.linear_y) }}</span></div>
@@ -12,18 +15,27 @@
     </div>
 
     <!-- 轮足结构：4 腿 × (hip_x, hip_y, knee, wheel)，与 lite3 的 12 关节不同 -->
-    <table>
-      <thead>
-        <tr><th>关节</th><th>角度</th><th>关节</th><th>角度</th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="(row, i) in rows" :key="i">
-          <td>{{ row[0].name }}</td><td>{{ fmt(row[0].value) }}</td>
-          <td>{{ row[1].name }}</td><td>{{ fmt(row[1].value) }}</td>
-        </tr>
-      </tbody>
-    </table>
-    <div v-if="!joints.length" style="color: var(--muted); margin-top: 6px">暂无关节数据</div>
+    <div v-if="joints.length">
+      <div class="block-title" style="margin-bottom: var(--sp-2)">关节角度</div>
+      <table>
+        <thead>
+          <tr><th>关节</th><th>角度</th><th>关节</th><th>角度</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="(row, i) in rows" :key="i">
+            <td>{{ row[0].name }}</td><td class="num">{{ fmt(row[0].value) }}</td>
+            <td>{{ row[1].name }}</td><td class="num">{{ fmt(row[1].value) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 空状态：说清"没数据"与"数据为 0"的区别 -->
+    <div v-else class="empty-state">
+      <span class="empty-icon">∅</span>
+      <span class="empty-title">暂无关节数据</span>
+      <span class="empty-desc">尚未收到运控状态帧（1002/4）。机器人休眠或链路中断时都会是空的。</span>
+    </div>
   </div>
 </template>
 
@@ -55,3 +67,8 @@ function fmt (v) {
   return (v === undefined || v === null) ? '—' : Number(v).toFixed(3)
 }
 </script>
+
+<style scoped>
+table { font-size: var(--fs-13); }
+td.num { font-variant-numeric: tabular-nums; color: var(--text-strong); }
+</style>

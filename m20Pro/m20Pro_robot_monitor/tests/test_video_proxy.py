@@ -74,3 +74,48 @@ def test_switch_updates_source_even_if_start_fails(monkeypatch):
     p.switch("rtsp://127.0.0.1:8554/video2")
     assert p.rtsp_url.endswith("video2")
     assert "video2" in " ".join(p.build_cmd())
+
+
+# ---------------------------------------------------------------- 重启退避
+def test_backoff_grows_when_process_dies_immediately(tmp_path):
+    """★2026-10-18 修的真 bug：Popen 成功就重置退避 → 2s 一次无限重启。
+
+    源站没推流时 ffmpeg 起来就 404 退出（存活 <1s），旧写法把
+    `backoff = 2.0` 放在 Popen 成功之后，退避永远长不起来 ——
+    真机实测连刷到第 14 次，每次都重建 RTSP 连接，纯白耗资源。
+    """
+    p = VideoProxy("rtsp://127.0.0.1:8554/video1", hls_dir=str(tmp_path))
+    b = 2.0
+    seen = []
+    for _ in range(6):
+        b = p.next_backoff(b, alive=0.8)      # 每次都秒退
+        seen.append(b)
+    assert seen == [4.0, 8.0, 16.0, 30.0, 30.0, 30.0], seen
+    assert max(seen) <= 30.0                  # 封顶，不无限增长
+
+
+def test_backoff_resets_after_process_lived_long_enough(tmp_path):
+    """活够 STABLE_SECONDS = 真的出过流 → 退避重置回 2s。"""
+    p = VideoProxy("rtsp://127.0.0.1:8554/video1", hls_dir=str(tmp_path))
+    b = 2.0
+    for _ in range(5):
+        b = p.next_backoff(b, alive=0.5)
+    assert b > 2.0                            # 已经涨上去了
+    assert p.next_backoff(b, alive=p.STABLE_SECONDS) == 2.0
+    assert p.next_backoff(b, alive=p.STABLE_SECONDS + 60) == 2.0
+
+
+def test_backoff_never_below_two_seconds(tmp_path):
+    """传入比 2s 还小的退避也不该算出更短的间隔（防止抖成死循环）。"""
+    p = VideoProxy("rtsp://127.0.0.1:8554/video1", hls_dir=str(tmp_path))
+    assert p.next_backoff(0.0, alive=0.1) >= 4.0
+    assert p.next_backoff(0.5, alive=0.1) >= 4.0
+
+
+def test_backoff_cap_is_configurable(tmp_path):
+    p = VideoProxy("rtsp://127.0.0.1:8554/video1", hls_dir=str(tmp_path),
+                   max_restart_backoff=8.0)
+    b = 2.0
+    for _ in range(5):
+        b = p.next_backoff(b, alive=0.2)
+    assert b == 8.0

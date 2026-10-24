@@ -103,6 +103,22 @@ class ControlLeaseError(ControlError):
                          reason="LEASE_EXPIRED", status=409)
 
 
+class ControlOwnerError(ControlError):
+    """控制权归属不匹配（2026-10-19 加：多操作员互斥）。
+
+    控制闸是**全局单例**（``_svc()`` 只有一个 ``ControlGateway``），多个浏览器
+    终端共享同一把开关。为避免"两个人同时开同一台车"，引入控制权归属：
+    同一时刻只有一个 owner（按终端 ``session_id`` 认定），非 owner 发驱动类
+    指令一律拒绝（安全指令如心跳 / 软急停不受限，安全手段优先）。
+
+    HTTP 语义用 **409 Conflict**——不是权限不足（403），而是"资源当前被他人占用"。
+    """
+
+    def __init__(self, message: Optional[str] = None) -> None:
+        super().__init__(message or "控制权属于其他终端，当前终端为只读",
+                         reason="NOT_OWNER", status=409)
+
+
 class ControlTelemetryError(ControlError):
     """遥测已暂停（心跳停发）：看不见车，禁止驱动指令。
 

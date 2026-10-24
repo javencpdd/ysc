@@ -1,0 +1,45 @@
+[Unit]
+Description=Lite3 yolo8 web console (management plane)
+Documentation=file:///home/test/yolo8/note/yolo8-web控制台-改造计划书-v2.md
+
+# console 是管理面，与数据面 yolo_worker 互为独立：
+#   - 不依赖 lite3-yolo-publish.service（console 要能**启动**它，加依赖会成环）
+#   - 只依赖网络（局域网访问 + 调 ctl 脚本）
+# 崩溃不会影响数据面；反之亦然（§4.1 双进程解耦）。
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ysc
+Environment=HOME=/home/ysc
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/home/test/yolo8/console
+
+# 只用系统 python3（103 无 venv；Py3.8.10，代码禁用 3.9+ 语法）
+ExecStart=/usr/bin/python3 -u server.py
+
+# ---- CPU 亲和：避开 cpu5-7（§12.2）----
+# 该主机 cpu5-7 上跑着 SCHED_FIFO 实时线程（hsLidar prio54、lio_ddsnode prio64），
+# 普通任务放上去会被**无条件抢占**，因此 console 只允许调度到 cpu0-2。
+CPUAffinity=0-2
+
+# ---- 重启策略 ----
+# RestartSec=5：与数据面一致（冷启动 35s 的教训，别打密集重启）
+Restart=always
+RestartSec=5
+# 关闭 systemd 的"启动频率锁"：默认 10s 内 10 次失败就放弃，
+# 端口被占等可修复故障下 console 会永久躺平，不符合"管理面必须尽量活着"的定位。
+StartLimitIntervalSec=0
+
+# ---- 日志 ----
+# 与数据面同一目录，排查时一个 logs/ 看全；不要用 /tmp（会被清理）
+StandardOutput=append:/home/test/yolo8/logs/console.log
+StandardError=append:/home/test/yolo8/logs/console.log
+
+# ---- 文件权限 ----
+# 访问令牌在 config/yolo8.json（0600，由部署流程收口）；审计日志与日志文件用 0640
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

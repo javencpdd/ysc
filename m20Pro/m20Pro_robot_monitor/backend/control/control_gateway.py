@@ -25,7 +25,8 @@ from control import patrol_codec
 from control.command_log import CommandLog
 from errors import (ControlBlacklistError, ControlConfirmError,
                     ControlDisabledError, ControlError, ControlLeaseError,
-                    ControlPreconditionError, ControlTelemetryError)
+                    ControlOwnerError, ControlPreconditionError,
+                    ControlTelemetryError)
 from logging_setup import get_logger
 
 logger = get_logger("control.gateway")
@@ -162,10 +163,17 @@ class ControlGateway:
                  telemetry_provider: Optional[Callable[[], bool]] = None,
                  device_provider: Optional[Callable[[], Dict[str, Any]]] = None,
                  command_log: Optional[CommandLog] = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 owner_timeout_seconds: float = 15.0) -> None:
         self._sink = sink
         self._enabled = bool(enabled)
         self._lease_seconds = float(lease_seconds)
+        # 控制权归属（2026-10-19 加，见 acquire/release/_check_owner）：
+        # 控制闸是全局单例、多终端共享同一把开关 → 同一时刻只允许一个 owner。
+        # ``None`` = 无主模式（旧行为：任何人可发，供单测/本机脚本直接 enable 用）。
+        self._owner: Optional[Dict[str, Any]] = None
+        # owner 超过这么久没续约 → 自动释放（浏览器崩溃/断网不至于把所有人锁死）
+        self._owner_timeout = float(owner_timeout_seconds)
         # 轴值安全上限（2026-10-15 真机实测：0.25 舒适 / 0.40 上限 / ≥0.70 危险）
         self._axis_limits = {"min": axis_min, "max": axis_max}
         self._state_provider = state_provider
@@ -193,19 +201,145 @@ class ControlGateway:
         return self._enabled
 
     def enable(self) -> None:
+        """无主启用（旧路径）：不清归属，仅供单测 / 配置自动开启使用。
+
+        HTTP 路径请走 :meth:`acquire`——它同时登记 owner，多终端才互斥。
+        """
         self._enabled = True
         logger.info("控制通道已启用（L1 低危可控）")
 
     def disable(self) -> None:
-        """停用：先补发零位，再关闭开关。"""
+        """停用：先补发零位，再关闭开关，并一并释放归属。
+
+        （归属与控制开关是绑定的：没人持有控制权时就不该开着，否则
+        "释放后又回到无人归属却可驱动"的状态，互斥形同虚设。）
+        """
         # 复用 send_safety_zero：它已豁免全部闸并落报文记录（留证"停用前最后发了什么"）
         self.send_safety_zero(actor="gateway", reason="disable")
         self._enabled = False
         self._lease_until = 0.0
+        self._owner = None
         logger.info("控制通道已停用（回到 L0 只监）")
 
-    def renew_lease(self, seconds: Optional[float] = None) -> float:
-        """续约（前端定期调用；WS 断开即自然失效）。"""
+    # ---------------------------------------------- 控制权归属（多操作员互斥）
+    # 背景：控制闸是**全局单例**——所有浏览器终端连的是同一个后端，共享同一个
+    # ``_enabled``。此前"谁最后点谁说了算"：A 正在遥控，B 点一下停止就把 A 断了；
+    # 更糟的是 A、B 可以同时开启、同时往一条狗发运动指令。
+    # 方案：同一时刻只允许一个 owner（按终端 session_id 认定），非 owner 发驱动类
+    # 指令一律拒绝；安全指令（心跳 / 软急停）不受归属限制（安全手段优先）。
+    def owner_view(self) -> Dict[str, Any]:
+        """对外展示的控制权信息（不含内部 session 全串，只给短码）。"""
+        if self._owner is None:
+            return {"held": False, "session": "", "label": "",
+                    "age_s": 0.0, "idle_s": 0.0}
+        now = self._clock()
+        return {
+            "held": True,
+            "session": str(self._owner["session"])[:8],   # 短码，够区分终端即可
+            "label": self._owner.get("label") or "",
+            "age_s": round(now - float(self._owner["since"]), 1),
+            "idle_s": round(now - float(self._owner["last_seen"]), 1),
+        }
+
+    def _expire_owner_if_needed(self) -> bool:
+        """owner 超时未续约 → 自动释放（返回是否发生了释放）。
+
+        必要性：浏览器崩溃 / 拔网线 / 笔记本合盖时不会有"主动释放"请求，
+        若不回收，控制权会被一个已消失的终端**永久占死**，其他人再也开不了。
+        释放前先发安全零位——操控者失联时让车停下，这是正确的兜底。
+        """
+        if self._owner is None:
+            return False
+        idle = self._clock() - float(self._owner["last_seen"])
+        if idle <= self._owner_timeout:
+            return False
+        label = self._owner.get("label") or self._owner["session"]
+        self.send_safety_zero(actor="gateway", reason="owner_expired")
+        self._enabled = False
+        self._lease_until = 0.0
+        self._owner = None
+        logger.info("控制权超时自动释放：%s（%.0fs 未续约 > %.0fs）",
+                    label, idle, self._owner_timeout)
+        return True
+
+    def is_owner(self, session_id: Optional[str]) -> bool:
+        """当前终端是否持有控制权。
+
+        - **无主模式**（``_owner is None``，单测/本机脚本直接 ``enable()``）→ True，
+          保持旧行为、不破坏既有调用；
+        - 有主 → 必须 session 完全匹配；owner 超时则先回收再判（回到无主）。
+        """
+        if self._owner is None:
+            return True
+        if self._expire_owner_if_needed():
+            return True
+        sid = (session_id or "").strip()
+        return bool(sid) and self._owner["session"] == sid
+
+    def acquire(self, session_id: str, label: str = "",
+                force: bool = False) -> Dict[str, Any]:
+        """申请控制权（HTTP 路径的唯一入口）。
+
+        - 无人占用 → 成为 owner，并启用 L1 + 开租约；
+        - **自己**已占用 → 幂等成功（续期即可，不重复发零位）；
+        - 他人占用且 ``force=False`` → 409 ``CONTROL_HELD``，附占用者信息；
+        - 他人占用且 ``force=True`` → 强制接管：先发安全零位（把前一个人的
+          运动停下来），再易主。接管属危险动作，前端需二次确认。
+        """
+        sid = (session_id or "").strip()
+        if not sid:
+            return {"ok": False, "reason": "NO_SESSION",
+                    "detail": "缺少终端标识 session_id（前端需生成并透传）"}
+        self._expire_owner_if_needed()
+        cur = self._owner
+        if cur is not None and cur["session"] != sid:
+            if not force:
+                return {"ok": False, "reason": "CONTROL_HELD",
+                        "detail": "控制权已被其他终端占用，如需接管请确认后重试",
+                        "owner": self.owner_view()}
+            # 接管：换人开车前必须先停下车
+            self.send_safety_zero(actor="gateway", reason="takeover")
+            logger.info("控制权被强制接管：%s → %s", cur.get("label"), label or sid[:8])
+        now = self._clock()
+        if cur is not None and cur["session"] == sid:
+            cur["last_seen"] = now                      # 幂等续期
+            if label:
+                cur["label"] = label
+        else:
+            self._owner = {"session": sid, "label": label or sid[:8],
+                           "since": now, "last_seen": now}
+        self._enabled = True
+        self.renew_lease()
+        return {"ok": True, "enabled": self._enabled, "owner": self.owner_view()}
+
+    def release(self, session_id: str = "", force: bool = False) -> Dict[str, Any]:
+        """释放控制权（= 停用控制并回到 L0）。
+
+        - owner 自己释放 → 正常；
+        - 非 owner 释放 → 拒绝（避免"旁观者随手把操作员掐了"），
+          除非 ``force=True``（管理员/应急路径）。
+        """
+        sid = (session_id or "").strip()
+        self._expire_owner_if_needed()
+        if self._owner is not None and sid and self._owner["session"] != sid and not force:
+            return {"ok": False, "reason": "NOT_OWNER",
+                    "detail": "控制权属于其他终端，无法释放",
+                    "owner": self.owner_view()}
+        self.disable()
+        return {"ok": True, "enabled": self._enabled, "owner": self.owner_view()}
+
+    def renew_lease(self, seconds: Optional[float] = None,
+                    session_id: Optional[str] = None) -> float:
+        """续约（前端定期调用；WS 断开即自然失效）。
+
+        ``session_id`` 给出时按归属校验：非 owner 续约无效（返回 0），
+        否则一个旁观终端只要开着页面就能替操作员把租约一直续下去，
+        让"断开即失效"这条保护失效。owner 续约同时刷新 last_seen。
+        """
+        if session_id is not None and not self.is_owner(session_id):
+            return 0.0
+        if self._owner is not None and session_id is not None:
+            self._owner["last_seen"] = self._clock()
         self._lease_until = self._clock() + (seconds if seconds is not None
                                              else self._lease_seconds)
         return self.lease_remaining()
@@ -263,8 +397,11 @@ class ControlGateway:
         return ok
 
     def precheck(self, name: str, params: Optional[Dict[str, Any]] = None,
-                 confirmed: bool = False) -> Optional[Dict[str, Any]]:
+                 confirmed: bool = False,
+                 session_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """仅过闸、不发送（供"先验后行"场景：定时移动等需要即时反馈的入口）。
+
+        ``session_id``：发起终端标识，用于归属校验（见 :meth:`_check_owner`）。
 
         返回 ``None`` = 通过；否则返回与 ``execute()`` 同构的拒绝信息。
         只保证"起步可行"——时序性闸（租约）在执行期间仍会逐帧复检；
@@ -274,6 +411,7 @@ class ControlGateway:
         try:
             self._check_blacklist(name, params)
             self._check_enabled(name)
+            self._check_owner(name, session_id)
             self._check_estop(name)
             self._check_telemetry(name)
             self._check_lease(name)
@@ -291,12 +429,17 @@ class ControlGateway:
 
     # ------------------------------------------------------ 指令执行
     def execute(self, name: str, params: Optional[Dict[str, Any]] = None,
-                actor: str = "web", confirmed: bool = False) -> Dict[str, Any]:
-        """执行一条指令，依次过四道闸。"""
+                actor: str = "web", confirmed: bool = False,
+                session_id: Optional[str] = None) -> Dict[str, Any]:
+        """执行一条指令，依次过各道闸。
+
+        ``session_id``：发起终端标识，用于归属校验（见 :meth:`_check_owner`）。
+        """
         params = dict(params or {})
         try:
             self._check_blacklist(name, params)
             self._check_enabled(name)
+            self._check_owner(name, session_id)
             self._check_estop(name)
             self._check_telemetry(name)
             self._check_lease(name)
@@ -349,11 +492,116 @@ class ControlGateway:
             raise ControlBlacklistError(
                 "Charge=2（清除充电状态）属高危黑名单指令，官方标注危险，任何配置下都不可调用")
 
+    # ------------------------------------------------ 系统策略通道（2026-10-20）
+    def execute_system_device(self, name: str, params: Optional[Dict[str, Any]] = None,
+                              actor: str = "system",
+                              reason: str = "") -> Dict[str, Any]:
+        """**系统策略**专用下发通道（目前唯一使用者：雷达默认关闭策略）。
+
+        与 :meth:`execute` 的差别只有一处：**只保留安全类闸**，绕过授权类闸。
+
+          - 照常执行的闸：黑名单、设备开关专项闸（含"站立/RL 态禁关正在运行的雷达"
+            这条运动锁，以及"关闭需二次确认"—— 本方法内部固定 confirmed=True，
+            因为策略是配置显式开启的，等价于用户在设置页确认过）；
+          - 绕过的闸：L1 分层（``_check_enabled``）、控制权归属（``_check_owner``）、
+            租约（``_check_lease``）、遥测暂停（``_check_telemetry``）、
+            软急停态（``_check_estop``）。
+
+        **为什么必须绕过授权类闸**：默认关闭雷达生效的时机本来就是"没有人在操作"
+        （服务刚启动、刚被唤醒）—— 那时 L1 未开启、也没有 owner，走 ``execute()``
+        必然被第一道闸拒下，策略将永远不可能生效，只剩一个假开关。
+
+        **收紧边界（防止它变成通用后门）**：
+          1. 只接受 ``name == "device_switch"`` 且 Items **仅含 "Lidar" 一键**；
+          2. 动作只能是关闭（``device_switch_turns_off`` 判定），不允许借这条路开机；
+          3. 审计 + 报文记录全量落账，``actor=system``、``reason`` 由调用方给出
+             可读原因，事后可逐条追溯；
+          4. 调用方（``LidarDefaultPolicy``）另有"雷达已关就不发 / 运动中不发 /
+             两次之间限速"三重自我保护，本方法不信任调用方。
+
+        返回结构与 :meth:`execute` 同构（``ok`` / ``reason`` / ``detail`` / ``status``）。
+        """
+        params = dict(params or {})
+        items = params.get("items") or {}
+        # 边界 1 + 2：只准"关雷达"这一种形状，别的一概拒（调用方参数问题，400）
+        if name != "device_switch" or set(items) != {"Lidar"}:
+            raise ControlError(
+                "系统通道只允许下发 device_switch/Lidar，收到 %r %r"
+                % (name, sorted(items)), reason="BAD_PARAMS", status=400)
+        if not patrol_codec.device_switch_turns_off(items, None):
+            raise ControlError("系统通道只允许关闭雷达，不允许开启", reason="BAD_PARAMS",
+                               status=400)
+        try:
+            self._check_blacklist(name, params)
+            self._check_device_switch(name, params, True)   # 运动锁在这一道里
+            try:
+                params = self._clamp_params(name, params)
+                payload = patrol_codec.encode(name, params)
+            except (KeyError, ValueError) as exc:
+                raise ControlError(str(exc), reason="BAD_PARAMS", status=400)
+            msg = patrol_codec.build(name, params)
+            self._log_sent(name, msg, payload, actor=actor, confirmed=True)
+            ok = self._send_raw(payload)
+            if not ok and self.command_log is not None:
+                self.command_log.record_send_failed(
+                    name, msg["type"], msg["command"], msg["items"], payload,
+                    detail="UDP socket 发送失败")
+            result = "ok" if ok else "send_failed"
+            self.sent_packets += 1
+            self.last_command = name
+            self._audit_append(name, params, result, actor=actor, confirmed=True,
+                               reason=reason or "system_policy")
+            return {"ok": ok, "command": name, "params": params, "result": result}
+        except ControlError as exc:
+            self.rejected_packets += 1
+            self.last_error = str(exc)
+            rsn = getattr(exc, "reason", "rejected")
+            self._audit_append(name, params, "rejected", actor=actor, confirmed=True,
+                               reason=rsn)
+            if self.command_log is not None:
+                self.command_log.record_rejected(
+                    name, params, reason=rsn, detail=str(exc), actor=actor,
+                    confirmed=True)
+            return {"ok": False, "command": name, "reason": rsn,
+                    "detail": str(exc), "status": getattr(exc, "status", 403)}
+
     def _check_enabled(self, name: str) -> None:
         """闸 1：分层开关（急停例外）。"""
         always = patrol_codec.COMMANDS.get(name, {}).get("always_allowed", False)
         if not self._enabled and not always:
             raise ControlDisabledError("控制通道未启用（L0 只监）；需先开启 L1 并二次确认")
+
+    def _check_owner(self, name: str, session_id: Optional[str] = None) -> None:
+        """闸 0.5：控制权归属（2026-10-19 加，多操作员互斥）。
+
+        控制闸是全局单例、多终端共享同一把开关，因此必须回答"**这条指令是谁发的、
+        他现在有没有权发**"，否则会出现两人同时开一台车 / 旁观者随手掐断操作员。
+
+        判定：
+        - ``always_allowed`` 的安全指令（心跳 / 软急停 / 解急停）→ **豁免**，
+          "安全手段优先于归属"——被别人占着控制权也必须能按急停；
+        - **无主模式**（``_owner is None``：单测或本机脚本直接 ``enable()``）→ 放行，
+          保持旧行为，不破坏既有调用；
+        - 有主 → 必须由 owner 发起；缺 session_id 或不是 owner 一律 409。
+        """
+        always = patrol_codec.COMMANDS.get(name, {}).get("always_allowed", False)
+        if always:
+            return
+        if self._owner is None:
+            return                                  # 无主模式：向后兼容
+        sid = (session_id or "").strip()
+        if not sid:
+            # 单用户最容易踩：换了窗口/新标签页（= 新终端标识），或某个面板
+            # 走了没带身份的旧调用。文案要说清"怎么办"，而不是甩一句"被占用"。
+            raise ControlOwnerError(
+                "本终端尚未登记控制权（当前由终端 %s 持有）。"
+                "如果你就是操作者，请到「运动控制」点「接管控制权」"
+                % self.owner_view()["session"])
+        if self._owner["session"] != sid:
+            raise ControlOwnerError(
+                "控制权属于终端 %s（已持有 %.0fs），本终端为只读；"
+                "如确需操作，请到「运动控制」点「接管控制权」"
+                % (self.owner_view()["session"], self.owner_view()["age_s"]))
 
     def _check_estop(self, name: str) -> None:
         if self._estop and name not in ("soft_estop", "clear_estop"):
@@ -525,9 +773,12 @@ class ControlGateway:
         return items[:limit]
 
     def status(self) -> Dict[str, Any]:
+        # 快照是最常被读的地方，顺便回收僵尸 owner（否则状态页会一直显示"被占用"）
+        self._expire_owner_if_needed()
         return {
             "enabled": self._enabled,
             "estop": self._estop,
+            "owner": self.owner_view(),
             "lease_active": self.lease_active(),
             "lease_remaining": round(self.lease_remaining(), 2),
             "axis_hz": 20,

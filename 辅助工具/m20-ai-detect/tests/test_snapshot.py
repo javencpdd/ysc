@@ -172,3 +172,22 @@ class TestSnapshotFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPerCameraLock(unittest.TestCase):
+    """按相机分锁（2026-10-18）：多相机 live 抓帧必须能并行，否则两路画面错开。"""
+
+    def test_locks_are_per_camera(self):
+        a1 = snapshot._cam_lock("front")
+        a2 = snapshot._cam_lock("front")
+        b = snapshot._cam_lock("back")
+        self.assertIs(a1, a2, "同一相机应复用同一把锁（防连击）")
+        self.assertIsNot(a1, b, "不同相机必须用不同的锁（否则抓帧被串行化）")
+
+    def test_cache_entry_has_wall_ts(self):
+        """缓存条目要带 wall 时刻：界面上的 ts 必须是"这张图取到的时刻"。"""
+        snapshot._cache.clear()
+        snapshot._cache["front"] = (1.0, 2.0, b"\xff\xd8x", "live")
+        entry = snapshot._cache["front"]
+        self.assertEqual(len(entry), 4)
+        self.assertEqual(entry[1], 2.0)

@@ -44,7 +44,7 @@ log "安装目录: $INSTALL_DIR  运行用户: $RUN_USER"
 log "pip 源: $PIP_INDEX（http，绕开 TLS/时钟问题）"
 
 # ---------------------------------------------------------------- 1. 目录与文件
-log "[1/7] 准备目录并复制文件"
+log "[1/8] 准备目录并复制文件"
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR/hls"
 
@@ -74,7 +74,7 @@ rm -rf "$INSTALL_DIR/backend/backend" 2>/dev/null || true
 [[ -f "$SRC_DIR/config.example.toml" ]] && cp "$SRC_DIR/config.example.toml" "$INSTALL_DIR/" || true
 
 # ---------------------------------------------------------------- 2. 虚拟环境
-log "[2/7] 创建虚拟环境（多层降级）"
+log "[2/8] 创建虚拟环境（多层降级）"
 PY_BIN="$(command -v python3 || true)"
 [[ -n "$PY_BIN" ]] || { err "未找到 python3"; exit 1; }
 log "python3: $PY_BIN ($("$PY_BIN" -V 2>&1))"
@@ -106,7 +106,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 3. 依赖
-log "[3/7] 安装依赖（http 镜像 + --trusted-host）"
+log "[3/8] 安装依赖（http 镜像 + --trusted-host）"
 # shellcheck disable=SC2086
 $PIP_CMD install --upgrade pip >/dev/null 2>&1 || warn "pip 自升级失败，继续"
 # shellcheck disable=SC2086
@@ -120,12 +120,12 @@ else
 fi
 
 # ---------------------------------------------------------------- 4. 权限
-log "[4/7] 设置权限"
+log "[4/8] 设置权限"
 chown -R "$RUN_USER":"$RUN_USER" "$INSTALL_DIR"
 chmod -R u+rwX "$INSTALL_DIR"
 
 # ---------------------------------------------------------------- 5. systemd
-log "[5/7] 安装 systemd 单元"
+log "[5/8] 安装 systemd 单元"
 UNIT_SRC="$SRC_DIR/deploy/${SERVICE_NAME}.service"
 UNIT_DST="/etc/systemd/system/${SERVICE_NAME}.service"
 if [[ -f "$UNIT_SRC" ]]; then
@@ -145,7 +145,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 6. 启动与验证
-log "[6/7] 启动服务"
+log "[6/8] 启动服务"
 systemctl restart "$SERVICE_NAME"
 sleep 5
 if systemctl is-active --quiet "$SERVICE_NAME"; then
@@ -163,12 +163,24 @@ curl -s --max-time 5 "http://127.0.0.1:${PORT}/health" || true
 echo ""
 
 # ---------------------------------------------------------------- 7. m20monitor 命令
-log "[7/7] 安装 m20monitor 管理命令（up/down/reset/status/log）"
+log "[7/8] 安装 m20monitor 管理命令（up/down/reset/status/log）"
 if [[ -f "$SRC_DIR/deploy/install_m20monitor.sh" ]]; then
     bash "$SRC_DIR/deploy/install_m20monitor.sh" "$RUN_USER" \
         || warn "m20monitor 安装失败（可选组件；不影响控制台本体，可稍后手动重跑 deploy/install_m20monitor.sh）"
 else
     warn "未找到 deploy/install_m20monitor.sh，跳过 m20monitor 安装"
+fi
+
+# ---------------------------------------------------------------- 8. 受控提权 helper
+# ⚠️ 这两个 helper 装在 /usr/local/sbin（系统目录），install.sh 早期版本**没装它们**
+#    → 换机器时最容易漏，漏了表现为热点/推流面板报
+#    "受控入口不存在或不可执行"。走独立脚本是为了和 _apply.sh 也能共用。
+log "[8/8] 安装受控提权 helper（m20-ap-ctl / m20-video-ctl + sudoers）"
+if [[ -f "$SRC_DIR/deploy/install_helpers.sh" ]]; then
+    bash "$SRC_DIR/deploy/install_helpers.sh" "$RUN_USER" \
+        || warn "helper 安装失败（热点/推流面板将不可写；可稍后手动重跑 deploy/install_helpers.sh $RUN_USER）"
+else
+    warn "未找到 deploy/install_helpers.sh，跳过（热点/推流面板将不可写）"
 fi
 
 cat <<EOF

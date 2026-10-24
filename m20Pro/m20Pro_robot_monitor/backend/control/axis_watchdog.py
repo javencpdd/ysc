@@ -68,6 +68,9 @@ class AxisWatchdog:
         self._channel = "steer"
         #: 定时移动截止时刻（monotonic）；None = 非定时模式
         self._timed_deadline: Optional[float] = None
+        #: 发起终端标识（控制权归属）：循环里每帧都要透传给 gateway，
+        #: 否则 owner 自己的持续开车会被归属闸当成"没带身份"拒掉。
+        self._session_id: Optional[str] = None
         self._timed_total = 0.0
         self.sent_frames = 0
 
@@ -90,21 +93,45 @@ class AxisWatchdog:
         self._timed_deadline = None
         self._timed_total = 0.0
 
-    def feed(self, values: Dict[str, float], channel: Optional[str] = None) -> None:
+    def feed(self, values: Dict[str, float], channel: Optional[str] = None,
+             session_id: Optional[str] = None) -> bool:
         """前端持续上报轴值（按住摇杆时以 ≥4Hz 调用；建议 ~16Hz）。
 
         ``channel``：通道键（"steer" 主通道 / "real" 实时通道）；缺省 = 主通道。
+        ``session_id``：发起终端标识（控制权归属）。
+
         手动操作会**接管并作废**正在执行的定时移动（人随时可以抢回控制权）。
+
+        返回是否被接受：非 owner 上报会被**直接拒绝且不启动**（快速失败 ——
+        比"启动了再被每帧拒绝"清晰得多，也避免车原地抖动一下）。
         """
+        if session_id is not None:
+            self._session_id = session_id or None
+        if not self._is_owner():
+            self._paused = True
+            self._values = {}
+            return False
         self._cancel_timed("manual_feed")
         self._channel = patrol_codec.channel_key(channel)
         self._set_values(values)
         self._last_feed = self._clock()
         self._paused = False
         self._stale_since = None
+        return True
+
+    def _is_owner(self) -> bool:
+        """当前登记的终端是否持有控制权（gateway 无归属能力时恒 True）。"""
+        check = getattr(self.gateway, "is_owner", None)
+        if not callable(check):
+            return True
+        try:
+            return bool(check(self._session_id))
+        except Exception:  # noqa: BLE001 - 探针异常不应阻断运动控制
+            return True
 
     def feed_timed(self, values: Dict[str, float], duration_s: float,
-                   channel: Optional[str] = None) -> None:
+                   channel: Optional[str] = None,
+                   session_id: Optional[str] = None) -> bool:
         """定时移动：以给定轴值持续 ``duration_s`` 秒，到点自动零位停止。
 
         - 计时走内部 deadline（**不经过 _last_feed**，停更逻辑不参与）；
@@ -117,6 +144,10 @@ class AxisWatchdog:
         except (TypeError, ValueError):
             dur = 0.5
         dur = max(0.5, min(30.0, dur))          # API 层已校验，这里只做兜底
+        if session_id is not None:
+            self._session_id = session_id or None
+        if not self._is_owner():                # 非 owner 不得启动定时移动
+            return False
         self._cancel_timed("restart")
         self._channel = patrol_codec.channel_key(channel)
         self._set_values(values)
@@ -128,6 +159,7 @@ class AxisWatchdog:
         self._timed_deadline = now + dur
         logger.info("定时移动开始：通道=%s 时长=%.1fs 轴值=%s（到点自动零位停止）",
                     self._channel, dur, self._values, extra={"event": "timed_start"})
+        return True
 
     def pause(self, reason: str = "ws_disconnected") -> None:
         """暂停发送：零位一帧 + 停发。
@@ -186,7 +218,8 @@ class AxisWatchdog:
                             extra={"event": "timed_expired"})
                 self.pause("timed_expired")
                 return "timed_done"
-            self.gateway.execute(self._cmd_name(), self._values, actor="timed")
+            self.gateway.execute(self._cmd_name(), self._values, actor="timed",
+                                 session_id=self._session_id)
             self.sent_frames += 1
             return "axis_timed"
 
@@ -210,7 +243,8 @@ class AxisWatchdog:
             logger.info("轴指令恢复（停更 %.0f ms）", (now - self._stale_since) * 1000.0,
                         extra={"event": "watchdog_resumed"})
             self._stale_since = None
-        self.gateway.execute(self._cmd_name(), self._values, actor="watchdog")
+        self.gateway.execute(self._cmd_name(), self._values, actor="watchdog",
+                             session_id=self._session_id)
         self.sent_frames += 1
         return "axis"
 

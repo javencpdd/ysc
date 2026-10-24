@@ -39,6 +39,13 @@ DEFAULT_HLS_DIR = "/tmp/m20-hls"
 class VideoProxy:
     """ffmpeg 子进程托管：拉一路 RTSP → 切 HLS 片段。"""
 
+    #: 进程"算活住了"的门槛（秒）。低于它退避继续翻倍。
+    #: ⚠️ 曾经的写法是 Popen 成功就 `backoff = 2.0` —— 但**"起来"不等于"出流"**：
+    #: 源站没推流时 ffmpeg 起来就 404 退出（`method DESCRIBE failed: 404`），
+    #: 退避永远长不起来，变成每 2s 重启一次的死循环（2026-10-18 真机实测
+    #: 连刷到第 14 次，每次都要重建 RTSP 连接 + 起进程，纯白耗资源）。
+    STABLE_SECONDS = 10.0
+
     def __init__(self, rtsp_url: str, hls_dir: str = DEFAULT_HLS_DIR,
                  segment_seconds: float = 1.0, list_size: int = 3,
                  ffmpeg: str = "ffmpeg", max_restart_backoff: float = 30.0) -> None:
@@ -53,6 +60,8 @@ class VideoProxy:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.RLock()
+        #: 本次进程的启动时刻（monotonic），用来算"活了多久"
+        self._spawned_at: float = 0.0
 
         self.restart_count = 0
         self.last_error: Optional[str] = None
@@ -108,6 +117,7 @@ class VideoProxy:
                 logger.warning("ffmpeg 启动失败: %s", exc)
                 return False
             self.started_at = time.time()
+            self._spawned_at = time.monotonic()
             self._stop.clear()
             if self._thread is None or not self._thread.is_alive():
                 self._thread = threading.Thread(target=self._supervise,
@@ -117,8 +127,23 @@ class VideoProxy:
             logger.info("视频代理已启动: %s → %s", self.rtsp_url, self.hls_dir)
             return True
 
+    def next_backoff(self, backoff: float, alive: float) -> float:
+        """进程退出后，**下一轮**该等多久（独立方法便于单测）。
+
+        ``alive`` 是刚死掉那个进程活了多久：活够 ``STABLE_SECONDS`` 说明
+        它真的出过流，退避重置；否则翻倍。上限 ``_max_backoff``。
+        """
+        if alive >= self.STABLE_SECONDS:
+            return 2.0
+        return min(max(backoff, 2.0) * 2.0, self._max_backoff)
+
     def _supervise(self) -> None:
-        """进程退出即按退避重启（上游断流恢复后自动重连）。"""
+        """进程退出即按退避重启（上游断流恢复后自动重连）。
+
+        退避规则（2026-10-18 修，见 ``STABLE_SECONDS``）：
+        进程存活不足 ``STABLE_SECONDS`` 就退出 → 退避翻倍；真的活住了
+        才重置回 2s。这样"源站没推流"时不会 2s 一次无限重启。
+        """
         backoff = 2.0
         while not self._stop.is_set():
             proc = self._proc
@@ -128,16 +153,21 @@ class VideoProxy:
             if rc is None:
                 self._stop.wait(1.0)
                 continue
-            # 进程已退出
+            # ---- 进程已退出：先算它活了多久，再决定这一轮等多久
+            alive = (time.monotonic() - self._spawned_at) if self._spawned_at else 0.0
             err = ""
             try:
                 if proc.stderr:
                     err = (proc.stderr.read() or b"").decode("utf-8", "ignore")[:300]
             except Exception:  # noqa: BLE001
                 pass
-            self.last_error = "ffmpeg 退出(code=%s): %s" % (rc, err.strip())
-            logger.warning("视频代理退出，%.0fs 后重启: %s", backoff, self.last_error)
-            self._stop.wait(backoff)
+            self.last_error = "ffmpeg 退出(code=%s, 存活 %.1fs): %s" % (
+                rc, alive, err.strip())
+            wait_s = backoff
+            backoff = self.next_backoff(backoff, alive)
+            logger.warning("视频代理退出（存活 %.1fs），%.0fs 后重启: %s",
+                           alive, wait_s, self.last_error)
+            self._stop.wait(wait_s)
             if self._stop.is_set():
                 break
             self.restart_count += 1
@@ -145,8 +175,9 @@ class VideoProxy:
                 self._proc = subprocess.Popen(
                     self.build_cmd(), stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE)
-                logger.info("视频代理已重启（第 %d 次）", self.restart_count)
-                backoff = 2.0
+                self._spawned_at = time.monotonic()
+                logger.info("视频代理已重启（第 %d 次，下次退避 %.0fs）",
+                            self.restart_count, backoff)
             except OSError as exc:  # pragma: no cover
                 self.last_error = "重启失败: %s" % exc
                 backoff = min(backoff * 2, self._max_backoff)

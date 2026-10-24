@@ -13,6 +13,7 @@ Lite3 四足机器人**感知导航主机**（Jetson Xavier NX · Ubuntu 20.04 �
 | 模块 | 说明 | 文档 |
 |---|---|---|
 | YOLOv8 视频检测与推流 | RTSP 拉流 → TensorRT 检测 → RTMP / ROS2 双通路发布 | [note/01](note/01-yolo视频检测与推流.md) |
+| Web 控制台（P1 + P1.5 已完成） | 服务启停 / 阈值 / 抓拍管理面；P1.5 增 ROS2 话题订阅卡（ws 串 + 话题清单）与配置在线编辑（保存自动重启生效），配置令牌 + Cookie + CIDR 白名单，systemd 自启 | [note/08](note/08-yolo8-web控制台-改造计划书-v2.md) §17 / §18 |
 | 机器狗监控面板 | UDP 43897 旁路抓包 → WebSocket 实时面板 | [note/02](note/02-机器狗监控面板.md) |
 | SCAN-Planner 路径规划 | ROS1 Noetic，仿真闭环与真机接入 | [note/03](note/03-SCAN-Planner规划器.md) |
 | Foxglove 可视化 | rosbridge WebSocket，远程看图 | [note/04](note/04-Foxglove可视化与rosbridge.md) |

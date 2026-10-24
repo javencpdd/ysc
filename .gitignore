@@ -26,3 +26,5 @@ site/
 m20Pro/scripts/m20ssh.conf
 *.pem
 *.key
+.playwright-cli/*
+lite3/yolo8-migration-20261024.tar.gz

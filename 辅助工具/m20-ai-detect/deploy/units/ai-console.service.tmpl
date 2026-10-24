@@ -1,0 +1,28 @@
+[Unit]
+Description=@@APP_ID@@-ai-console: web UI for @@APP_ID@@-ai-detect sampler
+Documentation=file:@@BASE_DIR@@/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 运行账户与采样器保持一致（说明见 ai-detect.service.tmpl 同名字段）
+User=@@RUN_USER@@
+Group=@@RUN_GROUP@@
+WorkingDirectory=@@BASE_DIR@@
+Environment=PYTHONPATH=@@BASE_DIR@@/src:@@BASE_DIR@@
+EnvironmentFile=@@BASE_DIR@@/@@APP_ID@@-ai-console.env
+ExecStart=@@PYTHON@@ -m webconsole
+Restart=always
+RestartSec=5
+# 资源限制同采样器：参考部署上大核被厂商 isolcpus 隔离，只用小核；内存封顶 256M
+CPUAffinity=@@CPU_AFFINITY@@
+MemoryMax=@@MEMORY_MAX@@
+ReadWritePaths=@@BASE_DIR@@
+# 刻意不设 NoNewPrivileges/ProtectSystem/ProtectHome 等硬化（与采样器 unit 的差异）：
+# 本服务必须经 sudo 调 root helper 才能做写操作，NoNewPrivileges=true 会直接禁掉
+# sudo 的 setuid，写功能全灭。补偿：sudoers 白名单只收完整命令行
+# （/etc/sudoers.d/@@APP_ID@@-ai-console，见 README §5.1），helper 内二次校验参数。
+
+[Install]
+WantedBy=multi-user.target

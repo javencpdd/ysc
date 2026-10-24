@@ -69,6 +69,13 @@ button.sm{font-size:12px;padding:3px 10px}
 .tag.ok{background:var(--okbg);color:var(--oktx)}
 .tag.err{background:var(--errbg);color:var(--errtx)}
 #snap-img{display:none;width:100%;max-width:600px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2)}
+.snapgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;align-items:start}
+.snapgrid figure{margin:0;background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;overflow:hidden}
+.snapgrid img{width:100%;display:block;min-height:120px;object-fit:contain;background:var(--surface2)}
+.snapgrid figcaption{font-size:11px;color:var(--text2);padding:5px 8px;display:flex;justify-content:space-between;gap:6px}
+.snapgrid .dim img{opacity:0.45}
+.camchip{display:inline-block;font-size:12px;padding:3px 10px;border:0.5px solid var(--border2);border-radius:999px;cursor:pointer;color:var(--text2);user-select:none}
+.camchip.on{background:var(--okbg);color:var(--oktx);border-color:var(--oktx)}
 .statusline{font-size:12px;color:var(--text2);margin-top:10px;min-height:18px}
 .statusline.ok{color:var(--oktx)}
 .statusline.err{color:var(--errtx)}
@@ -169,13 +176,26 @@ button.sm{font-size:12px;padding:3px 10px}
 
     <div class="card wide" id="snap-card" data-fold="snap">
       <h2><span><span data-i18n="snap.title">相机画面</span> <span class="tag" id="snap-tag" data-i18n="common.loading">加载中…</span></span><span class="note" id="snap-src"></span></h2>
-      <div class="row" style="margin-bottom:10px">
-        <select id="snap-cam" onchange="snapLoad()" style="width:150px"></select>
-        <label class="check" style="margin:0"><input type="checkbox" id="snap-auto" checked> <span data-i18n="snap.auto">自动刷新（3 秒）</span></label>
-        <button class="sm" onclick="snapLoad()" data-i18n="snap.refresh">立即刷新</button>
-        <span class="note" data-i18n="snap.note">采集运行中 = 采样器当前帧（检测器所见）；未运行 = 从同一路 RTSP 即时抓帧；取不到实时帧时标红「视频源不可达」并只显示旧帧</span>
+      <div class="row" style="margin-bottom:8px">
+        <span class="note" data-i18n="snap.cams_label">显示相机：</span>
+        <span class="row" id="snap-cams"></span>
+        <span class="note" style="margin-left:8px" data-i18n="snap.every_label">刷新频率：</span>
+        <select id="snap-every" onchange="snapEveryChange()" style="width:200px">
+          <option value="auto" data-i18n="snap.every_auto">自适应（实时帧 3s / 即时抓帧 10s）</option>
+          <option value="1000">1s</option>
+          <option value="2000">2s</option>
+          <option value="3000">3s</option>
+          <option value="5000">5s</option>
+          <option value="10000">10s</option>
+          <option value="30000">30s</option>
+          <option value="60000">60s</option>
+          <option value="0" data-i18n="snap.every_off">关闭（仅手动刷新）</option>
+        </select>
+        <button class="sm" onclick="snapLoad(true)" data-i18n="snap.refresh">立即刷新</button>
+        <button class="sm" onclick="stopSnap()" data-i18n="snap.stop">停止拉流</button>
       </div>
-      <img id="snap-img" data-i18n="snap.title" alt="相机画面">
+      <div class="note" style="margin:0 0 8px" data-i18n-html="snap.note"><b>成本</b>：采集运行中 = 读本地 <code>raw/</code> 最新帧，<b>零额外带宽</b>，且两路同刻（最适合对比）；采集未运行 = 逐路 RTSP 即时抓帧，<b>每次刷新 = 每路一条会话</b>，每路握手/等关键帧耗时不同（约 1~3s），<b>两路画面时刻会有 1~2s 偏差</b>——界面把同一轮结果一起上屏，但图像本身不是同刻。<b>不看时：折叠本卡 / 切走标签页 / 取消勾选相机 / 选「关闭」都不再发请求</b>；这<b>只停网页预览</b>，采集器照常抽帧落盘（两条链路独立）</div>
+      <div id="snap-grid" class="snapgrid"></div>
       <div class="statusline" id="snap-status"></div>
     </div>
 
@@ -256,12 +276,32 @@ button.sm{font-size:12px;padding:3px 10px}
     </div>
 
     <div class="card" data-fold="cam">
-      <h2><span data-i18n="cam.title">相机与采集</span></h2>
-      <label class="check"><input type="checkbox" id="en-f" checked> <span data-i18n="cam.front">前视 video1（rtsp://10.21.31.103:8554/video1）</span></label>
-      <label class="check"><input type="checkbox" id="en-b"> <span data-i18n="cam.back">后视 video2</span></label>
-      <label class="f" for="fps" data-i18n="cam.fps">抽帧速率（fps）</label>
-      <input type="number" id="fps" value="1" min="0.2" max="5" step="0.5" style="width:100px">
-      <div class="row end" style="margin-top:12px"><button onclick="saveCameras()" data-i18n="cfg.save">保存并应用</button></div>
+      <h2><span data-i18n="cam.title">视频源与采集</span></h2>
+      <div class="note" data-i18n-html="cam.note">每路源写成 <code>名称 = 类型://地址</code>（rtsp / rtmp / http(MJPEG) / device（本地相机）/ file 回放）。改动即写入 env 的 <code>M20AI_SOURCES</code>，采集运行中保存后自动重启生效，未运行则下次开启时生效。<b>本地相机</b>（device://）展开的命令行含上游禁词，需先在 env 里显式设 <code>M20AI_ALLOW_LOCAL_DEVICE=1</code> 才会被接受。</div>
+      <div id="src-list"><div class="note" style="padding:12px" data-i18n="common.loading">加载中…</div></div>
+      <div class="grid" style="margin-top:12px">
+        <div>
+          <label class="f" for="src-name" data-i18n="cam.add_name">新源名称（仅字母/数字/_-，会成为 raw/ 下的目录名）</label>
+          <input type="text" id="src-name" data-i18n-ph="cam.add_name_ph" placeholder="gate">
+        </div>
+        <div>
+          <label class="f" for="src-uri" data-i18n="cam.add_uri">地址（rtsp:// / rtmp:// / http://…mjpg / device:///dev/video0 / file://…）</label>
+          <input type="text" id="src-uri" data-i18n-ph="cam.add_uri_ph" placeholder="rtsp://host:8554/path">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" onclick="addSource()" data-i18n="cam.add">添加并应用</button>
+        <label class="check" style="margin:0"><input type="number" id="src-fps" min="0.2" max="30" step="0.5" style="width:90px" data-i18n-ph="cam.add_fps_ph" placeholder="fps 可选"> <span class="note" data-i18n="cam.add_fps">留空 = 用全局速率</span></label>
+        <button class="sm" onclick="scanSources()" data-i18n="cam.scan">扫描可视频源</button>
+      </div>
+      <div id="src-scan" style="display:none">
+        <div class="note" style="margin:10px 0 6px" data-i18n="cam.scan_hint">勾选候选源后点「加入所选」。verdict=ok 表示探测到了画面；unresolved 表示连上但需凭据/放行（如本地相机）。</div>
+        <div id="src-scan-list" style="max-height:260px;overflow:auto;border:0.5px solid var(--border);border-radius:8px"></div>
+        <div class="row" style="margin-top:8px"><button class="sm" onclick="addScanned()" data-i18n="cam.scan_add">加入所选</button><span class="note" id="src-scan-status"></span></div>
+      </div>
+      <label class="f" for="fps" data-i18n="cam.fps">抽帧速率（fps，全局默认）</label>
+      <input type="number" id="fps" value="1" min="0.2" max="30" step="0.5" style="width:100px">
+      <div class="row end" style="margin-top:12px"><button onclick="saveGlobalFps()" data-i18n="cfg.save">保存并应用</button></div>
       <div class="statusline" id="cam-status"></div>
     </div>
 
@@ -450,9 +490,27 @@ button.sm{font-size:12px;padding:3px 10px}
   "age.min": "{n} 分钟",
   "age.hour": "{n} 小时",
   "snap.title": "相机画面",
-  "snap.auto": "自动刷新（3 秒）",
+  "snap.cams_label": "显示相机：",
+  "snap.every_label": "刷新频率：",
+  "snap.every_auto": "自适应（实时帧 3s / 即时抓帧 10s）",
+  "snap.every_off": "关闭（仅手动刷新）",
+  "snap.no_cam": "未选择相机 —— 不拉流（点上方相机名即可开启）",
+  "snap.cap_ring": "实时帧 · {age}前",
+  "snap.cap_live": "即时抓帧",
+  "snap.cap_stale": "旧帧 · {age}前（源不可达）",
+  "snap.cap_fail": "取帧失败",
+  "snap.partial": "部分相机不可达",
+  "snap.partial_msg": "{ok}/{n} 路正常，其余取不到实时帧",
+  "snap.live_multi": "即时抓帧 ×{n} 路（每路每次一条 RTSP 会话）",
+  "snap.cost_warn": "当前为即时抓帧 ×{n} 路、间隔 {every}s —— 每秒会重建 {n} 条 RTSP 会话，建议 ≥10s 或先开启采集",
   "snap.refresh": "立即刷新",
-  "snap.note": "采集运行中 = 采样器当前帧（检测器所见）；未运行 = 从同一路 RTSP 即时抓帧；取不到实时帧时标红「视频源不可达」并只显示旧帧",
+  "snap.note": "<b>成本</b>：采集运行中 = 读本地 <code>raw/</code> 最新帧，<b>零额外带宽</b>，且两路同刻（最适合对比）；采集未运行 = 逐路 RTSP 即时抓帧，<b>每次刷新 = 每路一条会话</b>，每路握手/等关键帧耗时不同（约 1~3s），<b>两路画面时刻会有 1~2s 偏差</b>——界面把同一轮结果一起上屏，但图像本身不是同刻。<b>不看时：折叠本卡 / 切走标签页 / 取消勾选相机 / 选「关闭」都不再发请求</b>；这<b>只停网页预览</b>，采集器照常抽帧落盘（两条链路独立）",
+  "snap.stop": "停止拉流",
+  "snap.paused": "已暂停",
+  "snap.stopped": "已停止拉流——只停网页预览，不再向车端发任何画面请求；不影响采集器（它仍按开关状态抽帧、检测并写 raw/results/saved）。要看画面点「立即刷新」（单次）",
+  "snap.auto_paused": "连续 {n} 次都拿不到实时帧，已暂停自动拉流（改为每 60s 探测一次，避免空等）；源恢复后自动回到原节奏",
+  "snap.cost_ring": "实时帧：读 GOS 本地 raw/ 文件，不占车端任何带宽",
+  "snap.cost_live": "即时抓帧：每次都会向 AOS MediaMTX 起一条 RTSP 会话（车端需编解码），已放慢节奏",
   "snap.refreshing": "刷新中…",
   "snap.ring": "实时",
   "snap.ring_msg": "采样器当前帧 · {age}前（采集运行中，即检测器输入）",
@@ -463,7 +521,6 @@ button.sm{font-size:12px;padding:3px 10px}
   "snap.down_idle": "采集未运行，且 RTSP 源也无响应",
   "snap.down_msg": "⚠️ {who}（{src}）：当前只显示 {age}前的旧帧。视频链未在推送（如 AOS 相机未上线 / USB 掉线 / 视频服务未起）——恢复后自动回到实时。",
   "snap.down_msg2": "⚠️ RTSP 源无响应，取不到任何画面（{cam}）。视频链未在推送（如 AOS 相机未上线 / USB 掉线 / 视频服务未起）——恢复后自动回到实时。",
-  "snap.fail": "抓帧失败",
   "tl.title": "目标图片时间轴",
   "tl.ts": "时间（真实时钟）",
   "tl.cam": "相机 / 帧",
@@ -515,10 +572,46 @@ button.sm{font-size:12px;padding:3px 10px}
   "cfg.nms": "nms_thresh",
   "cfg.note": "写入 m20-ai-detect.env；采集运行中会自动重启生效，未运行则下次开启时生效",
   "cfg.save": "保存并应用",
-  "cam.title": "相机与采集",
-  "cam.front": "前视 video1（rtsp://10.21.31.103:8554/video1）",
-  "cam.back": "后视 video2",
-  "cam.fps": "抽帧速率（fps）",
+  "cam.title": "视频源与采集",
+  "cam.note": "每路源写成 <code>名称 = 类型://地址</code>（rtsp / rtmp / http(MJPEG) / device（本地相机）/ file 回放）。改动即写入 env 的 <code>M20AI_SOURCES</code>，采集运行中保存后自动重启生效，未运行则下次开启时生效。<b>本地相机</b>（device://）展开的命令行含上游禁词，需先在 env 里显式设 <code>M20AI_ALLOW_LOCAL_DEVICE=1</code> 才会被接受。",
+  "cam.add_name": "新源名称（仅字母/数字/_-，会成为 raw/ 下的目录名）",
+  "cam.add_name_ph": "gate",
+  "cam.add_uri": "地址（rtsp:// / rtmp:// / http://…mjpg / device:///dev/video0 / file://…）",
+  "cam.add_uri_ph": "rtsp://host:8554/path",
+  "cam.add_fps": "留空 = 用全局速率",
+  "cam.add_fps_ph": "fps 可选",
+  "cam.add": "添加并应用",
+  "cam.scan": "扫描可视频源",
+  "cam.scan_hint": "勾选候选源后点「加入所选」。verdict=ok 表示探测到了画面；unresolved 表示连上但需凭据/放行（如本地相机）。",
+  "cam.scan_add": "加入所选",
+  "cam.col_name": "名称",
+  "cam.col_type": "类型",
+  "cam.col_uri": "地址",
+  "cam.col_state": "状态",
+  "cam.on": "启用",
+  "cam.off": "停用",
+  "cam.btn_disable": "停用",
+  "cam.btn_enable": "启用",
+  "cam.btn_del": "删除",
+  "cam.empty": "还没有任何视频源——用下面的表单添加第一路",
+  "cam.scanning": "扫描中…（按 scope 不同可达数十秒）",
+  "cam.scan_empty": "未发现候选源（可换 scope=host:<ip> 指定主机再试）",
+  "cam.scan_fail": "扫描失败：{e}",
+  "cam.scan_picked": "已加入 {n} 路",
+  "cam.scan_checked": "请先勾选要加入的候选源",
+  "cam.added": "已添加 {name}",
+  "cam.removed": "已删除 {name}",
+  "cam.toggled_on": "已启用 {name}",
+  "cam.toggled_off": "已停用 {name}",
+  "cam.reqfail": "请求失败：{e}",
+  "cam.fps_saved": "全局速率已保存",
+  "cam.vd_ok": "ok",
+  "cam.vd_auth_required": "需凭据",
+  "cam.vd_timeout": "超时",
+  "cam.vd_refused": "拒绝连接",
+  "cam.vd_no_frame": "无画面",
+  "cam.vd_unresolved": "待放行",
+  "cam.fps": "抽帧速率（fps，全局默认）",
   "alert.title": "关注目标",
   "alert.labels": "关注目标（英文标签，逗号分隔；留空 = 不保存任何图片）",
   "alert.stats_empty": "今日检出：暂无记录（开启采集并产生检测后，这里会出现可点选的标签）",
@@ -669,9 +762,27 @@ button.sm{font-size:12px;padding:3px 10px}
   "age.min": "{n}m",
   "age.hour": "{n}h",
   "snap.title": "Camera feed",
-  "snap.auto": "Auto-refresh (3 s)",
+  "snap.cams_label": "Cameras:",
+  "snap.every_label": "Refresh rate:",
+  "snap.every_auto": "Adaptive (ring 3s / live grab 10s)",
+  "snap.every_off": "Off (manual only)",
+  "snap.no_cam": "No camera selected — no pulling (click a camera name above to start)",
+  "snap.cap_ring": "ring frame · {age} ago",
+  "snap.cap_live": "live grab",
+  "snap.cap_stale": "stale · {age} old (source unreachable)",
+  "snap.cap_fail": "grab failed",
+  "snap.partial": "Some cameras unreachable",
+  "snap.partial_msg": "{ok}/{n} OK, the rest have no live frame",
+  "snap.live_multi": "live grab ×{n} (one RTSP session each)",
+  "snap.cost_warn": "Live grab ×{n} at {every}s — {n} RTSP sessions rebuilt every {every}s; use ≥10s or start the collector",
   "snap.refresh": "Refresh now",
-  "snap.note": "Collector running = the sampler's current frame (what the detector sees); stopped = a live grab over the same RTSP stream; when no live frame can be grabbed the card shows red \"Video source unreachable\" with old frames only",
+  "snap.note": "<b>Cost</b>: collector running = reads the newest local <code>raw/</code> frame, <b>zero extra bandwidth</b>, and both cameras share the same instant (best for comparison); collector stopped = per-camera live grab, <b>one RTSP session per camera per refresh</b>, and each needs a different handshake/keyframe wait (1–3 s), so <b>the two images are 1–2 s apart</b> — a whole round is committed to the UI at once, but the frames themselves are not simultaneous. <b>When you don't need it: fold this card / switch tabs / deselect cameras / choose Off — no requests at all</b>. This only stops the web preview; the collector keeps sampling and writing to disk (independent paths)",
+  "snap.stop": "Stop stream",
+  "snap.paused": "Paused",
+  "snap.stopped": "Stream stopped — preview only; no more requests to the vehicle. The collector is unaffected (it keeps sampling, detecting and writing raw/results/saved). Press \"Refresh now\" for a single frame",
+  "snap.auto_paused": "No live frame {n} times in a row — auto-refresh paused (one probe every 60s) to avoid idle retries; resumes automatically when the source recovers",
+  "snap.cost_ring": "Ring frame: reads the local raw/ file on GOS — no bandwidth used on the vehicle",
+  "snap.cost_live": "Live grab: each refresh opens a new RTSP session to the AOS MediaMTX (the vehicle encodes/decodes), hence the slower cadence",
   "snap.refreshing": "Refreshing…",
   "snap.ring": "LIVE",
   "snap.ring_msg": "Sampler current frame · {age} ago (collector running = detector input)",
@@ -682,7 +793,6 @@ button.sm{font-size:12px;padding:3px 10px}
   "snap.down_idle": "Collector stopped, and the RTSP source is unreachable too",
   "snap.down_msg": "⚠️ {who} ({src}): only showing a frame from {age} ago. The video chain is not publishing (camera not up on AOS / USB disconnected / video service down) — it returns to live automatically.",
   "snap.down_msg2": "⚠️ RTSP source not responding, no frame at all ({cam}). The video chain is not publishing (camera not up on AOS / USB disconnected / video service down) — it returns to live automatically.",
-  "snap.fail": "Grab failed",
   "tl.title": "Image timeline",
   "tl.ts": "Time (real clock)",
   "tl.cam": "Camera / frame",
@@ -734,10 +844,46 @@ button.sm{font-size:12px;padding:3px 10px}
   "cfg.nms": "nms_thresh",
   "cfg.note": "Writes m20-ai-detect.env; takes effect immediately when the collector is running (it restarts); otherwise applies the next time it starts",
   "cfg.save": "Save & apply",
-  "cam.title": "Cameras & capture",
-  "cam.front": "Front camera video1 (rtsp://10.21.31.103:8554/video1)",
-  "cam.back": "Rear camera video2",
-  "cam.fps": "Sampling rate (fps)",
+  "cam.title": "Video sources & capture",
+  "cam.note": "Each source is written as <code>name = type://address</code> (rtsp / rtmp / http(MJPEG) / device (local camera) / file playback). Changes are written to the env key <code>M20AI_SOURCES</code>: saved while the collector runs, it restarts automatically; otherwise they apply the next time you start it. <b>Local cameras</b> (device://) expand to a command line containing an upstream forbidden token, so they are only accepted after you explicitly set <code>M20AI_ALLOW_LOCAL_DEVICE=1</code> in the env.",
+  "cam.add_name": "New source name (letters/digits/_-, becomes the raw/ sub-directory)",
+  "cam.add_name_ph": "gate",
+  "cam.add_uri": "Address (rtsp:// / rtmp:// / http://…mjpg / device:///dev/video0 / file://…)",
+  "cam.add_uri_ph": "rtsp://host:8554/path",
+  "cam.add_fps": "empty = use the global rate",
+  "cam.add_fps_ph": "fps optional",
+  "cam.add": "Add & apply",
+  "cam.scan": "Scan for sources",
+  "cam.scan_hint": "Check the candidates you want, then click Add selected. verdict=ok means a frame was grabbed; unresolved means it connected but needs credentials/opt-in (e.g. a local camera).",
+  "cam.scan_add": "Add selected",
+  "cam.col_name": "Name",
+  "cam.col_type": "Type",
+  "cam.col_uri": "Address",
+  "cam.col_state": "State",
+  "cam.on": "enabled",
+  "cam.off": "disabled",
+  "cam.btn_disable": "Disable",
+  "cam.btn_enable": "Enable",
+  "cam.btn_del": "Delete",
+  "cam.empty": "No video source yet — add the first one with the form below",
+  "cam.scanning": "Scanning… (may take tens of seconds depending on scope)",
+  "cam.scan_empty": "No candidates found (try scope=host:<ip> to target a host)",
+  "cam.scan_fail": "Scan failed: {e}",
+  "cam.scan_picked": "Added {n} source(s)",
+  "cam.scan_checked": "Check at least one candidate first",
+  "cam.added": "Added {name}",
+  "cam.removed": "Deleted {name}",
+  "cam.toggled_on": "Enabled {name}",
+  "cam.toggled_off": "Disabled {name}",
+  "cam.reqfail": "Request failed: {e}",
+  "cam.fps_saved": "Global rate saved",
+  "cam.vd_ok": "ok",
+  "cam.vd_auth_required": "auth required",
+  "cam.vd_timeout": "timeout",
+  "cam.vd_refused": "refused",
+  "cam.vd_no_frame": "no frame",
+  "cam.vd_unresolved": "needs opt-in",
+  "cam.fps": "Sampling rate (fps, global default)",
   "alert.title": "Watch targets",
   "alert.labels": "Watch targets (English labels, comma-separated; empty = save nothing)",
   "alert.stats_empty": "Today's detections: none yet (enable the collector and produce detections to see clickable labels)",
@@ -898,6 +1044,7 @@ function setFold(card, collapsed, remember){
   }
   if (remember === false) return;
   try { localStorage.setItem(FOLD_KEY + "-" + foldId(card), collapsed ? "1" : "0"); } catch (e) {}
+  if (foldId(card) === "snap"){ collapsed ? snapIdle() : snapSchedule(); }
 }
 function initFolds(){
   document.querySelectorAll(".card[data-fold]").forEach(function(card){
@@ -936,8 +1083,7 @@ function setLang(l){
   applyI18n();
   refreshAll();
 }
-initFolds();
-applyI18n();
+/* 初始化延后到脚本末尾（snap 状态变量赋值之后）——见文件底部 bootstrap */
 function token(){ return localStorage.getItem(TOKEN_KEY) || ""; }
 function api(path, opts){
   opts = opts || {};
@@ -1054,8 +1200,6 @@ function loadConfig(){
     el("fps").value = d.effective.fps;
     var names = d.effective.cameras.map(function(c){ return c.name; });
     snapFillCams(names);
-    el("en-f").checked = names.indexOf("front") >= 0;
-    el("en-b").checked = names.indexOf("back") >= 0;
     el("labels").value = d.effective.alert_labels.join(",");
     el("score").value = d.effective.alert_score;
     el("score-v").textContent = d.effective.alert_score;
@@ -1075,15 +1219,153 @@ function saveConfig(){
     statusLine("cfg-status", d.detail, true); loadConfig(); loadStatus();
   }).catch(function(e){ statusLine("cfg-status", String(e), false); });
 }
-function saveCameras(){
-  var updates = {
-    M20AI_ENABLE_F: el("en-f").checked ? "1" : "0",
-    M20AI_ENABLE_B: el("en-b").checked ? "1" : "0",
-    M20AI_FPS: el("fps").value
-  };
-  jpost("/api/config", {updates: updates}).then(function(d){
-    statusLine("cam-status", d.detail, true); loadConfig(); loadStatus();
-  }).catch(function(e){ statusLine("cam-status", String(e), false); });
+/* ---------- 视频源管理（ADR-016） ---------- */
+var SOURCES = [];
+var SCAN_CANDS = [];
+function loadSources(){
+  api("/api/sources").then(function(d){
+    SOURCES = d.sources || [];
+    renderSources();
+  }).catch(function(){});
+}
+function verdictText(v){
+  if (v === "ok") return t("cam.vd_ok");
+  if (v === "auth_required") return t("cam.vd_auth_required");
+  if (v === "timeout") return t("cam.vd_timeout");
+  if (v === "refused") return t("cam.vd_refused");
+  if (v === "no_frame") return t("cam.vd_no_frame");
+  return t("cam.vd_unresolved");
+}
+function renderSources(){
+  var box = el("src-list");
+  if (!SOURCES.length){
+    box.innerHTML = '<div class="note" style="padding:12px">' + esc(t("cam.empty")) + "</div>";
+    return;
+  }
+  var html = '<div style="border:0.5px solid var(--border);border-radius:8px">'
+    + '<div class="fbrow" style="color:var(--text2);font-size:11px">'
+    + '<span class="nm">' + esc(t("cam.col_name")) + "</span>"
+    + "<span>" + esc(t("cam.col_type")) + "</span>"
+    + '<span class="nm">' + esc(t("cam.col_uri")) + "</span>"
+    + "<span>" + esc(t("cam.col_state")) + "</span>"
+    + "<span></span></div>";
+  SOURCES.forEach(function(s){
+    var state = s.enabled ? '<span class="tag ok">' + esc(t("cam.on")) + "</span>"
+                          : '<span class="tag">' + esc(t("cam.off")) + "</span>";
+    var toggle = s.enabled
+      ? '<button class="sm" onclick="toggleSource(\'' + esc(s.name) + '\', false)">' + esc(t("cam.btn_disable")) + "</button>"
+      : '<button class="sm" onclick="toggleSource(\'' + esc(s.name) + '\', true)">' + esc(t("cam.btn_enable")) + "</button>";
+    var fps = s.fps == null ? "" : " · " + esc(s.fps) + "fps";
+    html += '<div class="fbrow">'
+      + '<span class="nm" style="font-weight:500">' + esc(s.name) + "</span>"
+      + '<span class="tag">' + esc(s.type) + "</span>"
+      + '<span class="nm" style="font-weight:400">' + esc(s.uri) + fps + "</span>"
+      + state
+      + '<span class="row">' + toggle
+      + '<button class="sm danger" onclick="removeSource(\'' + esc(s.name) + '\')">' + esc(t("cam.btn_del")) + "</button></span>"
+      + "</div>";
+  });
+  box.innerHTML = html + "</div>";
+}
+function afterSourceChange(d, msg){
+  if (d && d.ok === false){
+    statusLine("cam-status", d.error || String(msg), false);
+    return;
+  }
+  /* detail 以「已写入 env」开头，与 msg（已添加/已停用/…）语义重复：剥掉前缀
+     再拼接，把重启说明（已重启采集 / 采集未运行 / 未能确认状态）带到界面上。 */
+  var detail = ((d && d.detail) || "").replace(/^(已写入 env|Saved to env)/, "");
+  statusLine("cam-status", (msg || "") + detail, true);
+  loadSources(); loadConfig(); loadStatus();
+}
+function sourceFail(e){ statusLine("cam-status", t("cam.reqfail", {e: String(e)}), false); }
+function addSource(){
+  var name = el("src-name").value.trim(), uri = el("src-uri").value.trim();
+  var fps = el("src-fps").value.trim();
+  var body = {action: "add", name: name, uri: uri};
+  if (fps) body.fps = parseFloat(fps);
+  jpost("/api/sources", body).then(function(d){
+    el("src-name").value = ""; el("src-uri").value = ""; el("src-fps").value = "";
+    afterSourceChange(d, t("cam.added", {name: name}));
+  }).catch(sourceFail);
+}
+function toggleSource(name, on){
+  jpost("/api/sources", {action: on ? "enable" : "disable", name: name}).then(function(d){
+    var msg = on ? t("cam.toggled_on", {name: name}) : t("cam.toggled_off", {name: name});
+    afterSourceChange(d, msg);
+  }).catch(sourceFail);
+}
+function removeSource(name){
+  jpost("/api/sources", {action: "remove", name: name}).then(function(d){
+    afterSourceChange(d, t("cam.removed", {name: name}));
+  }).catch(sourceFail);
+}
+function saveGlobalFps(){
+  jpost("/api/config", {updates: {M20AI_FPS: el("fps").value}}).then(function(d){
+    var detail = ((d && d.detail) || "").replace(/^(已写入 env|Saved to env)/, "");
+    statusLine("cam-status", t("cam.fps_saved") + detail, true);
+    loadConfig(); loadStatus();
+  }).catch(sourceFail);
+}
+function scanSources(){
+  var note = el("src-scan-status");
+  el("src-scan").style.display = "block";
+  el("src-scan-list").innerHTML = "";
+  note.textContent = "";
+  statusLine("cam-status", t("cam.scanning"), true);
+  jpost("/api/sources/discover", {scope: "local", timeout_s: 3, budget_s: 20}).then(function(d){
+    SCAN_CANDS = d.candidates || [];
+    renderScan();
+    if (!SCAN_CANDS.length){
+      note.textContent = t("cam.scan_empty");
+      statusLine("cam-status", "", null);
+    } else {
+      statusLine("cam-status", "", null);
+    }
+  }).catch(function(e){ statusLine("cam-status", t("cam.scan_fail", {e: String(e)}), false); });
+}
+function renderScan(){
+  var box = el("src-scan-list");
+  if (!SCAN_CANDS.length){ box.innerHTML = ""; return; }
+  var html = "";
+  SCAN_CANDS.forEach(function(c, i){
+    var cls = c.verdict === "ok" ? "tag ok" : "tag";
+    html += '<label class="fbrow" style="cursor:pointer">'
+      + '<input type="checkbox" class="src-scan-cb" data-i="' + i + '" style="width:auto">'
+      + '<span class="nm" style="font-weight:500">' + esc(c.name) + "</span>"
+      + '<span class="' + cls + '">' + esc(verdictText(c.verdict)) + "</span>"
+      + '<span class="nm" style="font-weight:400">' + esc(c.uri) + "</span>"
+      + '<span class="meta">' + esc(c.via || "") + (c.detail ? " · " + esc(c.detail) : "") + "</span>"
+      + "</label>";
+  });
+  box.innerHTML = html;
+}
+function addScanned(){
+  var picked = [];
+  document.querySelectorAll(".src-scan-cb").forEach(function(cb){
+    if (cb.checked) picked.push(SCAN_CANDS[parseInt(cb.getAttribute("data-i"), 10)]);
+  });
+  var note = el("src-scan-status");
+  if (!picked.length){ note.textContent = t("cam.scan_checked"); return; }
+  var done = 0, fail = 0, lastErr = "";
+  function checkDone(){
+    if (done + fail < picked.length) return;
+    if (fail){
+      note.textContent = t("cam.scan_fail", {e: lastErr});
+      statusLine("cam-status", t("cam.scan_fail", {e: lastErr}), false);
+    } else {
+      note.textContent = t("cam.scan_picked", {n: done});
+      statusLine("cam-status", t("cam.scan_picked", {n: done}), true);
+      el("src-scan").style.display = "none";
+    }
+    loadSources(); loadConfig(); loadStatus();
+  }
+  picked.forEach(function(c){
+    jpost("/api/sources", {action: "add", name: c.name, uri: c.uri}).then(function(d){
+      if (d && d.ok === false){ fail++; lastErr = d.error || ""; } else { done++; }
+      checkDone();
+    }).catch(function(e){ fail++; lastErr = String(e); checkDone(); });
+  });
 }
 function saveAlerts(){
   var updates = {M20AI_ALERT_LABELS: el("labels").value.trim(), M20AI_ALERT_SCORE: el("score").value};
@@ -1583,82 +1865,297 @@ function fbStatus(msg, isErr){
   el.className = "statusline" + (isErr ? " err" : "");
 }
 
-/* ---------- 相机画面（ADR-012：raw 最新帧优先，ffmpeg 即时抓帧兜底） ---------- */
-var SNAP_BUSY = false;
+/* ---------- 相机画面（ADR-012：raw 最新帧优先，ffmpeg 即时抓帧兜底；多相机 + 可调频率） ---------- */
+/* 2026-10-18 增强：① 相机多选（前/后/都选/都不选）；② 刷新频率可调（自适应 / 1~60s / 关闭）；
+ * ③ 成本可见：ring=读本地零带宽，live=每路每次一条 RTSP 会话；④ 折叠/后台/未选相机 = 0 请求。 */
+var SNAP_BUSY = {}, SNAP_FAILS = 0, SNAP_LAST_SOURCE = null, SNAP_TIMER = null;
+/* 轮次栅栏（2026-10-18）：多相机必须"同批出发、同批返回"，否则各自按响应快慢
+   独立刷新，看起来永远不同步。上一轮没抓完就整轮跳过，不做半轮。 */
+var SNAP_ROUND_ID = 0, SNAP_ROUND_ACTIVE = false, SNAP_ROUND_DONE = 0, SNAP_ROUND_N = 0;
+var SNAP_ROUND_GUARD = null;
+/* 待上屏结果：整轮到齐才一次性渲染，避免"谁先回来谁先跳"（多相机观感不同步） */
+var SNAP_PENDING = {};
+var SNAP_CAMS_ALL = [], SNAP_SEL = [], SNAP_EVERY = "auto", SNAP_STATE = {};
+var SNAP_KEY_SEL = "m20ai-snap-cams", SNAP_KEY_EVERY = "m20ai-snap-every";
+var SNAP_RING_MS = 3000, SNAP_LIVE_MS = 10000, SNAP_FAIL_MAX = 3, SNAP_PROBE_MS = 60000;
 var SVC_ON = false;   /* 采集（采样器）是否在运行——loadStatus 每 5s 刷新，供视频源告警文案分流 */
-function snapFillCams(names){
-  var sel = el("snap-cam");
-  if (!sel || sel.dataset.names === names.join(",")) return;
-  sel.dataset.names = names.join(",");
-  sel.innerHTML = "";
-  names.forEach(function(n){
-    var o = document.createElement("option");
-    o.value = n; o.textContent = n;
-    sel.appendChild(o);
-  });
-}
-function snapTag(text, cls){
-  var t = el("snap-tag");
-  t.textContent = text;
-  t.className = "tag" + (cls ? " " + cls : "");
-}
-function snapLoad(){
-  if (SNAP_BUSY) return;
-  SNAP_BUSY = true;
-  var cam = el("snap-cam").value || "";
-  snapTag(t("snap.refreshing"), "");
-  api("/api/snapshot" + (cam ? "?cam=" + encodeURIComponent(cam) : "")).then(function(d){
-    SNAP_BUSY = false;
-    var img = el("snap-img");
-    if (d && d.ok){
-      img.src = d.image;
-      img.style.display = "block";
-      img.style.opacity = "1";
-      el("snap-src").textContent = d.cam + " · " + d.src + (d.frame ? " · " + d.frame : "");
-      if (d.source === "ring"){
-        snapTag(t("snap.ring"), "ok");
-        statusLine("snap-status", t("snap.ring_msg", {age: humanAge((d.age_s || 0) * 1000)}), true);
-      } else if (d.source === "live"){
-        snapTag(t("snap.live"), "ok");
-        statusLine("snap-status", t("snap.live_msg"), true);
-      } else {
-        snapSourceDown(d);
-      }
-    } else {
-      snapSourceDown(null);
-    }
-  }).catch(function(e){
-    SNAP_BUSY = false;
-    snapTag(t("snap.fail"), "err");
-    statusLine("snap-status", String(e && e.message || e), false);
-  });
-}
 
-/* 视频源不可达：RTSP 抓帧失败（ADR-012，2026-10-17 修订）。
- * 旧行为只标"已定格"（琥珀色小字）——用户会把定格旧帧误当成"画面不动/相机卡住"。
- * 现在：红色徽标 + 旧帧置暗 + 按采集开关状态给出不同的排查指向；视频链恢复后自动回到实时。 */
-function snapSourceDown(d){
-  var img = el("snap-img");
-  snapTag(t("snap.down"), "err");
-  if (d && d.ok){
-    img.src = d.image;
-    img.style.display = "block";
-    img.style.opacity = "0.4";   /* 置暗：明确"这不是实时画面" */
-    var who = SVC_ON ? t("snap.down_run") : t("snap.down_idle");
-    statusLine("snap-status", t("snap.down_msg", {who: who, src: d.src, age: humanAge((d.age_s || 0) * 1000)}), false);
-  } else {
-    img.style.display = "none";
-    img.style.opacity = "1";
-    statusLine("snap-status", t("snap.down_msg2", {cam: el("snap-cam").value || ""}), false);
+function snapFillCams(names){
+  SNAP_CAMS_ALL = (names || []).slice();
+  var stored = null;
+  try { stored = JSON.parse(localStorage.getItem(SNAP_KEY_SEL) || "null"); } catch (e) {}
+  if (!Array.isArray(stored)) stored = SNAP_CAMS_ALL.slice();   /* 首次：默认全选 */
+  SNAP_SEL = stored.filter(function(n){ return SNAP_CAMS_ALL.indexOf(n) >= 0; });
+  renderSnapChips();
+  renderSnapGrid(true);
+  if (!SNAP_SEL.length && SNAP_CAMS_ALL.length){
+    statusLine("snap-status", t("snap.no_cam"), true);
   }
 }
+function renderSnapChips(){
+  var box = el("snap-cams");
+  if (!box) return;
+  box.innerHTML = "";
+  SNAP_CAMS_ALL.forEach(function(n){
+    var s = document.createElement("span");
+    s.className = "camchip" + (SNAP_SEL.indexOf(n) >= 0 ? " on" : "");
+    s.textContent = n;
+    s.onclick = function(){ snapToggleCam(n); };
+    box.appendChild(s);
+  });
+}
+function snapToggleCam(n){
+  var i = SNAP_SEL.indexOf(n);
+  if (i >= 0) SNAP_SEL.splice(i, 1); else SNAP_SEL.push(n);
+  SNAP_SEL.sort(function(a, b){ return SNAP_CAMS_ALL.indexOf(a) - SNAP_CAMS_ALL.indexOf(b); });
+  try { localStorage.setItem(SNAP_KEY_SEL, JSON.stringify(SNAP_SEL)); } catch (e) {}
+  renderSnapChips();
+  renderSnapGrid(false);
+  if (!SNAP_SEL.length){
+    snapIdle();
+    snapTag(t("snap.paused"), "");
+    statusLine("snap-status", t("snap.no_cam"), true);
+    return;
+  }
+  snapLoad(true);
+  snapSchedule();
+}
+function renderSnapGrid(force){
+  var grid = el("snap-grid");
+  if (!grid) return;
+  if (!force && grid.dataset.sel === SNAP_SEL.join(",")) return;  /* 结构没变就不重建，避免图片闪烁 */
+  grid.dataset.sel = SNAP_SEL.join(",");
+  grid.innerHTML = "";
+  SNAP_SEL.forEach(function(cam){
+    var fig = document.createElement("figure");
+    fig.id = "snapfig-" + cam;
+    var img = document.createElement("img");
+    img.id = "snapimg-" + cam;
+    img.alt = cam;
+    img.style.display = "none";
+    var cap = document.createElement("figcaption");
+    var a = document.createElement("span"); a.textContent = cam;
+    var b = document.createElement("span"); b.id = "snapcap-" + cam; b.textContent = "–";
+    cap.appendChild(a); cap.appendChild(b);
+    fig.appendChild(img); fig.appendChild(cap);
+    grid.appendChild(fig);
+  });
+}
 
-function refreshAll(){ loadStatus(); loadConfig(); loadRetention(); loadLogs(); loadRecent(); loadTimeline(); fbLoad(); snapLoad(); }
+/* ---- 刷新频率（用户可选；auto = 按来源自适应） ---- */
+function snapEveryInit(){
+  var v = null;
+  try { v = localStorage.getItem(SNAP_KEY_EVERY); } catch (e) {}
+  var sel = el("snap-every");
+  if (!sel) return;
+  sel.value = v || "auto";
+  if (!sel.value) sel.value = "auto";
+  SNAP_EVERY = sel.value;
+  drawSnapCost();
+}
+function snapEveryChange(){
+  SNAP_EVERY = el("snap-every").value;
+  try { localStorage.setItem(SNAP_KEY_EVERY, SNAP_EVERY); } catch (e) {}
+  drawSnapCost();
+  if (SNAP_EVERY === "0"){
+    snapIdle();
+    snapTag(t("snap.paused"), "");
+    statusLine("snap-status", t("snap.stopped"), true);
+    return;
+  }
+  if (!SNAP_SEL.length){ statusLine("snap-status", t("snap.no_cam"), true); return; }
+  snapSchedule();
+  snapLoad(true);
+}
+function snapEveryMs(){
+  if (SNAP_EVERY === "auto") return 0;    /* 0 = 交给自适应 */
+  var n = parseInt(SNAP_EVERY, 10);
+  return (isNaN(n) || n < 0) ? 0 : n;
+}
+function snapDelay(){
+  var ms = snapEveryMs();
+  if (SNAP_EVERY !== "auto") return ms > 0 ? ms : 0;
+  if (SNAP_FAILS >= SNAP_FAIL_MAX) return SNAP_PROBE_MS;
+  return (SNAP_LAST_SOURCE === "live") ? SNAP_LIVE_MS : SNAP_RING_MS;
+}
+function snapAutoDue(){
+  if (!SNAP_SEL.length) return false;                    /* 一台都没选：不拉流 */
+  if (SNAP_EVERY === "0") return false;                  /* 用户选「关闭（仅手动）」 */
+  if (document.hidden || isFolded("snap")) return false;  /* 后台 / 折叠：完全不拉 */
+  return true;
+}
+function snapSchedule(){
+  if (SNAP_TIMER) { clearTimeout(SNAP_TIMER); SNAP_TIMER = null; }
+  var d = snapDelay();
+  if (!snapAutoDue() || !d){ snapIdle(); return; }
+  SNAP_TIMER = setTimeout(function(){
+    /* try/finally：snapLoad 内部任何异常都不允许打断定时器链
+       （v0.8.11 前是裸调用，一次异常就永久不再刷新） */
+    try { if (snapAutoDue()) snapLoad(false); } catch (e) {} finally { snapSchedule(); }
+  }, d);
+}
+function snapIdle(){
+  if (SNAP_TIMER) { clearTimeout(SNAP_TIMER); SNAP_TIMER = null; }
+}
+/* 成本提示：live 来源 + 多选/短间隔时提醒"每路每次都建 RTSP 会话" */
+function drawSnapCost(){
+  var n = SNAP_SEL.length;
+  var ms = snapEveryMs();
+  var hint = "";
+  if (SNAP_LAST_SOURCE === "live" && (SNAP_EVERY === "auto" ? false : ms > 0 && ms < 10000)){
+    hint = t("snap.cost_warn", {n: n, every: ms / 1000});
+  }
+  var s = el("snap-src");
+  if (s) s.title = hint || (SNAP_LAST_SOURCE === "live" ? t("snap.cost_live") : t("snap.cost_ring"));
+  if (hint) statusLine("snap-status", hint, false);
+}
+function snapTag(text, cls){
+  var tag = el("snap-tag");
+  if (!tag) return;
+  tag.textContent = text;
+  tag.className = "tag" + (cls ? " " + cls : "");
+}
+
+function snapLoad(force){
+  try { snapLoadInner(force); } catch (e) { SNAP_ROUND_ACTIVE = false; }
+}
+function snapLoadInner(force){
+  if (!SNAP_SEL.length) return;
+  if (SNAP_ROUND_ACTIVE && !force) return;   /* 上一轮未完成：整轮跳过，避免半轮/错相 */
+  SNAP_ROUND_ID++;
+  SNAP_ROUND_ACTIVE = true;
+  SNAP_ROUND_DONE = 0;
+  SNAP_ROUND_N = SNAP_SEL.length;
+  snapTag(t("snap.refreshing"), "");
+  if (SNAP_ROUND_GUARD) clearTimeout(SNAP_ROUND_GUARD);
+  /* 保险：任何异常导致回调丢失时，20s 后强制结束本轮，别把自动刷新永久卡死 */
+  SNAP_ROUND_GUARD = setTimeout(function(){ SNAP_ROUND_ACTIVE = false; }, 20000);
+  SNAP_SEL.forEach(function(cam){ snapLoadOne(cam); });
+}
+/* 每路完成（无论成功失败）都在这里报到；全部到齐才算整轮结束 */
+function snapRoundDone(){
+  SNAP_ROUND_DONE++;
+  if (SNAP_ROUND_DONE >= SNAP_ROUND_N){
+    SNAP_ROUND_ACTIVE = false;
+    if (SNAP_ROUND_GUARD) { clearTimeout(SNAP_ROUND_GUARD); SNAP_ROUND_GUARD = null; }
+    /* 整轮到齐 → 一次性上屏：两路图片同时变化，视觉上才是"一起刷新" */
+    SNAP_SEL.forEach(function(c){
+      var p = SNAP_PENDING[c];
+      if (p){ SNAP_STATE[c] = p; renderSnapOne(c, p); }
+    });
+    snapAggregate();        /* 统一汇总：避免"先回来的那路"把徽标改成单路状态 */
+  }
+}
+function snapLoadOne(cam){
+  if (SNAP_BUSY[cam]){ snapRoundDone(); return; }   /* 该路上一轮还卡着：本轮跳过但计为完成，避免整轮悬挂 */
+  SNAP_BUSY[cam] = true;
+  api("/api/snapshot?cam=" + encodeURIComponent(cam)).then(function(d){
+    SNAP_BUSY[cam] = false;
+    if (d && d.ok) snapApply(cam, d); else snapFail(cam, null);
+    snapRoundDone();
+  }).catch(function(e){
+    SNAP_BUSY[cam] = false;
+    snapFail(cam, e);
+    snapRoundDone();
+  });
+}
+function snapApply(cam, d){
+  var down = (d.source !== "ring" && d.source !== "live");
+  SNAP_PENDING[cam] = {ok: true, down: down, img: d.image, source: d.source,
+                       age: d.age_s, frame: d.frame, src: d.src, ts: d.ts};
+}
+function snapFail(cam, e){
+  SNAP_PENDING[cam] = {ok: false, down: true};
+}
+/* 单路渲染（由整轮结束时统一调用） */
+function renderSnapOne(cam, st){
+  var img = el("snapimg-" + cam);
+  if (img && st.ok && st.img){ img.src = st.img; img.style.display = "block"; }
+  var fig = el("snapfig-" + cam);
+  if (fig) fig.className = st.down ? "dim" : "";
+  snapCaption(cam);
+}
+function snapCaption(cam){
+  var c = el("snapcap-" + cam);
+  if (!c) return;
+  var st = SNAP_STATE[cam];
+  if (!st || !st.ok){ c.textContent = t("snap.cap_fail"); return; }
+  var hhmmss = st.ts ? new Date(st.ts * 1000).toTimeString().slice(0, 8) : "";
+  var tail = hhmmss ? " · " + hhmmss : "";
+  if (st.source === "ring") c.textContent = t("snap.cap_ring", {age: humanAge((st.age || 0) * 1000)}) + tail;
+  else if (st.source === "live") c.textContent = t("snap.cap_live") + tail;
+  else c.textContent = t("snap.cap_stale", {age: humanAge((st.age || 0) * 1000)}) + tail;
+}
+/* 汇总：多路里只要有一路拿不到实时帧就标红（但只有全灭才计入退避失败） */
+function snapAggregate(){
+  var cams = SNAP_SEL;
+  if (!cams.length) return;
+  var downs = 0, lives = 0, rings = 0;
+  cams.forEach(function(c){
+    var st = SNAP_STATE[c];
+    if (!st || !st.ok || st.down) downs++;
+    else if (st.source === "live") lives++;
+    else rings++;
+  });
+  var allDown = (downs === cams.length);
+  SNAP_FAILS = allDown ? (SNAP_FAILS + 1) : 0;
+  SNAP_LAST_SOURCE = lives ? "live" : (rings ? "ring" : null);
+  drawSnapCost();
+  if (allDown){
+    snapTag(t("snap.down"), "err");
+    var st0 = SNAP_STATE[cams[0]] || {};
+    if (SNAP_EVERY === "auto" && SNAP_FAILS >= SNAP_FAIL_MAX){
+      /* 自适应模式下连续失败 → 已退避到 60s 探测，明确告知（避免误以为还在正常刷新） */
+      statusLine("snap-status", t("snap.auto_paused", {n: cams.length}), false);
+    } else if (st0.ok && st0.age != null){
+      /* 还有旧帧可看：按采集开关状态给出排查指向（与单相机时代一致） */
+      var who = SVC_ON ? t("snap.down_run") : t("snap.down_idle");
+      statusLine("snap-status", t("snap.down_msg", {who: who, src: st0.src || "–", age: humanAge((st0.age || 0) * 1000)}), false);
+    } else {
+      statusLine("snap-status", t("snap.down_msg2", {cam: cams.join(listSep())}), false);
+    }
+  } else if (downs){
+    snapTag(t("snap.partial"), "err");
+    statusLine("snap-status", t("snap.partial_msg", {ok: cams.length - downs, n: cams.length}), false);
+  } else if (lives){
+    snapTag(t("snap.live"), "ok");
+    statusLine("snap-status", lives === 1 ? t("snap.live_msg") : t("snap.live_multi", {n: lives}), true);
+  } else {
+    snapTag(t("snap.ring"), "ok");
+    var st0 = SNAP_STATE[cams[0]] || {};
+    statusLine("snap-status", t("snap.ring_msg", {age: humanAge((st0.age || 0) * 1000)}), true);
+  }
+}
+/* 一键停止拉流：把频率切到「关闭（仅手动）」；「立即刷新」仍可按需取帧 */
+function stopSnap(){
+  var sel = el("snap-every");
+  if (sel) sel.value = "0";
+  SNAP_EVERY = "0";
+  try { localStorage.setItem(SNAP_KEY_EVERY, "0"); } catch (e) {}
+  snapIdle();
+  snapTag(t("snap.paused"), "");
+  statusLine("snap-status", t("snap.stopped"), true);
+}
+
+/* 切走标签页时 snapSchedule 会停表（省资源），切回来必须显式唤醒——
+   否则递归 setTimeout 链断了，画面会永久定格（2026-10-18 实测 bug）。 */
+document.addEventListener("visibilitychange", function(){ if (!document.hidden) snapSchedule(); });
+window.addEventListener("focus", function(){ snapSchedule(); });
+window.addEventListener("pageshow", function(){ snapSchedule(); });
+
+/* ---- bootstrap（必须放在所有 var 赋值之后：applyI18n→setFold→snapSchedule 会读 SNAP_SEL） ---- */
+snapEveryInit();
+initFolds();
+applyI18n();
+
+function refreshAll(){ loadStatus(); loadConfig(); loadSources(); loadRetention(); loadLogs(); loadRecent(); loadTimeline(); fbLoad(); snapLoad(); }
 refreshAll();
 setInterval(function(){ loadStatus(); if (!isFolded("recent")) loadRecent(); }, 5000);
 setInterval(function(){ if (!document.hidden && !isFolded("tl")) loadTimeline(); }, 15000);
 setInterval(function(){ if (!isFolded("log") && el("auto-refresh").checked) loadLogs(); }, 4000);
-setInterval(function(){ if (!document.hidden && !isFolded("snap") && el("snap-auto").checked) snapLoad(); }, 3000);
+/* 相机画面：节奏由 snapSchedule() 自适应管理（不再固定 3s）——折叠/后台/用户关掉自动
+   刷新 = 完全不拉流；live 来源放慢到 10s；连续失败退避到 60s 探测（ADR-012）。 */
+snapSchedule();
 </script>
 </body>
 </html>

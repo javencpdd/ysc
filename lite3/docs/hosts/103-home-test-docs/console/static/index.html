@@ -1,0 +1,2704 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lite3 yolo8 控制台</title>
+<!--
+  Lite3 yolo8 Web 控制台 —— 单文件前端（计划书 v2.1 §7 / P1 + §18 P1.5）
+  零依赖零构建：原生 JS + CSS，由 server.py 伺服（/static/index.html）。
+
+  页面结构：
+    1. 登录页：token 输入 → 浏览器存 HttpOnly Cookie 会话；token 另存 sessionStorage
+       （写接口双因子需要 X-Yolo-Token 头，见 §6.5；sessionStorage 而非 localStorage
+         是为了关页面即丢，降低持久暴露面）
+    2. 徽标墙：yolo / rosbridge / worker / console 自身 / 主机指标 / 会话数 / 白名单
+    3. 服务卡片：启停 + 重启（危险操作二次确认；per-target in-flight 锁防重复点击）
+    4. 配置：只读树 + 「编辑配置」弹层（P1.5：视频源/检测/抓拍/推流/模型路径在线改，
+       保存后自动重启 yolo 生效；console 段不在可写范围，提示手改文件）
+    5. ROS2 话题订阅卡（P1.5：rosbridge 连接串 + 话题清单，供 Foxglove 订阅）
+    6. 日志：tail（GET /api/logs）
+
+  轮询纪律（沿用 M20 ADR-020/021 的 flowWanted 思路）：
+    仅当 页面可见 时才轮询；document.hidden 时停发请求，避免后台烧 CPU。
+    话题清单不走 1s 轮询（ros2 topic list 约 1~2s），只在登录/服务动作后刷新一次。
+-->
+<style>
+  :root{
+    --bg:#0f1419; --panel:#171e26; --panel2:#1b242f; --border:#2a3441;
+    --text:#d7dee8; --muted:#8b98a8; --faint:#5c6875;
+    --accent:#4da3ff; --ok:#34d399; --warn:#fbbf24; --err:#f87171;
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.55 system-ui,-apple-system,"Segoe UI","Noto Sans CJK SC",sans-serif;}
+  button{font:inherit;color:inherit;background:var(--panel2);border:1px solid var(--border);
+         border-radius:6px;padding:6px 14px;cursor:pointer;transition:border-color .15s,background .15s;}
+  button:hover:not(:disabled){border-color:var(--accent);}
+  button:disabled{opacity:.45;cursor:not-allowed;}
+  button.primary{background:#1d4f7f;border-color:#2f6ea8;}
+  button.danger{background:#4a1f24;border-color:#7f3038;}
+  button.danger:hover:not(:disabled){border-color:var(--err);}
+  input,select{font:inherit;color:var(--text);background:#10161d;border:1px solid var(--border);
+               border-radius:6px;padding:7px 10px;}
+  input:focus,select:focus{outline:none;border-color:var(--accent);}
+  code,.mono{font-family:var(--mono);}
+
+  /* ---------- 登录页 ---------- */
+  #login-view{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+  .login-card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--border);
+              border-radius:12px;padding:28px;}
+  .login-card h1{margin:0 0 4px;font-size:18px;}
+  .login-card .sub{color:var(--muted);font-size:12.5px;margin-bottom:20px;}
+  .login-card label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:6px;}
+  .login-card input{width:100%;font-family:var(--mono);letter-spacing:.5px;}
+  .login-card button{width:100%;margin-top:14px;padding:9px;}
+  .login-err{min-height:20px;margin-top:10px;font-size:12.5px;color:var(--err);}
+  .login-hint{margin-top:16px;padding-top:14px;border-top:1px solid var(--border);
+              font-size:12px;color:var(--faint);}
+
+  /* ---------- 主界面 ---------- */
+  /* P4.7：1180 太窄，三列下每列只有 370，配置树/日志都挤；放宽到 1400 */
+  #app-view{max-width:1400px;margin:0 auto;padding:14px 20px 56px;}
+  /* P4.7：顶栏吸顶 —— 页面变长后「全部折叠 / 退出登录」始终可达 */
+  header.top{position:sticky;top:0;z-index:30;background:var(--bg);
+             display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
+             margin:0 0 12px;padding:12px 0 10px;border-bottom:1px solid var(--border);}
+  header.top h1{margin:0;font-size:17px;}
+  header.top .meta{color:var(--faint);font-size:12px;font-family:var(--mono);}
+  header.top .spacer{flex:1;}
+  .linkish{background:none;border:none;color:var(--muted);padding:2px 6px;font-size:12.5px;}
+  .linkish:hover{color:var(--text);border:none;}
+
+  .badges{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
+  .badge{display:inline-flex;align-items:center;gap:7px;background:var(--panel);
+         border:1px solid var(--border);border-radius:999px;padding:5px 12px;font-size:12.5px;}
+  .badge .k{color:var(--muted);}
+  .badge .v{font-family:var(--mono);}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none;}
+  .dot.ok{background:var(--ok);box-shadow:0 0 6px color-mix(in srgb,var(--ok) 60%,transparent);}
+  .dot.warn{background:var(--warn);}
+  .dot.err{background:var(--err);}
+
+  /* P4.7 布局：
+     - 三列固定（auto-fit 会让列数随宽度跳变，卡片忽宽忽窄）
+     - minmax(0,1fr) 是关键：mono 长串（话题名/路径）默认会把列撑破
+     - align-items:start 去掉「等高拉伸」——原来 448px 的卡被拉到 1232px，卡内大片空白 */
+  /* P4.7b 布局：
+     - 三列固定（auto-fit 会让列数随宽度跳变，卡片忽宽忽窄）
+     - minmax(0,1fr) 是关键：mono 长串（话题名/路径）默认会把列撑破
+     - 同行等高（stretch）+ 卡内滚动区 flex 填满（.fill）
+       ⇒ 卡片对齐，滚动区把剩余空间吃掉，不再有"卡内大片空白"。
+       滚动区都有 min-height，数据还没回来时高度也稳定，不会等加载完才跳。 */
+  .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+        gap:16px;align-items:stretch;}
+  .grid > .card{min-width:0;display:flex;flex-direction:column;scroll-margin-top:60px;}
+  .grid > .card > .card-body{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;}
+  /* 滚动区：吃掉卡片剩余高度。
+     注意这里**不能**写 min-height:0 —— CSS Flexbox 规范规定 flex item 的自动最小尺寸
+     （min-height:auto）只在其 overflow 为 visible 时才生效；既然有 overflow:auto，
+     自动最小尺寸本来就是 0，无需显式声明。显式写 0 反而会盖掉各滚动区自己的
+     min-height（.cfgtree 260 / .topics-table 220 / #logbox 200 …）。 */
+  .grid > .card > .card-body > .fill{flex:1 1 auto;overflow:auto;}
+  .grid > .card.span2{grid-column:span 2;}
+  @media (max-width:1100px){
+    .grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+    .grid > .card.span2{grid-column:span 2;}
+  }
+  @media (max-width:760px){
+    .grid{grid-template-columns:minmax(0,1fr);}
+    .grid > .card.span2{grid-column:span 1;}
+  }
+
+  /* ---------- 分区（P4.7 信息层级：概览 / 查看 / 深度操作） ----------
+     注意：类名不能用 .sec —— 配置树里已有 .cfgtree .sec（renderConfig 生成），
+     撞车会让"每个配置小节"也吃到 margin-bottom。故用 .zone。 */
+  .zone{margin-bottom:22px;}
+  .zone-head{display:flex;align-items:baseline;gap:12px;margin:0 0 10px;}
+  .zone-head h3{margin:0;font-size:12px;font-weight:600;letter-spacing:.08em;color:var(--accent);}
+  .zone-note{font-size:12px;color:var(--faint);}
+  .zone-rule{flex:1 1 auto;height:1px;background:var(--border);}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;}
+  .card h2{margin:0 0 12px;font-size:14px;display:flex;align-items:center;gap:8px;}
+  .card h2 .tag{font-size:11px;color:var(--faint);font-weight:normal;font-family:var(--mono);}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px;margin-bottom:12px;}
+  .kv .k{color:var(--muted);white-space:nowrap;}
+  .kv .v{font-family:var(--mono);word-break:break-all;}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;}
+  .logtail{background:#10161d;border:1px solid var(--border);border-radius:6px;
+           padding:8px 10px;font-family:var(--mono);font-size:11.5px;line-height:1.5;
+           color:var(--muted);min-height:96px;max-height:180px;overflow:auto;
+           white-space:pre-wrap;word-break:break-all;margin-bottom:12px;}
+  .hint{font-size:12px;color:var(--warn);margin-bottom:10px;white-space:pre-wrap;}
+  .empty{color:var(--faint);font-size:12.5px;}
+
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;}
+  .toolbar label{color:var(--muted);font-size:12.5px;}
+  /* P4.7：高度可拖拽（日志长度需求因人而异）+ 下限保护 */
+  #logbox{background:#10161d;border:1px solid var(--border);border-radius:6px;padding:10px 12px;
+          font-family:var(--mono);font-size:11.5px;line-height:1.55;color:#b9c4d0;
+          min-height:200px;max-height:380px;resize:vertical;
+          white-space:pre-wrap;word-break:break-all;}
+  #logbox .ln{display:block;}
+
+  .cfgtree{font-family:var(--mono);font-size:12px;line-height:1.7;
+           min-height:200px;max-height:420px;overflow:auto;}
+  .cfgtree .sec{color:var(--accent);}
+  .cfgtree .row{display:grid;grid-template-columns:220px 1fr;gap:10px;}
+  .cfgtree .row .k{color:var(--muted);}
+  .cfgtree .row .v{word-break:break-all;}
+
+  /* ---------- 话题订阅卡（P1.5） ---------- */
+  .topics-table{min-height:220px;max-height:260px;overflow:auto;border:1px solid var(--border);
+                border-radius:6px;background:#10161d;font-family:var(--mono);font-size:11.5px;}
+  /* P4.7：两列都可收缩换行（原来 .ty 是 nowrap，长类型名会把行挤出容器） */
+  .topics-table .trow{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:10px;
+                      padding:4px 10px;border-bottom:1px solid #1a222c;}
+  .topics-table .trow:last-child{border-bottom:none;}
+  .topics-table .trow .tt{color:#b9c4d0;word-break:break-all;}
+  .topics-table .trow .ty{color:var(--muted);word-break:break-all;}
+
+  /* ---------- 模型卡（P4） ---------- */
+  .btn-file{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);
+            border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;
+            transition:border-color .15s;}
+  .btn-file:hover{border-color:var(--accent);}
+  .model-names{width:100%;background:#10161d;border:1px solid var(--border);border-radius:6px;
+               color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 10px;
+               resize:vertical;min-height:96px;margin:8px 0;}
+  .model-names:focus{outline:none;border-color:var(--accent);}
+  .progress{height:8px;background:#10161d;border:1px solid var(--border);border-radius:999px;
+            overflow:hidden;margin-bottom:6px;}
+  .progress-bar{height:100%;width:0;background:var(--accent);transition:width .3s;}
+  .model-log{background:#10161d;border:1px solid var(--border);border-radius:6px;padding:8px 10px;
+             font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--muted);
+             max-height:150px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:8px 0 0;}
+  /* P4.7b：导出历史可能很长，封顶 + 内部滚动（否则模型卡无限长高，拖垮整页布局） */
+  .model-list{margin-top:10px;border:1px solid var(--border);border-radius:6px;
+              min-height:140px;max-height:220px;overflow:auto;}
+  .model-row{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;
+             padding:6px 10px;border-bottom:1px solid #1a222c;font-size:12px;}
+  .model-row:last-child{border-bottom:none;}
+  .model-row .n{font-family:var(--mono);word-break:break-all;}
+  .model-row .m{color:var(--muted);font-family:var(--mono);white-space:nowrap;}
+
+  /* ---------- 配置编辑弹层（P1.5） ---------- */
+  .modal.wide{max-width:660px;}
+  .modal .form{max-height:60vh;overflow:auto;padding-right:6px;margin-bottom:14px;}
+  .frow{display:grid;grid-template-columns:160px 1fr;gap:10px;align-items:center;margin-bottom:9px;}
+  .frow label{color:var(--muted);font-size:12.5px;}
+  .frow input[type=number],.frow input[type=text],.frow select{width:100%;}
+  .frow input[type=checkbox]{width:auto;}
+  .frow .inline{display:flex;gap:8px;align-items:center;}
+  .frow .inline input[type=range]{flex:1;}
+  .frow .inline input[type=number]{width:88px;}
+  .fsec{font-size:12px;color:var(--accent);margin:14px 0 8px;
+        border-bottom:1px solid var(--border);padding-bottom:4px;}
+  .fsec:first-child{margin-top:0;}
+  .modal-err{color:var(--err);font-size:12.5px;margin-bottom:10px;white-space:pre-wrap;}
+  .banner{background:#3a2f12;border:1px solid #8a6d1f;color:#fde68a;border-radius:8px;
+          padding:9px 14px;font-size:13px;margin-bottom:14px;}
+  /* P4.7：页面级告警横幅（原来 rosbridge 未运行的提示埋在话题卡里，滚动过就看不见了） */
+  .banner.lv-err{background:#3a1f24;border-color:#7f3038;color:#fca5a5;}
+  .banner.alert{display:block;}
+  .banner.alert .al-row{display:flex;align-items:center;gap:10px;padding:2px 0;flex-wrap:wrap;}
+  .banner.alert .al-txt{flex:1 1 240px;min-width:0;}
+  .banner.alert .al-go{flex:none;background:transparent;border:1px solid currentColor;
+                       color:inherit;padding:3px 10px;font-size:12px;}
+  .banner.alert .al-go:hover{border-color:currentColor;opacity:.8;}
+  /* P4.7：回到顶部（分区后页面更长） */
+  #totop{position:fixed;right:22px;bottom:26px;z-index:40;border-radius:999px;
+         padding:8px 14px;box-shadow:0 6px 20px rgba(0,0,0,.5);}
+
+  /* ---------- 抓拍浏览卡（P3，§5.5.1） ---------- */
+  .pics-stage{position:relative;background:#10161d;border:1px solid var(--border);
+              border-radius:6px;min-height:220px;display:flex;align-items:center;
+              justify-content:center;overflow:hidden;margin-bottom:10px;}
+  .pics-stage img{max-width:100%;max-height:52vh;display:block;}
+  .pics-empty{text-align:center;color:var(--faint);font-size:13px;padding:28px 16px;}
+  .pics-empty-icon{font-size:30px;margin-bottom:8px;}
+  .pics-empty button{margin-top:12px;}
+  .pics-loading{position:absolute;top:8px;right:10px;font-size:12px;color:var(--muted);
+                background:rgba(16,22,29,.85);border:1px solid var(--border);
+                border-radius:6px;padding:3px 9px;}
+  .pics-count{font-size:12px;color:var(--muted);font-family:var(--mono);}
+  .pics-timeline{margin-bottom:10px;}
+  .pics-title{font-family:var(--mono);font-size:13.5px;color:var(--accent);margin-bottom:6px;}
+  #pics-slider{width:100%;margin:0 0 6px;}
+  .pics-density{display:grid;grid-template-columns:repeat(240,1fr);gap:1px;
+                height:14px;cursor:pointer;margin-bottom:6px;}
+  .pics-density .slot{background:#1a222c;border-radius:1px;}
+  .pics-density .slot.has{background:var(--accent);}
+  .pics-meta{font-size:12px;color:var(--muted);font-family:var(--mono);}
+  .pics-trash{margin-top:12px;border-top:1px solid var(--border);padding-top:10px;
+              font-size:12px;color:var(--muted);}
+  .pics-trash-title{color:var(--accent);margin-right:8px;}
+  .pics-trash-list{display:inline-flex;flex-wrap:wrap;gap:6px;vertical-align:middle;}
+  .pics-trash-item{display:inline-flex;align-items:center;gap:5px;background:var(--panel2);
+                   border:1px solid var(--border);border-radius:6px;padding:2px 6px;
+                   font-family:var(--mono);}
+  .pics-trash-item button{font-size:11px;padding:2px 7px;}
+
+  /* ---------- 弹层 ---------- */
+  .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;
+              align-items:center;justify-content:center;padding:24px;z-index:50;}
+  .modal{width:100%;max-width:420px;background:var(--panel);border:1px solid var(--border);
+         border-radius:10px;padding:20px;}
+  .modal h3{margin:0 0 8px;font-size:15px;}
+  .modal p{margin:0 0 18px;font-size:13px;color:var(--muted);white-space:pre-wrap;}
+  .modal .actions{justify-content:flex-end;}
+
+  #toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:60;
+         display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;}
+  .toast{background:var(--panel2);border:1px solid var(--border);border-radius:8px;
+         padding:9px 16px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.5);max-width:80vw;}
+  .toast.ok{border-color:#2c6e50;} .toast.err{border-color:#7f3038;} .toast.warn{border-color:#8a6d1f;}
+  /* ---------- 卡片折叠（可用性：8 张卡全展开时页面过长，按需展开） ---------- */
+  .card > .card-head{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;}
+  .card > .card-head:hover .card-arrow{color:var(--accent);}
+  .card-arrow{flex:0 0 12px;width:12px;color:var(--muted);font-size:10px;line-height:1;
+              transition:transform .15s;display:inline-block;text-align:center;}
+  .card.collapsed .card-arrow{transform:rotate(-90deg);}
+  .card > .card-head > h2{margin:0;flex:1 1 auto;display:flex;align-items:center;gap:8px;
+                          flex-wrap:wrap;font-size:15px;}
+  .card-summary{margin-left:auto;flex:0 0 auto;font-size:12px;color:var(--muted);
+                font-weight:400;display:inline-flex;align-items:center;gap:6px;}
+  .card-summary .sdot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:none;}
+  .card-summary .sdot.ok{background:var(--ok);}
+  .card-summary .sdot.warn{background:var(--warn);}
+  .card-summary .sdot.err{background:var(--err);}
+  .card.collapsed .card-body{display:none;}
+
+  /* ---------- 开关：替代裸 checkbox（布尔语义一眼可见） ---------- */
+  .switch{position:relative;display:inline-block;width:38px;height:20px;flex:none;vertical-align:middle;}
+  .switch input{position:absolute;inset:0;opacity:0;width:38px;height:20px;margin:0;cursor:pointer;}
+  .switch .slider{position:absolute;inset:0;background:#2a3441;border-radius:20px;
+                  transition:background .18s;pointer-events:none;}
+  .switch .slider:before{content:"";position:absolute;width:14px;height:14px;left:3px;top:3px;
+                         background:#8b98a8;border-radius:50%;transition:transform .18s,background .18s;}
+  .switch input:checked + .slider{background:#1d4f7f;}
+  .switch input:checked + .slider:before{transform:translateX(18px);background:var(--accent);}
+  .switch input:disabled + .slider{opacity:.45;}
+  .swrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);}
+
+  /* ---------- 数值输入：滑块 + 数字框联动（有范围的数值） ---------- */
+  .numfield{display:inline-flex;align-items:center;gap:8px;}
+  .numfield input[type=range]{width:150px;padding:0;accent-color:var(--accent);height:20px;}
+  .numfield input[type=number]{width:88px;}
+  .numfield .unit{color:var(--faint);font-size:12px;white-space:nowrap;}
+
+  /* ---------- 占用占比条（比纯数字更直观） ---------- */
+  .usage{margin:2px 0 10px;}
+  .usage-row{display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:12.5px;}
+  .usage-name{width:70px;flex:none;color:var(--muted);}
+  .usage-track{flex:1;height:8px;background:#10161d;border:1px solid var(--border);
+               border-radius:5px;overflow:hidden;}
+  .usage-fill{height:100%;background:var(--accent);border-radius:5px;transition:width .3s;}
+  .usage-val{width:120px;flex:none;text-align:right;font-family:var(--mono);
+             font-size:11.5px;color:var(--muted);}
+  .usage-row.is-pics .usage-fill{background:#4da3ff;}
+  .usage-row.is-picstrash .usage-fill{background:#6b7f95;}
+  .usage-row.is-logs .usage-fill{background:var(--warn);}
+  .usage-row.is-cache .usage-fill{background:#8b98a8;}
+
+  /* 存储占用列表：限高，避免行数变化时存储卡忽高忽低 */
+  #storage-list{min-height:60px;max-height:180px;overflow:auto;}
+  /* 抓拍舞台：跟随视口，别把同行日志卡顶得太高 */
+  .pics-stage{max-height:44vh;}
+
+  /* ---------- 清空范围标注（P4.7b：说清哪些有自动清理） ---------- */
+  .st-tag{display:inline-block;margin-left:5px;padding:0 5px;border-radius:4px;
+          font-size:10.5px;line-height:16px;vertical-align:1px;cursor:help;}
+  .st-tag.auto{background:#1d3b2c;border:1px solid #2c6e50;color:#6ee7b7;}
+  .st-tag.manual{background:#2a3441;border:1px solid var(--border);color:var(--muted);}
+
+  /* ---------- 内联配置编辑（常用数值不必再进弹窗） ---------- */
+  .icfg{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:12px;
+        background:#131a22;}
+  .icfg-head{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;}
+  .icfg-head .icfg-title{font-size:12.5px;color:var(--muted);flex:1 1 auto;}
+  .icfg.collapsed .icfg-body{display:none;}
+  .icfg-body{margin-top:8px;}
+  .icfg-row{display:flex;align-items:center;gap:12px;padding:5px 0;flex-wrap:wrap;}
+  .icfg-row .lb{width:100px;flex:none;font-size:12.5px;color:var(--muted);}
+  .icfg-row .note{font-size:11.5px;color:var(--faint);}
+  .icfg-actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;}
+  .icfg-dirty{color:var(--warn);font-size:12px;}
+  .icfg-note{font-size:11.5px;color:var(--faint);margin-top:8px;line-height:1.5;}
+  .icfg input[type=text]{flex:1 1 240px;min-width:200px;font-family:var(--mono);font-size:12px;}
+
+  [hidden]{display:none !important;}
+</style>
+</head>
+<body>
+
+<!-- ================= 登录页 ================= -->
+<div id="login-view">
+  <form class="login-card" id="login-form" autocomplete="off">
+    <h1>Lite3 yolo8 控制台</h1>
+    <div class="sub">管理面 · 计划书 v2.1 P1 · 局域网访问需 token</div>
+    <label for="token-input">访问令牌（见配置文件 config/yolo8.json 的 console.token 项）</label>
+    <input id="token-input" type="password" autocomplete="off" spellcheck="false"
+           placeholder="输入访问令牌" required>
+    <button type="submit" class="primary" id="login-btn">登 录</button>
+    <div class="login-err" id="login-err"></div>
+    <div class="login-hint">
+      会话 12 小时有效；写操作（启停服务）还需在请求头携带同一 token（双因子）。<br>
+      连续 5 次输错将锁定 5 分钟。
+    </div>
+  </form>
+</div>
+
+<!-- ================= 主界面 ================= -->
+<div id="app-view" hidden>
+  <header class="top">
+    <h1>Lite3 yolo8 控制台</h1>
+    <span class="meta" id="hdr-meta"></span>
+    <span class="spacer"></span>
+    <button class="linkish" id="toggle-all-btn">全部折叠</button>
+    <button class="linkish" id="logout-btn">退出登录</button>
+  </header>
+
+  <div class="badges" id="badges"></div>
+
+  <div class="banner" id="restart-banner" hidden></div>
+  <!-- P4.7：跨卡告警提到页面级（原来只埋在话题卡里，滚过去就看不见） -->
+  <div class="banner alert" id="alert-banner" hidden></div>
+
+  <!-- ================= 分区 1：运行概览（高频监控，默认展开） ================= -->
+  <div class="zone" id="zone-overview">
+    <div class="zone-head">
+      <h3>运行概览</h3>
+      <span class="zone-note">服务状态与话题诊断 · 每秒刷新</span>
+      <span class="zone-rule"></span>
+    </div>
+    <div class="grid">
+    <!-- 服务卡片 -->
+    <section class="card" id="card-yolo">
+      <h2>yolo 发布服务 <span class="tag" id="yolo-unit"></span></h2>
+      <div class="logtail fill" id="yolo-logtail"></div>
+      <div class="kv" id="yolo-kv"></div>
+      <div class="hint" id="yolo-hint" hidden></div>
+      <div class="actions">
+        <button class="primary" data-act="start" data-target="yolo">启动</button>
+        <button class="danger" data-act="stop" data-target="yolo">停止</button>
+        <button data-act="restart" data-target="yolo">重启</button>
+      </div>
+    </section>
+
+    <section class="card" id="card-rosbridge">
+      <h2>rosbridge 服务 <span class="tag" id="rosbridge-unit"></span></h2>
+      <div class="logtail fill" id="rosbridge-logtail"></div>
+      <div class="kv" id="rosbridge-kv"></div>
+      <div class="hint" id="rosbridge-hint" hidden></div>
+      <div class="actions">
+        <button class="primary" data-act="start" data-target="rosbridge">启动</button>
+        <button class="danger" data-act="stop" data-target="rosbridge">停止</button>
+        <button data-act="restart" data-target="rosbridge">重启</button>
+      </div>
+    </section>
+
+    <!-- ROS2 话题订阅（P1.5） -->
+    <section class="card" id="card-topics">
+      <h2>ROS2 话题订阅 <span class="tag">Foxglove / rosbridge</span></h2>
+      <div class="kv" id="topics-kv"><span class="k">状态</span><span class="v">加载中…</span></div>
+      <div class="hint" id="topics-hint" hidden></div>
+      <div class="toolbar">
+        <button id="topics-refresh">刷新话题</button>
+        <button id="topics-copy">复制连接串</button>
+      </div>
+      <div class="topics-table fill" id="topics-table"><div class="empty">加载中…</div></div>
+    </section>
+    </div><!-- /grid -->
+  </div><!-- /sec 运行概览 -->
+
+  <!-- ================= 分区 2：抓拍与日志（日常查看；抓拍卡跨 2 列给图片留宽度） ================= -->
+  <div class="zone" id="zone-inspect">
+    <div class="zone-head">
+      <h3>抓拍与日志</h3>
+      <span class="zone-note">抓拍卡跨 2 列，给图片留宽度；日志窄列够读</span>
+      <span class="zone-rule"></span>
+    </div>
+    <div class="grid">
+    <!-- 抓拍浏览（P3，§5.5.1：时间轴拖动 + 缩略图） -->
+    <section class="card span2" id="card-pics">
+      <h2>抓拍浏览 <span class="tag" id="pics-tag">时间轴 · 真实时间线性映射</span></h2>
+      <div class="toolbar">
+        <label for="pics-date">日期</label>
+        <input type="date" id="pics-date">
+        <button id="pics-today">今天</button>
+        <button id="pics-latest">最近有图</button>
+        <button id="pics-refresh">刷新</button>
+        <span class="pics-count" id="pics-count"></span>
+      </div>
+      <div class="pics-stage fill" id="pics-stage">
+        <img id="pics-full" alt="抓拍预览" hidden>
+        <div class="pics-empty" id="pics-empty" hidden>
+          <div class="pics-empty-icon">∅</div>
+          <div id="pics-empty-text">当日暂无抓拍</div>
+          <button id="pics-goto-latest" hidden>跳到最近有抓拍的日期</button>
+        </div>
+        <div class="pics-loading" id="pics-loading" hidden>加载中…</div>
+      </div>
+      <div class="pics-timeline" id="pics-timeline" hidden>
+        <div class="pics-title" id="pics-title">--:--:--.---</div>
+        <input type="range" id="pics-slider" min="0" max="86399999" step="1" value="0"
+               aria-label="抓拍时间轴（00:00:00 – 23:59:59）">
+        <div class="pics-density" id="pics-density" title="密度带：每槽 6 分钟，点击跳到该时段首帧"></div>
+        <div class="pics-meta" id="pics-meta"></div>
+      </div>
+      <div class="actions">
+        <button id="pics-prev">← 上一帧</button>
+        <button id="pics-next">下一帧 →</button>
+        <button id="pics-download">下载原图</button>
+        <button class="danger" id="pics-delete">删除</button>
+      </div>
+      <div class="hint" id="pics-hint" hidden></div>
+      <div class="pics-trash" id="pics-trash" hidden>
+        <span class="pics-trash-title">回收站</span>
+        <span class="pics-trash-list" id="pics-trash-list"></span>
+        <button id="pics-trash-refresh">刷新回收站</button>
+      </div>
+    </section>
+
+    <!-- 日志 -->
+    <section class="card" id="card-log">
+      <h2>日志 <span class="tag" id="log-target-tag"></span></h2>
+      <div class="toolbar">
+        <label for="log-target">目标</label>
+        <select id="log-target">
+          <option value="yolo">yolo 发布</option>
+          <option value="rosbridge">rosbridge</option>
+        </select>
+        <label for="log-lines">行数</label>
+        <select id="log-lines">
+          <option value="100">100</option>
+          <option value="200" selected>200</option>
+          <option value="500">500</option>
+        </select>
+        <span class="swrow">
+          <label class="switch"><input type="checkbox" id="log-follow" checked><span class="slider"></span></label>
+          跟随
+        </span>
+        <button id="log-refresh">刷新</button>
+      </div>
+      <div class="fill" id="logbox"><span class="ln">加载中…</span></div>
+    </section>
+    </div><!-- /grid -->
+  </div><!-- /sec 抓拍与日志 -->
+
+  <!-- ================= 分区 3：配置与维护（低频深度操作，首次访问默认折叠） ================= -->
+  <div class="zone" id="zone-ops">
+    <div class="zone-head">
+      <h3>配置与维护</h3>
+      <span class="zone-note">低频深度操作 · 首次访问默认折叠，之后记住你的选择</span>
+      <span class="zone-rule"></span>
+    </div>
+    <div class="grid">
+
+    <!-- 配置（只读树 + P1.5 在线编辑 + 快捷内联设置） -->
+    <section class="card" id="card-config">
+      <h2>运行配置 <span class="tag" id="cfg-src"></span></h2>
+      <div class="cfgtree fill" id="cfgtree"><div class="empty">加载中…</div></div>
+
+      <!-- 快速设置：最常用的几个数值不必再进弹窗 -->
+      <div class="icfg" id="quick-cfg">
+        <div class="icfg-head">
+          <span class="card-arrow">▾</span>
+          <span class="icfg-title">快速设置 <b style="color:var(--warn)">（保存后自动重启 yolo 生效，约 35s，期间推流会断）</b></span>
+          <span class="card-summary" id="qc-summary"></span>
+        </div>
+        <div class="icfg-body">
+          <div class="icfg-row">
+            <span class="lb">检测置信度</span>
+            <span class="numfield">
+              <input type="range" id="qc-conf-range" min="0.05" max="0.95" step="0.05">
+              <input type="number" id="qc-conf-num" min="0.05" max="0.95" step="0.05">
+            </span>
+            <span class="note">0.05–0.95；调低易检出远处小目标，调高减少误检</span>
+          </div>
+          <div class="icfg-row">
+            <span class="lb">抓拍</span>
+            <span class="swrow">
+              <label class="switch"><input type="checkbox" id="qc-snap"><span class="slider"></span></label>
+              启用
+            </span>
+            <span class="numfield">
+              <input type="number" id="qc-quota" min="0" step="50">
+              <span class="unit">张/天（0 = 不限）</span>
+            </span>
+          </div>
+          <div class="icfg-row">
+            <span class="lb">推流</span>
+            <span class="swrow">
+              <label class="switch"><input type="checkbox" id="qc-rtmp"><span class="slider"></span></label>
+              启用 RTMP
+            </span>
+            <span class="numfield">
+              <input type="number" id="qc-bitrate" min="100000" step="100000">
+              <span class="unit">bps</span>
+            </span>
+          </div>
+          <div class="icfg-row">
+            <span class="lb">推流地址</span>
+            <input type="text" id="qc-rtmp-url" spellcheck="false"
+                   placeholder="rtmp://host:1936/live/流名">
+          </div>
+          <div class="icfg-actions">
+            <button class="primary" id="qc-save" disabled>保存并重启 yolo</button>
+            <button id="qc-revert">还原</button>
+            <span class="icfg-dirty" id="qc-dirty" hidden>有未保存的修改</span>
+          </div>
+          <div class="icfg-note">
+            视频源、分辨率、帧率、模型路径等完整字段仍用下面的「编辑配置…」弹窗。
+            console 段（绑定地址 / 端口 / 白名单 / 令牌）<b>不可在线改</b>，需手改 config/yolo8.json 后重启 console。
+          </div>
+        </div>
+      </div>
+
+      <div class="actions" style="margin-top:12px">
+        <button class="primary" id="cfg-edit-btn">编辑配置…</button>
+      </div>
+      <div class="hint" style="color:var(--faint)">
+        视频源 / 检测 / 抓拍 / 推流 / 模型路径可在线修改，保存即写入 config/yolo8.json
+        （旧文件自动备份），并自动重启 yolo 生效（约 35s 冷启动）。
+        console 段（绑定地址 / 端口 / 白名单 / 令牌）请直接编辑 config/yolo8.json 后重启 console。
+      </div>
+    </section>
+
+    <!-- 模型上传/导出（P4，§5.6） -->
+    <section class="card" id="card-model">
+      <h2>模型 <span class="tag" id="model-tag">onnx → TensorRT engine</span></h2>
+      <div class="kv" id="model-kv"><span class="k">状态</span><span class="v">加载中…</span></div>
+      <div class="hint" id="model-hint" hidden></div>
+
+      <div class="toolbar">
+        <label class="btn-file">选择 onnx<input type="file" id="model-file" accept=".onnx" hidden></label>
+        <span class="mono" id="model-file-name" style="color:var(--muted);font-size:12px"></span>
+        <button id="model-upload" disabled>上传并解析</button>
+      </div>
+
+      <div id="model-names-box" hidden>
+        <div class="toolbar" style="margin-bottom:0">
+          <span class="mono" id="model-classes" style="color:var(--muted);font-size:12px"></span>
+          <button id="model-coco">填入 COCO 80 类</button>
+          <button id="model-names-clear">清空</button>
+        </div>
+        <textarea id="model-names" class="model-names" rows="6" spellcheck="false"
+                  placeholder="每行一个类别名，行号即类别 id（数量必须等于 onnx 推断的类别数）"></textarea>
+        <div class="toolbar">
+          <label>workspace MB
+            <input type="number" id="model-ws" value="1024" min="128" max="1024" step="128"
+                   style="width:96px"></label>
+          <span class="swrow">
+            <label class="switch"><input type="checkbox" id="model-half" checked><span class="slider"></span></label>
+            FP16
+          </span>
+          <button class="primary" id="model-export">开始导出</button>
+        </div>
+        <div class="hint" style="margin-top:8px">
+          导出是 <b>CPU 密集型</b>操作：本机（20 W / 6 核）实测 yolov8n 约需 <b>20~30 分钟</b>，
+          进度条长时间停在 20% 属正常（TRT 在搜 tactic，日志每 30 s 打一次心跳）。
+          页面关掉任务也会在后台继续；想更快可先停掉推理
+          （<code>deploy/lite3-publish-ctl.sh stop yolo</code>），导出完再 <code>start yolo</code>。
+        </div>
+      </div>
+
+      <div id="model-progress-box" hidden>
+        <div class="progress"><div class="progress-bar" id="model-progress-bar"></div></div>
+        <div class="mono" id="model-progress-text" style="font-size:12px;color:var(--muted)"></div>
+        <pre class="model-log" id="model-log"></pre>
+      </div>
+
+      <div class="toolbar" style="margin-top:8px">
+        <button id="model-refresh">刷新</button>
+        <button class="danger" id="model-reload" disabled>启用当前配置的 engine</button>
+      </div>
+      <div class="model-list fill" id="model-exports"><div class="empty">加载中…</div></div>
+      <div class="hint" style="color:var(--faint)">
+        上传 → 解析（onnx 输出推断类别数）→ 导出（TensorRT，单任务，**首次 20~30 min，
+        之后约 2 min**）→ 预加载自检 → 写入配置 pending_reload → worker 帧边界重建（丢帧 2~5s）。
+        导出文件落在 model/exports/，可随时切回原有 engine。
+      </div>
+    </section>
+
+    <!-- 存储治理（P5：对齐 m20-ai-detect ADR-008 / ADR-011） -->
+    <section class="card" id="card-storage">
+      <h2>存储清理 <span class="tag" id="storage-tag">日志轮换 · 留存清理 · 按需清空</span></h2>
+      <div class="hint" id="storage-hint" hidden></div>
+      <div class="usage" id="storage-usage"></div>
+      <div class="fill" id="storage-list"><div class="empty">加载中…</div></div>
+
+      <div class="toolbar">
+        <span style="color:var(--muted);font-size:12px">清空范围（多选，<b>不可恢复</b>）：</span>
+      </div>
+      <!-- P4.7b：标注哪些有自动清理。用户常问"这些的最大空间能配吗"，
+           答案是只有 pics / trash 有（见下方留存策略），uploads/exports 只能手动清，
+           logs 走 logrotate。不写清楚就会反复来问。 -->
+      <div class="toolbar" id="storage-targets">
+        <label><input type="checkbox" id="st-pics" style="width:auto;"> 抓拍图片
+          <span class="st-tag auto" title="有自动清理：体积上限 + 留存天数，见下方留存策略">自动</span></label>
+        <label><input type="checkbox" id="st-trash" style="width:auto;"> 回收站
+          <span class="st-tag auto" title="有自动清理：回收站留存天数，见下方留存策略">自动</span></label>
+        <label><input type="checkbox" id="st-uploads" style="width:auto;"> 上传缓存
+          <span class="st-tag manual" title="只能手动清空：onnx 上传的临时副本，无自动清理策略">仅手动</span></label>
+        <label><input type="checkbox" id="st-exports" style="width:auto;"> 导出 engine
+          <span class="st-tag manual" title="只能手动清空：worker 正在用的 engine，删了会直接断推理，不能自动清">仅手动</span></label>
+        <label><input type="checkbox" id="st-logs" style="width:auto;"> 日志（截断）
+          <span class="st-tag manual" title="自动轮转由 logrotate 负责（每天一轮、留 7 份压缩档）；这里是立即截断">logrotate</span></label>
+      </div>
+      <div class="toolbar">
+        <span class="swrow">
+          <label class="switch"><input type="checkbox" id="st-keep-cache" checked><span class="slider"></span></label>
+          保留计时缓存（删了下次导出要回到 26 min）
+        </span>
+        <button id="storage-refresh">刷新</button>
+        <button class="danger" id="storage-purge" disabled>清空所选</button>
+      </div>
+
+      <!-- 留存策略：retention 段不在 YOLO_SECTIONS，改了立即生效、不重启 yolo -->
+      <div class="icfg" id="retention-box">
+        <div class="icfg-head">
+          <span class="card-arrow">▾</span>
+          <span class="icfg-title">留存策略 <b style="color:var(--ok)">（改了立即生效，不重启 yolo）</b></span>
+          <span class="card-summary" id="rt-summary"></span>
+        </div>
+        <div class="icfg-body">
+          <div class="icfg-row">
+            <span class="lb">抓拍总量上限</span>
+            <span class="numfield">
+              <input type="number" id="rt-max-mb" min="0" step="128">
+              <span class="unit">MB（0 = 不按总量清理）</span>
+            </span>
+          </div>
+          <div class="icfg-row">
+            <span class="lb">抓拍留存</span>
+            <span class="numfield">
+              <input type="number" id="rt-keep-days" min="0" step="1">
+              <span class="unit">天（0 = 不按年龄清理）</span>
+            </span>
+          </div>
+          <div class="icfg-row">
+            <span class="lb">回收站留存</span>
+            <span class="numfield">
+              <input type="number" id="rt-trash-days" min="0" step="1">
+              <span class="unit">天（0 = 不清理）</span>
+            </span>
+          </div>
+          <div class="icfg-row">
+            <span class="lb">检查间隔</span>
+            <span class="numfield">
+              <input type="number" id="rt-interval" min="60" step="60">
+              <span class="unit">秒</span>
+            </span>
+          </div>
+          <div class="icfg-actions">
+            <button class="primary" id="rt-save" disabled>保存留存策略</button>
+            <button id="rt-revert">还原</button>
+            <span class="icfg-dirty" id="rt-dirty" hidden>有未保存的修改</span>
+          </div>
+          <div class="icfg-note">
+            清理由 console 的周期线程执行（<b>与推理是否在运行无关</b>）；日志另由 logrotate
+            每天轮转、留 7 份压缩档。
+          </div>
+        </div>
+      </div>
+
+      <div class="hint" style="color:var(--faint)">
+        自动清理：抓拍留存 <b id="st-conf-days">-</b> 天 / 上限 <b id="st-conf-mb">-</b> MB，
+        回收站 <b id="st-conf-trash">-</b> 天，每 <b id="st-conf-interval">-</b> 秒检查一次。
+        清理由 console 执行（它是 systemd 常驻），**与推理是否在运行无关**。
+        日志另由 logrotate 每天轮转、留 7 份压缩档。
+      </div>
+    </section>
+
+    <!-- 抓拍浏览（P3）与日志已上移到分区 2「抓拍与日志」 -->
+  </div><!-- /grid -->
+</div><!-- /sec 配置与维护 -->
+</div><!-- /app-view -->
+
+<!-- P4.7：分区后页面更长，加一个常驻的回顶按钮 -->
+<button id="totop" hidden>↑ 回到顶部</button>
+
+<div id="modal-root"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+ * 基础：token 保管 + fetch 封装
+ * =================================================================== */
+var TOKEN_KEY = "yolo8_console_token";
+var POLL_MS = 1000;
+
+function getToken(){ try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; } }
+function setToken(t){ try { sessionStorage.setItem(TOKEN_KEY, t); } catch (e) {} }
+function clearToken(){ try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+
+/** 统一请求入口：自动带 X-Yolo-Token；401 → 回登录页；403 → 提示白名单。 */
+function api(path, opts){
+  opts = opts || {};
+  var headers = opts.headers || {};
+  if (getToken()) headers["X-Yolo-Token"] = getToken();
+  if (opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+  return fetch(path, {
+    method: opts.method || "GET",
+    headers: headers,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    credentials: "same-origin"
+  }).then(function(resp){
+    return resp.json().catch(function(){ return {ok:false, error:"响应不是合法 JSON（HTTP " + resp.status + "）"}; })
+      .then(function(data){
+        if (resp.status === 401 && path !== "/api/auth/login") { showLogin("会话已过期，请重新登录"); throw {abort:true}; }
+        if (resp.status === 403) { toast(data.error || "来源地址不在白名单，已被拒绝", "err"); throw {abort:true}; }
+        if (resp.status === 429) { toast(data.error || "操作过于频繁", "warn"); throw {abort:true}; }
+        data._status = resp.status;
+        return data;
+      });
+  });
+}
+
+/* =====================================================================
+ * 视图切换
+ * =================================================================== */
+var loginView = document.getElementById("login-view");
+var appView = document.getElementById("app-view");
+
+function showLogin(msg){
+  loginView.hidden = false;
+  appView.hidden = true;
+  stopPolling();
+  var err = document.getElementById("login-err");
+  err.textContent = msg || "";
+  if (msg) clearToken();
+  var input = document.getElementById("token-input");
+  if (msg) input.value = "";
+  input.focus();
+}
+function showApp(){
+  loginView.hidden = true;
+  appView.hidden = false;
+  startPolling();
+  /* 抓拍卡首屏：日期框填今天并拉取当日时间轴；回收站列表懒加载。
+   * picsLoad/picsLoadTrash 内部对「同日已加载」做了去重，重复调用安全。 */
+  picsSetDateInput(picsToday());
+  picsLoad(picsToday());
+  picsLoadTrash();
+  /* P4：模型卡首屏（engine 信息 + 导出历史）；导出进行中会自动开始轮询 */
+  modelRefresh();
+}
+
+/* =====================================================================
+ * 登录 / 退出
+ * =================================================================== */
+document.getElementById("login-form").addEventListener("submit", function(ev){
+  ev.preventDefault();
+  var btn = document.getElementById("login-btn");
+  var err = document.getElementById("login-err");
+  var token = document.getElementById("token-input").value.trim();
+  if (!token) { err.textContent = "请输入令牌"; return; }
+  btn.disabled = true; err.textContent = "";
+  api("/api/auth/login", {method:"POST", body:{token:token}}).then(function(data){
+    if (data._status === 200 && data.ok) {
+      setToken(token);
+      err.textContent = "";
+      toast("登录成功", "ok");
+      showApp();
+      refreshAll();
+    } else {
+      err.textContent = data.error || "登录失败";
+    }
+  }).catch(function(e){
+    if (!e || !e.abort) err.textContent = "网络错误：" + (e && e.message ? e.message : e);
+  }).then(function(){ btn.disabled = false; });
+});
+
+document.getElementById("logout-btn").addEventListener("click", function(){
+  api("/api/auth/logout", {method:"POST", body:{}}).catch(function(){}).then(function(){
+    clearToken();
+    showLogin("已退出登录");
+  });
+});
+
+/* =====================================================================
+ * 轮询纪律：仅页面可见时轮询（省 CPU，也避免后台堆积请求）
+ * =================================================================== */
+var pollTimer = null;
+function startPolling(){
+  if (pollTimer) return;
+  pollTimer = setInterval(tick, POLL_MS);
+}
+function stopPolling(){
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+document.addEventListener("visibilitychange", function(){
+  if (document.hidden) { stopPolling(); return; }
+  if (!appView.hidden) { tick(); startPolling(); }
+});
+function tick(){
+  if (document.hidden || appView.hidden) return;
+  api("/api/state").then(renderState).catch(function(){});
+  if (logFollowOn) refreshLogs();
+  picsAutoRefresh();
+}
+
+/* =====================================================================
+ * 徽标墙 + 服务卡片渲染
+ * =================================================================== */
+var MODE_LABEL = {
+  systemd: "systemd 托管",
+  installed_disabled: "已安装未启用",
+  direct: "进程直管",
+  not_installed: "未安装",
+  unknown: "未知"
+};
+
+function fmtUptime(s){
+  if (s === null || s === undefined) return "-";
+  s = Math.floor(s);
+  var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600),
+      m = Math.floor(s % 3600 / 60), sec = s % 60;
+  if (d > 0) return d + "d " + h + "h";
+  if (h > 0) return h + "h " + m + "m";
+  if (m > 0) return m + "m " + sec + "s";
+  return sec + "s";
+}
+
+/** 建元素小工具：一律 textContent 赋值，杜绝日志/配置内容注入 HTML。 */
+function el(tag, cls, text){
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+function badge(k, v, dotCls){
+  var b = el("span", "badge");
+  if (dotCls) b.appendChild(el("span", "dot " + dotCls));
+  b.appendChild(el("span", "k", k));
+  b.appendChild(el("span", "v", v));
+  return b;
+}
+
+function svcBadge(s){
+  if (!s) return badge("服务", "查询失败", "err");
+  if (s.running) return badge("", "运行中", "ok");
+  if (s.mode === "installed_disabled") return badge("", "已安装未启用", "warn");
+  return badge("", MODE_LABEL[s.mode] || "未运行", "");
+}
+
+function renderState(data){
+  if (!data.ok) return;
+  var st = data.state;
+  var wall = document.getElementById("badges");
+  wall.textContent = "";
+
+  wall.appendChild(badge("yolo", svcText(st.services.yolo), st.services.yolo && st.services.yolo.running ? "ok" : ""));
+  wall.appendChild(badge("rosbridge", svcText(st.services.rosbridge), st.services.rosbridge && st.services.rosbridge.running ? "ok" : ""));
+  wall.appendChild(badge("worker", st.worker ? "已接入" : "未接入（P2）", st.worker ? "ok" : ""));
+  var snap = st.worker && st.worker.snapshot;
+  if (snap) {
+    wall.appendChild(badge("抓拍", "今日 " + snap.today_count + " 张" +
+      (snap.disk_low ? " · 磁盘红线暂停" : "") +
+      (snap.enabled ? "" : " · 已停用"),
+      snap.disk_low ? "err" : (snap.enabled ? "ok" : "warn")));
+  }
+  wall.appendChild(badge("console", "v" + st.console.version + " · pid " + st.console.pid +
+                         " · " + st.console.rss_mb + "MB · " + fmtUptime(st.console.uptime_s), "ok"));
+  var wm = st.worker && st.worker.model;
+  if (wm && wm.engine) {
+    wall.appendChild(badge("engine", wm.engine +
+      (wm.pending_reload ? " · 待重载" : "") +
+      (wm.reload_error ? " · 失败" : ""),
+      wm.reload_error ? "err" : (wm.pending_reload ? "warn" : "ok")));
+  }
+  var me = st.model_export;
+  if (me && me.state && me.state !== "idle") {
+    wall.appendChild(badge("导出", me.state + " " + (me.progress || 0) + "%" +
+      (me.engine ? " · " + String(me.engine).split("/").pop() : ""),
+      me.state === "failed" ? "err" : (me.state === "exported" ? "ok" : "warn")));
+  }
+  wall.appendChild(badge("负载", st.host.load1 + " / " + st.host.load5 + " / " + st.host.load15,
+                         st.host.load1 > 3 ? "warn" : ""));
+  wall.appendChild(badge("内存可用", st.host.mem_avail_mb + " MB", st.host.mem_avail_mb < 1024 ? "warn" : ""));
+  wall.appendChild(badge("磁盘可用", st.host.disk_avail_gb + " GB", st.host.disk_avail_gb < 5 ? "err" : ""));
+  wall.appendChild(badge("会话", st.console.sessions + " 个"));
+  wall.appendChild(badge("白名单", (st.console.allowed_cidrs || []).join(" , ") || "-"));
+
+  document.getElementById("hdr-meta").textContent =
+    st.console.bind + ":" + st.console.port + " · 配置来源 " +
+    (st.config_from_file ? "config/yolo8.json" : "默认值（配置文件缺失）");
+
+  renderAlerts(st);   /* P4.7：跨卡告警提到页面级横幅 */
+
+  renderSvcCard("yolo", st.services.yolo);
+  renderSvcCard("rosbridge", st.services.rosbridge);
+}
+
+function svcText(s){
+  if (!s) return "查询失败";
+  if (s.running) return "运行中" + (s.pid ? " pid " + s.pid : "");
+  return MODE_LABEL[s.mode] || "未运行";
+}
+
+function renderSvcCard(target, s){
+  var unitEl = document.getElementById(target + "-unit");
+  var tailEl = document.getElementById(target + "-logtail");
+  var kvEl = document.getElementById(target + "-kv");
+  var hintEl = document.getElementById(target + "-hint");
+  unitEl.textContent = s && s.unit ? s.unit : "";
+  tailEl.textContent = (s && s.log_tail && s.log_tail.length) ? s.log_tail.join("\n") : "（无日志）";
+  kvEl.textContent = "";
+  var rows = [
+    ["托管模式", MODE_LABEL[s && s.mode] || "未知"],
+    ["运行状态", s && s.running ? "运行中" : "未运行"],
+    ["PID", s && s.pid ? s.pid : "-"],
+    ["uptime", s && s.uptime ? s.uptime : "-"]
+  ];
+  if (s && s.mode === "systemd") {
+    rows.push(["ActiveState", s.ActiveState || "-"]);
+    rows.push(["SubState", s.SubState || "-"]);
+    rows.push(["NRestarts", s.NRestarts || "-"]);
+  }
+  rows.forEach(function(r){
+    kvEl.appendChild(el("span", "k", r[0]));
+    kvEl.appendChild(el("span", "v", r[1]));
+  });
+  // ctl 提权失败时服务端给出 hint（§5.1 sudoers 可选项）
+  if (s && s.hint) { hintEl.textContent = s.hint; hintEl.hidden = false; }
+  else { hintEl.hidden = true; hintEl.textContent = ""; }
+  // 按钮可用性：in-flight 期间全禁（防重复点击打出僵尸/并发 ctl）
+  var busy = inflight[target];
+  Array.prototype.forEach.call(
+    document.querySelectorAll('button[data-target="' + target + '"]'), function(b){
+      b.disabled = !!busy;
+    });
+  /* 折叠后仍要能看到结论（P4.6 可用性）：收起时显示"运行中/未运行"。 */
+  setCardSummary("card-" + target,
+    s && s.running ? ("运行中" + (s.uptime ? " · " + s.uptime : "")) : "未运行",
+    s && s.running ? "ok" : "");
+}
+
+/* =====================================================================
+ * 服务启停：危险操作二次确认 + per-target in-flight 锁
+ * =================================================================== */
+var inflight = {};
+
+function confirmDanger(title, message){
+  return new Promise(function(resolve){
+    var root = document.getElementById("modal-root");
+    root.textContent = "";
+    var mask = el("div", "modal-mask");
+    var box = el("div", "modal");
+    box.appendChild(el("h3", null, title));
+    box.appendChild(el("p", null, message));
+    var actions = el("div", "actions");
+    var cancel = el("button", null, "取消");
+    var ok = el("button", "danger", "确认执行");
+    actions.appendChild(cancel); actions.appendChild(ok);
+    box.appendChild(actions); mask.appendChild(box); root.appendChild(mask);
+    function done(val){ root.textContent = ""; resolve(val); }
+    cancel.onclick = function(){ done(false); };
+    ok.onclick = function(){ done(true); };
+    mask.onclick = function(ev){ if (ev.target === mask) done(false); };
+    ok.focus();
+  });
+}
+
+var DANGER_TEXT = {
+  stop: "停止后推理、推流、抓拍全部中断；再次启动有约 35s 冷启动（TensorRT engine 重载）。确认停止？",
+  restart: "重启会中断当前所有输出并经历约 35s 冷启动。确认重启？"
+};
+
+document.querySelectorAll("button[data-act]").forEach(function(btn){
+  btn.addEventListener("click", function(){
+    var target = btn.dataset.target, act = btn.dataset.act;
+    if (inflight[target]) return;
+    var run = function(){
+      inflight[target] = true; renderSvcCard(target, lastServices && lastServices[target]);
+      api("/api/service/" + act, {method:"POST", body:{target:target}}).then(function(data){
+        if (data.ok) toast(data.message || (act + " " + target + " 完成"), "ok");
+        else {
+          toast(data.message || (act + " " + target + " 失败"), "err");
+          if (data.hint) setTimeout(function(){ toast(data.hint, "warn"); }, 300);
+        }
+        refreshAll();
+      }).catch(function(e){ if (!e || !e.abort) toast("请求失败：" + e, "err"); })
+        .then(function(){ inflight[target] = false; refreshAll(); });
+    };
+    if (DANGER_TEXT[act]) {
+      confirmDanger((act === "stop" ? "停止服务" : "重启服务") + "：" + target, DANGER_TEXT[act])
+        .then(function(yes){ if (yes) run(); });
+    } else {
+      run();
+    }
+  });
+});
+
+var lastServices = null;
+function refreshAll(){
+  api("/api/state").then(function(data){
+    if (!data.ok) return;
+    lastServices = data.state.services;
+    renderState(data);
+  }).catch(function(){});
+  refreshConfig();
+  refreshLogs();
+  refreshTopics();
+  modelRefresh();
+  storageRefresh();
+}
+
+/* =====================================================================
+ * 配置只读渲染（编辑入口见下方「配置在线编辑」）
+ * =================================================================== */
+var cfgLoaded = false;
+var lastCfg = null;
+function refreshConfig(){
+  if (cfgLoaded) return;           // 配置不变，只拉一次；写成功后由调用方重置
+  api("/api/config").then(function(data){
+    if (!data.ok) return;
+    cfgLoaded = true;
+    lastCfg = data.config;
+    renderConfig(data.config, data.from_file);
+    quickCfgLoad(data.config);        // P4.6：快捷内联设置跟着最新配置走
+  }).catch(function(){});
+}
+
+function renderConfig(cfg, fromFile){
+  document.getElementById("cfg-src").textContent =
+    fromFile ? "config/yolo8.json" : "默认值（配置文件缺失）";
+  var box = document.getElementById("cfgtree");
+  box.textContent = "";
+  Object.keys(cfg).forEach(function(sec){
+    var val = cfg[sec];
+    if (val !== null && typeof val === "object") {
+      box.appendChild(el("div", "sec", sec));
+      Object.keys(val).forEach(function(k){
+        var v = val[k];
+        var row = el("div", "row");
+        row.appendChild(el("span", "k", "  " + sec + "." + k));
+        row.appendChild(el("span", "v",
+          (v !== null && typeof v === "object") ? JSON.stringify(v) : String(v)));
+        box.appendChild(row);
+      });
+    } else {
+      var row2 = el("div", "row");
+      row2.appendChild(el("span", "k", sec));
+      row2.appendChild(el("span", "v", String(val)));
+      box.appendChild(row2);
+    }
+  });
+}
+
+/* =====================================================================
+ * ROS2 话题订阅卡（P1.5）
+ *   /api/topics 一次返回：ws 连接串 + 话题清单 + rosbridge 运行态。
+ *   话题清单不随 1s tick 刷（ros2 topic list 约 1~2s，太贵），
+ *   只在登录/服务动作后的 refreshAll 与手动「刷新话题」时拉。
+ * =================================================================== */
+var lastTopics = null;
+
+function refreshTopics(){
+  var kv = document.getElementById("topics-kv");
+  var tbl = document.getElementById("topics-table");
+  var hint = document.getElementById("topics-hint");
+  kv.textContent = "查询中…";
+  api("/api/topics").then(function(data){
+    if (!data.ok) return;
+    lastTopics = data;
+    kv.textContent = "";
+    [
+      ["rosbridge 地址", data.ws_url || "-"],
+      ["话题数", (data.topics || []).length],
+      ["rosbridge 服务", data.rosbridge_running ? "运行中" : "未运行"]
+    ].forEach(function(r){
+      kv.appendChild(el("span", "k", r[0]));
+      kv.appendChild(el("span", "v", r[1]));
+    });
+    tbl.textContent = "";
+    var list = data.topics || [];
+    if (!list.length) {
+      tbl.appendChild(el("div", "empty",
+        data.error ? ("查询失败：" + data.error) : "（未发现话题）"));
+    } else {
+      list.forEach(function(t){
+        var row = el("div", "trow");
+        row.appendChild(el("span", "tt", t.name));
+        row.appendChild(el("span", "ty", t.type));
+        tbl.appendChild(row);
+      });
+    }
+    if (!data.rosbridge_running) {
+      hint.textContent = "rosbridge 服务未运行，Foxglove 还连不上：请先在上方卡片启动 rosbridge。";
+      hint.hidden = false;
+    } else if (data.error) {
+      hint.textContent = "话题查询异常：" + data.error;
+      hint.hidden = false;
+    } else {
+      hint.hidden = true;
+      hint.textContent = "";
+    }
+  }).catch(function(){});
+}
+
+function copyText(text, done){
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function(){ legacyCopy(text, done); });
+  } else {
+    legacyCopy(text, done);
+  }
+}
+function legacyCopy(text, done){
+  // http 非安全上下文没有 navigator.clipboard，退回 execCommand
+  var ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); done(); }
+  catch (e) { toast("复制失败，请手动选择连接串", "err"); }
+  document.body.removeChild(ta);
+}
+
+document.getElementById("topics-refresh").addEventListener("click", refreshTopics);
+document.getElementById("topics-copy").addEventListener("click", function(){
+  var url = lastTopics && lastTopics.ws_url;
+  if (!url) { toast("连接串尚未就绪", "warn"); return; }
+  copyText(url, function(){ toast("已复制：" + url, "ok"); });
+});
+
+/* =====================================================================
+ * 配置在线编辑（P1.5）
+ *   弹层表单 → 组装 patch → 二次确认 → POST /api/config
+ *   → 成功则 needs_restart 含 yolo 时显示冷启动横幅，并重拉只读树。
+ *   编辑输入框全部建在 #modal-root，**不得**放进 #cfgtree
+ *   （ui-test U20 断言 cfgtree 内 input 数为 0）。
+ * =================================================================== */
+function frow(label, node){
+  var r = el("div", "frow");
+  r.appendChild(el("label", null, label));
+  r.appendChild(node);
+  return r;
+}
+function fsec(title){ return el("div", "fsec", title); }
+function txt(val){
+  var i = el("input");
+  i.type = "text";
+  i.value = (val === null || val === undefined) ? "" : val;
+  return i;
+}
+function num(val, min, max){
+  var i = el("input");
+  i.type = "number";
+  i.value = val;
+  if (min !== undefined) i.min = min;
+  if (max !== undefined) i.max = max;
+  return i;
+}
+function chk(val){
+  var i = el("input");
+  i.type = "checkbox";
+  i.checked = !!val;
+  i.style.width = "auto";
+  return i;
+}
+function sel(val, opts){
+  var s = el("select");
+  opts.forEach(function(o){
+    var op = el("option", null, o[1]);
+    op.value = o[0];
+    if (o[0] === val) op.selected = true;
+    s.appendChild(op);
+  });
+  return s;
+}
+function pair(a, b, sep){
+  var box = el("div", "inline");
+  box.appendChild(a);
+  box.appendChild(el("span", null, sep || "／"));
+  box.appendChild(b);
+  return box;
+}
+function numOf(node){ return Number(node.value); }
+function changed(cur, val){ return val !== cur; }
+
+function openCfgEditor(){
+  if (!lastCfg) { toast("配置尚未加载，请稍候再试", "warn"); return; }
+  var cfg = lastCfg;
+  var root = document.getElementById("modal-root");
+  root.textContent = "";
+  var mask = el("div", "modal-mask");
+  var box = el("div", "modal wide");
+  box.appendChild(el("h3", null, "编辑运行配置"));
+  box.appendChild(el("p", null,
+    "保存后写入 config/yolo8.json（旧文件自动备份为 .bak-<时间戳>，保留 10 份），" +
+    "并自动重启 yolo 生效（约 35s 冷启动，期间推理与推流中断）。" +
+    "console 段（绑定/端口/白名单/令牌）不在此处修改。"));
+  var errBox = el("div", "modal-err");
+  errBox.hidden = true;
+  box.appendChild(errBox);
+  var form = el("div", "form");
+
+  /* ---- 视频源 ---- */
+  form.appendChild(fsec("视频源 source"));
+  var typeSel = sel(cfg.source.type, [["rtsp", "RTSP 流"], ["file", "本地文件"]]);
+  form.appendChild(frow("类型", typeSel));
+  var rtspUrl = txt(cfg.source.rtsp_url);
+  var rtspRow = frow("RTSP 地址", rtspUrl);
+  form.appendChild(rtspRow);
+  var filePath = txt(cfg.source.file_path);
+  var fileRow = frow("文件路径", filePath);
+  form.appendChild(fileRow);
+  var transportSel = sel(cfg.source.transport, [["udp", "UDP"], ["tcp", "TCP"]]);
+  form.appendChild(frow("传输协议", transportSel));
+  var decoderSel = sel(cfg.source.decoder, [["hw", "硬件解码"], ["auto", "自动"]]);
+  form.appendChild(frow("解码器", decoderSel));
+  var latency = num(cfg.source.latency_ms, 0, 10000);
+  form.appendChild(frow("缓冲 latency(ms)", latency));
+  var srcW = num(cfg.source.out_width, 16, 4096);
+  var srcH = num(cfg.source.out_height, 16, 4096);
+  form.appendChild(frow("输出分辨率", pair(srcW, srcH, "×")));
+  var readTo = num(cfg.source.read_timeout_ms, 500, 60000);
+  form.appendChild(frow("读超时(ms)", readTo));
+  var probeSrcBtn = el("button", null, "测视频源");
+  var probeStmBtn = el("button", null, "测推流目标");
+  var probeBox = el("div", "inline");
+  probeBox.appendChild(probeSrcBtn);
+  probeBox.appendChild(probeStmBtn);
+  form.appendChild(frow("保存前预检", probeBox));
+
+  /* ---- 检测 ---- */
+  form.appendChild(fsec("检测 detect"));
+  var confNum = num(cfg.detect.conf_threshold, 0.05, 0.95);
+  confNum.step = "0.05";
+  var confRange = el("input");
+  confRange.type = "range";
+  confRange.min = "0.05";
+  confRange.max = "0.95";
+  confRange.step = "0.05";
+  confRange.value = cfg.detect.conf_threshold;
+  confRange.addEventListener("input", function(){ confNum.value = confRange.value; });
+  confNum.addEventListener("input", function(){ confRange.value = confNum.value; });
+  var confBox = el("div", "inline");
+  confBox.appendChild(confRange);
+  confBox.appendChild(confNum);
+  form.appendChild(frow("置信度阈值", confBox));
+  var classesTxt = txt((cfg.detect.classes || []).join(", "));
+  form.appendChild(frow("检测类别（逗号分隔）", classesTxt));
+
+  /* ---- 抓拍 ---- */
+  form.appendChild(fsec("抓拍 snapshot"));
+  var snapEnabled = chk(cfg.snapshot.enabled);
+  form.appendChild(frow("启用抓拍", snapEnabled));
+  var cooldown = num(cfg.snapshot.cooldown_ms, 0);
+  var cooldownCls = num(cfg.snapshot.cooldown_ms_per_class, 0);
+  form.appendChild(frow("全局/分类冷却(ms)", pair(cooldown, cooldownCls)));
+  var quota = num(cfg.snapshot.daily_quota, 0);
+  var retention = num(cfg.snapshot.retention_days, 0);
+  form.appendChild(frow("日配额/保留天数", pair(quota, retention)));
+  var minFree = num(cfg.snapshot.min_free_gb, 0);
+  minFree.step = "0.5";
+  form.appendChild(frow("最小剩余空间(GB)", minFree));
+  var saveMeta = chk(cfg.snapshot.save_meta);
+  var saveAnn = chk(cfg.snapshot.save_annotated);
+  form.appendChild(frow("存元数据/标注图", pair(saveMeta, saveAnn)));
+
+  /* ---- 推流 ---- */
+  form.appendChild(fsec("推流 stream"));
+  var rtmpOn = chk(cfg.stream.rtmp);
+  form.appendChild(frow("启用 RTMP", rtmpOn));
+  var rtmpUrl = txt(cfg.stream.rtmp_url);
+  form.appendChild(frow("推流地址", rtmpUrl));
+  var bitrate = num(cfg.stream.rtmp_bitrate, 100000, 8000000);
+  bitrate.step = "100000";
+  form.appendChild(frow("码率(bps)", bitrate));
+  var stmW = num(cfg.stream.out_width, 16, 4096);
+  var stmH = num(cfg.stream.out_height, 16, 4096);
+  form.appendChild(frow("输出分辨率", pair(stmW, stmH, "×")));
+  var fps = num(cfg.stream.fps, 1, 60);
+  form.appendChild(frow("帧率", fps));
+
+  /* ---- 其他 ---- */
+  form.appendChild(fsec("其他"));
+  var engine = txt(cfg.model.engine);
+  form.appendChild(frow("模型 engine", engine));
+  var picDir = txt(cfg.pic_dir);
+  form.appendChild(frow("抓拍目录", picDir));
+
+  box.appendChild(form);
+  var actions = el("div", "actions");
+  var cancel = el("button", null, "取消");
+  var save = el("button", "primary", "保存并重启 yolo");
+  actions.appendChild(cancel);
+  actions.appendChild(save);
+  box.appendChild(actions);
+  mask.appendChild(box);
+  root.appendChild(mask);
+  cancel.onclick = function(){ root.textContent = ""; };
+  mask.onclick = function(ev){ if (ev.target === mask) root.textContent = ""; };
+
+  function syncType(){
+    rtspRow.style.display = typeSel.value === "rtsp" ? "" : "none";
+    fileRow.style.display = typeSel.value === "rtsp" ? "none" : "";
+  }
+  typeSel.addEventListener("change", syncType);
+  syncType();
+
+  probeSrcBtn.onclick = function(){
+    probeSrcBtn.disabled = true;
+    api("/api/source/probe", {method: "POST",
+        body: {url: rtspUrl.value.trim(), transport: transportSel.value}})
+      .then(function(d){
+        if (d.ok && d.reachable) {
+          toast("视频源可达：" + (d.codec || "?") + " " +
+                (d.width || "?") + "×" + (d.height || "?") + " @" + (d.fps || "?"), "ok");
+        } else {
+          toast("视频源不可达：" + (d.error || "未知错误"), "err");
+        }
+      }).catch(function(e){ if (!e || !e.abort) toast("探测请求失败", "err"); })
+      .then(function(){ probeSrcBtn.disabled = false; });
+  };
+  probeStmBtn.onclick = function(){
+    probeStmBtn.disabled = true;
+    api("/api/stream/probe", {method: "POST", body: {url: rtmpUrl.value.trim()}})
+      .then(function(d){
+        if (d.ok && d.reachable) {
+          toast("推流目标 TCP 可达（" + d.host + ":" + d.port + "，" + d.elapsed_ms + "ms）", "ok");
+        } else {
+          toast("推流目标不可达：" + (d.error || "未知错误"), "err");
+        }
+      }).catch(function(e){ if (!e || !e.abort) toast("探测请求失败", "err"); })
+      .then(function(){ probeStmBtn.disabled = false; });
+  };
+
+  save.onclick = function(){
+    errBox.hidden = true;
+    var patch = {};
+    var src = {};
+    if (changed(cfg.source.type, typeSel.value)) src.type = typeSel.value;
+    if (changed(cfg.source.rtsp_url, rtspUrl.value.trim())) src.rtsp_url = rtspUrl.value.trim();
+    if (changed(cfg.source.file_path, filePath.value)) src.file_path = filePath.value;
+    if (changed(cfg.source.transport, transportSel.value)) src.transport = transportSel.value;
+    if (changed(cfg.source.decoder, decoderSel.value)) src.decoder = decoderSel.value;
+    if (changed(cfg.source.latency_ms, numOf(latency))) src.latency_ms = numOf(latency);
+    if (changed(cfg.source.out_width, numOf(srcW))) src.out_width = numOf(srcW);
+    if (changed(cfg.source.out_height, numOf(srcH))) src.out_height = numOf(srcH);
+    if (changed(cfg.source.read_timeout_ms, numOf(readTo))) src.read_timeout_ms = numOf(readTo);
+    if (Object.keys(src).length) patch.source = src;
+
+    var det = {};
+    if (changed(cfg.detect.conf_threshold, numOf(confNum))) det.conf_threshold = numOf(confNum);
+    var classes = classesTxt.value.split(/[,，\s]+/).map(function(s){ return s.trim(); })
+      .filter(function(s){ return s.length; }).map(Number);
+    if (JSON.stringify(classes) !== JSON.stringify(cfg.detect.classes)) det.classes = classes;
+    if (Object.keys(det).length) patch.detect = det;
+
+    var snap = {};
+    if (changed(cfg.snapshot.enabled, snapEnabled.checked)) snap.enabled = snapEnabled.checked;
+    if (changed(cfg.snapshot.cooldown_ms, numOf(cooldown))) snap.cooldown_ms = numOf(cooldown);
+    if (changed(cfg.snapshot.cooldown_ms_per_class, numOf(cooldownCls))) {
+      snap.cooldown_ms_per_class = numOf(cooldownCls);
+    }
+    if (changed(cfg.snapshot.daily_quota, numOf(quota))) snap.daily_quota = numOf(quota);
+    if (changed(cfg.snapshot.retention_days, numOf(retention))) snap.retention_days = numOf(retention);
+    if (changed(cfg.snapshot.min_free_gb, numOf(minFree))) snap.min_free_gb = numOf(minFree);
+    if (changed(cfg.snapshot.save_meta, saveMeta.checked)) snap.save_meta = saveMeta.checked;
+    if (changed(cfg.snapshot.save_annotated, saveAnn.checked)) snap.save_annotated = saveAnn.checked;
+    if (Object.keys(snap).length) patch.snapshot = snap;
+
+    var stm = {};
+    if (changed(cfg.stream.rtmp, rtmpOn.checked)) stm.rtmp = rtmpOn.checked;
+    if (changed(cfg.stream.rtmp_url, rtmpUrl.value.trim())) stm.rtmp_url = rtmpUrl.value.trim();
+    if (changed(cfg.stream.rtmp_bitrate, numOf(bitrate))) stm.rtmp_bitrate = numOf(bitrate);
+    if (changed(cfg.stream.out_width, numOf(stmW))) stm.out_width = numOf(stmW);
+    if (changed(cfg.stream.out_height, numOf(stmH))) stm.out_height = numOf(stmH);
+    if (changed(cfg.stream.fps, numOf(fps))) stm.fps = numOf(fps);
+    if (Object.keys(stm).length) patch.stream = stm;
+
+    if (changed(cfg.model.engine, engine.value.trim())) patch.model = {engine: engine.value.trim()};
+    if (changed(cfg.pic_dir, picDir.value)) patch.pic_dir = picDir.value;
+
+    if (!Object.keys(patch).length) { toast("没有任何修改", "warn"); return; }
+
+    confirmDanger("保存配置",
+      "将写入 config/yolo8.json 并自动重启 yolo（约 35s 冷启动，期间推理与推流中断）。确认保存？")
+      .then(function(yes){
+        if (!yes) return;
+        save.disabled = true;
+        save.textContent = "保存中…";
+        api("/api/config", {method: "POST", body: {config: patch}}).then(function(d){
+          if (d.ok) {
+            root.textContent = "";
+            cfgLoaded = false;
+            refreshConfig();
+            var msg = d.message || "配置已保存";
+            if (d.restart && d.restart.skipped) {
+              toast(msg + "（yolo 未运行，下次启动生效）", "ok");
+            } else if (d.needs_restart && d.needs_restart.indexOf("yolo") >= 0) {
+              toast(msg + "，yolo 正在重启（约 35s）", "ok");
+              showRestartBanner();
+            } else {
+              toast(msg, "ok");
+            }
+            refreshAll();
+          } else {
+            errBox.textContent = d.error || "保存失败";
+            errBox.hidden = false;
+          }
+        }).catch(function(e){
+          if (!e || !e.abort) { errBox.textContent = "网络错误"; errBox.hidden = false; }
+        }).then(function(){
+          save.disabled = false;
+          save.textContent = "保存并重启 yolo";
+        });
+      });
+  };
+}
+
+var restartBannerTimer = null;
+function showRestartBanner(){
+  var b = document.getElementById("restart-banner");
+  var left = 35;
+  b.textContent = "yolo 正在重启（约 35s 冷启动），推理与推流暂不可用…";
+  b.hidden = false;
+  if (restartBannerTimer) clearInterval(restartBannerTimer);
+  restartBannerTimer = setInterval(function(){
+    left -= 1;
+    if (left <= 0) {
+      b.hidden = true;
+      clearInterval(restartBannerTimer);
+      restartBannerTimer = null;
+    } else {
+      b.textContent = "yolo 正在重启（约 " + left + "s 冷启动），推理与推流暂不可用…";
+    }
+  }, 1000);
+}
+
+document.getElementById("cfg-edit-btn").addEventListener("click", openCfgEditor);
+
+/* =====================================================================
+ * 抓拍浏览（P3，计划书 §5.5.1）
+ *  - 进度条 = 真实时间轴（00:00:00–23:59:59 线性映射），**不是"第 N 张"等距**：
+ *    抓拍受冷却约束天然稀疏，等距会让拖动在无人时段"空跑"；
+ *  - 拖动只换缩略图（宽 320，服务端 pic/.thumbs/ 缓存），**停止 150ms 防抖**
+ *    才拉原图；预取当前 ±3 张缩略图保证视觉连续；
+ *  - 密度带 240 槽（6 min/槽），点击跳到该槽首帧；
+ *  - ←/→ ±1 帧，Shift+←/→ ±10 帧；
+ *  - 软删除（D2）二次确认，删后重拉 timeline 即时更新。
+ * =================================================================== */
+var PICS_DAY_MS = 86400000;
+var PICS_PREFETCH = 3;
+var PICS_DEBOUNCE_MS = 150;
+var PICS_SLOTS = 240;
+var PICS_CLS_NAME = {0: "person"};
+
+var pics = {date: null, items: [], idx: -1, debounceTimer: null, shownFull: null};
+
+function picsDateInput(){ return document.getElementById("pics-date"); }
+function picsToday(){
+  var d = new Date();
+  return "" + d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0")
+         + String(d.getDate()).padStart(2, "0");
+}
+function picsSetDateInput(yyyymmdd){
+  picsDateInput().value = yyyymmdd.slice(0, 4) + "-" + yyyymmdd.slice(4, 6)
+                      + "-" + yyyymmdd.slice(6, 8);
+}
+function picsTsToSlider(ts_ms){
+  var d = new Date(ts_ms);
+  return d.getHours() * 3600000 + d.getMinutes() * 60000
+         + d.getSeconds() * 1000 + d.getMilliseconds();
+}
+function picsSliderToTs(v){
+  var y = Number(pics.date.slice(0, 4)), m = Number(pics.date.slice(4, 6)),
+      d = Number(pics.date.slice(6, 8));
+  return new Date(y, m - 1, d, 0, 0, 0, v).getTime();
+}
+function picsPad(n, w){ return String(n).padStart(w, "0"); }
+function picsFmtTs(ts_ms){
+  var d = new Date(ts_ms);
+  return picsPad(d.getHours(), 2) + ":" + picsPad(d.getMinutes(), 2) + ":"
+         + picsPad(d.getSeconds(), 2) + "." + picsPad(d.getMilliseconds(), 3);
+}
+function picsFmtSize(bytes){
+  if (bytes == null) return "-";
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / 1024 / 1024).toFixed(2) + " MB";
+}
+function picsUrl(name, thumb){
+  return "/api/pics/" + pics.date + "/" + encodeURIComponent(name)
+         + (thumb ? "?thumb=1" : "");
+}
+function picsHint(msg){
+  var h = document.getElementById("pics-hint");
+  if (!msg) { h.hidden = true; h.textContent = ""; return; }
+  h.textContent = msg; h.hidden = false;
+}
+function picsShowLoading(on){ document.getElementById("pics-loading").hidden = !on; }
+
+function picsShowEmpty(empty){
+  document.getElementById("pics-empty").hidden = !empty;
+  document.getElementById("pics-full").hidden = empty;
+  document.getElementById("pics-timeline").hidden = empty;
+  if (empty) document.getElementById("pics-title").textContent = "--:--:--.---";
+}
+
+/** 二分吸附：时间轴上与目标最近的一张（§5.5.1 关键语义）。 */
+function picsSnapIndex(sliderVal){
+  if (!pics.items.length) return -1;
+  var target = picsSliderToTs(sliderVal);
+  var lo = 0, hi = pics.items.length - 1;
+  if (target <= pics.items[0].ts_ms) return 0;
+  if (target >= pics.items[hi].ts_ms) return hi;
+  while (lo < hi - 1) {
+    var mid = (lo + hi) >> 1;
+    if (pics.items[mid].ts_ms < target) lo = mid; else hi = mid;
+  }
+  return (target - pics.items[lo].ts_ms) <= (pics.items[hi].ts_ms - target) ? lo : hi;
+}
+
+function picsLoad(date){
+  picsShowLoading(true);
+  picsHint("");
+  // 记住当前浏览的那张：自动刷新/删除还原后重拉不应把用户弹回最新
+  // （实测坑：10s 自动刷新曾把用户正看的中间帧重置到末张，2026-10-22 L10 验收暴露）
+  var prevName = (pics.items.length && pics.idx >= 0
+                  && pics.idx < pics.items.length)
+                 ? pics.items[pics.idx].name : null;
+  api("/api/pics/timeline?date=" + date).then(function(d){
+    if (!d.ok) { picsHint("加载失败：" + (d.error || "未知错误")); return; }
+    pics.date = date;
+    pics.items = d.items || [];
+    pics.shownFull = null;
+    var countEl = document.getElementById("pics-count");
+    if (!pics.items.length) {
+      picsShowEmpty(true);
+      countEl.textContent = d.exists ? "0 张" : "当日无目录";
+      document.getElementById("pics-empty-text").textContent =
+        d.exists ? "当日暂无抓拍" : "当日无抓拍目录";
+      document.getElementById("pics-meta").textContent = "";
+      // 空态：给出"跳到最近有抓拍的日期"入口
+      api("/api/pics/dates").then(function(dd){
+        var btn = document.getElementById("pics-goto-latest");
+        if (dd.ok && dd.dates && dd.dates.length) { btn.hidden = false; btn.dataset.date = dd.dates[0]; }
+        else { btn.hidden = true; }
+      }).catch(function(){});
+      return;
+    }
+    picsShowEmpty(false);
+    countEl.textContent = (d.count != null ? d.count : pics.items.length) + " 张"
+      + (d.sampled ? "（超 5000 已抽稀）" : "");
+    picsRenderDensity();
+    // 原图仍在（按 name 找回，索引可能因删除/新增而位移）→ 保持；
+    // 不在（被删/跨日期）→ 定位当天最后一张
+    var keep = -1;
+    if (prevName) {
+      for (var i = 0; i < pics.items.length; i++) {
+        if (pics.items[i].name === prevName) { keep = i; break; }
+      }
+    }
+    picsGotoIdx(keep >= 0 ? keep : pics.items.length - 1, true);
+  }).catch(function(e){
+    if (!e || !e.abort) picsHint("网络错误");
+  }).then(function(){ picsShowLoading(false); });
+}
+
+function picsGotoIdx(idx, immediate){
+  if (idx < 0 || idx >= pics.items.length) return;
+  pics.idx = idx;
+  var it = pics.items[idx];
+  document.getElementById("pics-slider").value = picsTsToSlider(it.ts_ms);
+  document.getElementById("pics-title").textContent = picsFmtTs(it.ts_ms);
+  document.getElementById("pics-meta").textContent =
+    "第 " + (idx + 1) + " / " + pics.items.length + " 张 · 置信度 "
+    + (it.conf != null ? it.conf.toFixed(2) : "-")
+    + " · 类别 " + (it.cls != null
+        ? (PICS_CLS_NAME[it.cls] || ("#" + it.cls)) : "-")
+    + " · " + picsFmtSize(it.size)
+    + " · " + it.name;
+  var img = document.getElementById("pics-full");
+  img.hidden = false;
+  img.src = picsUrl(it.name, true);               // 拖动中只换缩略图
+  if (immediate) picsShowFull(it.name);
+  else picsScheduleFull(it.name);
+  picsPrefetch();
+}
+function picsShowFull(name){
+  var img = document.getElementById("pics-full");
+  if (pics.shownFull === name && img.src.indexOf("?thumb=1") < 0) return;
+  pics.shownFull = name;
+  img.src = picsUrl(name, false);                 // 防抖后才拉原图
+}
+function picsScheduleFull(name){
+  if (pics.debounceTimer) clearTimeout(pics.debounceTimer);
+  pics.debounceTimer = setTimeout(function(){ picsShowFull(name); }, PICS_DEBOUNCE_MS);
+}
+/** 预取当前 ±3 张缩略图（浏览器缓存 + 服务端 .thumbs 双缓存）。 */
+function picsPrefetch(){
+  for (var i = pics.idx - PICS_PREFETCH; i <= pics.idx + PICS_PREFETCH; i++) {
+    if (i < 0 || i >= pics.items.length || i === pics.idx) continue;
+    var im = new Image();
+    im.src = picsUrl(pics.items[i].name, true);
+  }
+}
+function picsStep(delta){
+  if (!pics.items.length) return;
+  var idx = Math.max(0, Math.min(pics.items.length - 1, pics.idx + delta));
+  picsGotoIdx(idx, true);
+}
+
+function picsRenderDensity(){
+  var band = document.getElementById("pics-density");
+  band.textContent = "";
+  var slotMs = PICS_DAY_MS / PICS_SLOTS;
+  var slots = new Array(PICS_SLOTS).fill(false);
+  pics.items.forEach(function(it){
+    var s = Math.min(PICS_SLOTS - 1, Math.floor(picsTsToSlider(it.ts_ms) / slotMs));
+    slots[s] = true;
+  });
+  slots.forEach(function(has, i){
+    var cell = el("div", "slot" + (has ? " has" : ""));
+    var start = picsSliderToTs(i * slotMs);
+    cell.title = picsFmtTs(start) + " – " + picsFmtTs(start + slotMs - 1);
+    cell.dataset.slot = i;
+    band.appendChild(cell);
+  });
+}
+
+/* ---- 事件绑定 ---- */
+document.getElementById("pics-date").addEventListener("change", function(){
+  if (this.value) picsLoad(this.value.replace(/-/g, ""));
+});
+document.getElementById("pics-today").addEventListener("click", function(){
+  picsSetDateInput(picsToday()); picsLoad(picsToday());
+});
+document.getElementById("pics-latest").addEventListener("click", function(){
+  api("/api/pics/dates").then(function(d){
+    if (d.ok && d.dates && d.dates.length) {
+      picsSetDateInput(d.dates[0]); picsLoad(d.dates[0]);
+    } else { picsHint("没有任何日期有抓拍"); }
+  }).catch(function(){});
+});
+document.getElementById("pics-refresh").addEventListener("click", function(){
+  if (pics.date) picsLoad(pics.date);
+});
+document.getElementById("pics-goto-latest").addEventListener("click", function(){
+  var d = this.dataset.date;
+  if (d) { picsSetDateInput(d); picsLoad(d); }
+});
+document.getElementById("pics-prev").addEventListener("click", function(){ picsStep(-1); });
+document.getElementById("pics-next").addEventListener("click", function(){ picsStep(1); });
+document.getElementById("pics-slider").addEventListener("input", function(){
+  var idx = picsSnapIndex(Number(this.value));
+  if (idx >= 0 && idx !== pics.idx) picsGotoIdx(idx, false);
+});
+document.getElementById("pics-slider").addEventListener("change", function(){
+  var idx = picsSnapIndex(Number(this.value));
+  if (idx >= 0) picsGotoIdx(idx, true);            // 松手：立即拉原图
+});
+document.getElementById("pics-density").addEventListener("click", function(ev){
+  var cell = ev.target.closest ? ev.target.closest(".slot") : null;
+  if (!cell) return;
+  var slot = Number(cell.dataset.slot);
+  var lo = slot * (PICS_DAY_MS / PICS_SLOTS);
+  for (var i = 0; i < pics.items.length; i++) {
+    if (picsTsToSlider(pics.items[i].ts_ms) >= lo) { picsGotoIdx(i, true); return; }
+  }
+});
+document.getElementById("pics-download").addEventListener("click", function(){
+  if (pics.idx < 0 || !pics.items[pics.idx]) { picsHint("当前没有可下载的图片"); return; }
+  var name = pics.items[pics.idx].name;
+  var a = document.createElement("a");
+  a.href = picsUrl(name, false);
+  a.download = name;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+});
+document.getElementById("pics-delete").addEventListener("click", function(){
+  if (pics.idx < 0 || !pics.items[pics.idx]) { picsHint("当前没有可删除的图片"); return; }
+  var it = pics.items[pics.idx];
+  confirmDanger("删除抓拍 " + it.name,
+    "将移入回收站 pic/.trash/（7 天后自动清理，期间可还原）。确认删除？")
+    .then(function(yes){
+      if (!yes) return;
+      api("/api/pics/" + pics.date + "/" + encodeURIComponent(it.name),
+         {method: "DELETE"}).then(function(d){
+        if (d.ok) {
+          toast("已移入回收站", "ok");
+          picsLoad(pics.date);                       // 删后重拉，时间轴/密度带即时更新
+          picsLoadTrash();
+        } else {
+          toast(d.error || "删除失败", "err");
+        }
+      }).catch(function(e){ if (!e || !e.abort) toast("网络错误", "err"); });
+    });
+});
+document.getElementById("pics-trash-refresh").addEventListener("click", picsLoadTrash);
+
+function picsLoadTrash(){
+  api("/api/pics/trash").then(function(d){
+    var box = document.getElementById("pics-trash");
+    var list = document.getElementById("pics-trash-list");
+    box.hidden = false;
+    list.textContent = "";
+    if (!d.ok || !d.items.length) {
+      list.appendChild(el("span", null, "（空）"));
+      return;
+    }
+    d.items.forEach(function(it){
+      var item = el("span", "pics-trash-item");
+      item.appendChild(el("span", null, it.date + " " + it.name));
+      var btn = el("button", null, "还原");
+      btn.addEventListener("click", function(){
+        api("/api/pics/trash/" + encodeURIComponent(it.name) + "/restore",
+           {method: "POST", body: {}}).then(function(r){
+          if (r.ok) {
+            toast("已还原", "ok");
+            picsLoadTrash();
+            if (pics.date === it.date) picsLoad(pics.date);
+          } else { toast(r.error || "还原失败", "err"); }
+        }).catch(function(e){ if (!e || !e.abort) toast("网络错误", "err"); });
+      });
+      item.appendChild(btn);
+      list.appendChild(item);
+    });
+  }).catch(function(){});
+}
+
+/* 键盘逐帧：←/→ ±1，Shift+←/→ ±10（焦点在表单控件里不拦截） */
+document.addEventListener("keydown", function(ev){
+  if (appView.hidden || document.hidden) return;
+  var t = ev.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "SELECT"
+            || t.tagName === "TEXTAREA")) return;
+  if (ev.key === "ArrowLeft") { picsStep(ev.shiftKey ? -10 : -1); }
+  else if (ev.key === "ArrowRight") { picsStep(ev.shiftKey ? 10 : 1); }
+});
+
+/* 首屏：默认今天；抓拍卡在视口内时每 10s 轻量刷新一次时间轴 */
+var picsTickCount = 0;
+function picsAutoRefresh(){
+  picsTickCount += 1;
+  if (picsTickCount % 10 !== 0) return;
+  var card = document.getElementById("card-pics");
+  var rect = card.getBoundingClientRect();
+  var visible = rect.top < window.innerHeight && rect.bottom > 0;
+  if (visible && pics.date) picsLoad(pics.date);
+}
+
+/* =====================================================================
+ * 日志
+ * =================================================================== */
+var logTargetSel = document.getElementById("log-target");
+var logLinesSel = document.getElementById("log-lines");
+var logFollow = document.getElementById("log-follow");
+function logFollowOn(){ return logFollow.checked && !document.hidden; }
+
+function refreshLogs(){
+  var target = logTargetSel.value;
+  var lines = logLinesSel.value;
+  api("/api/logs?target=" + encodeURIComponent(target) + "&lines=" + lines).then(function(data){
+    if (!data.ok) return;
+    document.getElementById("log-target-tag").textContent = data.target;
+    var box = document.getElementById("logbox");
+    var atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+    box.textContent = "";
+    if (!data.lines.length) {
+      box.appendChild(el("span", "ln", "（无日志行）"));
+    } else {
+      data.lines.forEach(function(l){ box.appendChild(el("span", "ln", l)); });
+    }
+    if (atBottom) box.scrollTop = box.scrollHeight;
+  }).catch(function(){});
+}
+document.getElementById("log-refresh").addEventListener("click", refreshLogs);
+logTargetSel.addEventListener("change", refreshLogs);
+logLinesSel.addEventListener("change", refreshLogs);
+
+/* =====================================================================
+ * 模型（P4：上传 onnx → 导出 engine → 启用/重载）
+ * =================================================================== */
+var COCO_NAMES = ["person","bicycle","car","motorcycle","airplane","bus","train","truck",
+  "boat","traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat",
+  "dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack","umbrella",
+  "handbag","tie","suitcase","frisbee","skis","snowboard","sports ball","kite",
+  "baseball bat","baseball glove","skateboard","surfboard","tennis racket","bottle",
+  "wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich","orange",
+  "broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant",
+  "bed","dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone",
+  "microwave","oven","toaster","sink","refrigerator","book","clock","vase","scissors",
+  "teddy bear","hair drier","toothbrush"];
+
+var modelUp = null;           // 最近一次上传结果（含 upload_id / classes / names）
+var modelPollTimer = null;
+var modelLastDone = null;
+var modelLastErr = null;
+
+function fmtSize(n){
+  if (n === null || n === undefined) return "-";
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+  if (n >= 1024) return (n / 1024).toFixed(0) + " KB";
+  return n + " B";
+}
+
+function modelHint(msg, kind){
+  var box = document.getElementById("model-hint");
+  if (!msg) { box.hidden = true; box.textContent = ""; return; }
+  box.hidden = false;
+  box.textContent = msg;
+  box.style.color = kind === "err" ? "var(--err)" : (kind === "ok" ? "var(--ok)" : "var(--warn)");
+}
+
+function renderExportTask(task){
+  if (!task) return;
+  var box = document.getElementById("model-progress-box");
+  if (task.state !== "idle") box.hidden = false;
+  document.getElementById("model-progress-bar").style.width = (task.progress || 0) + "%";
+  document.getElementById("model-progress-text").textContent =
+    "状态 " + task.state + " · " + (task.phase || "-") + " · " + (task.progress || 0) + "%" +
+    (task.engine ? (" · " + task.engine) : "") +
+    (task.error ? (" · " + task.error) : "");
+  var pre = document.getElementById("model-log");
+  pre.textContent = (task.log || []).join("\n");
+  pre.scrollTop = pre.scrollHeight;
+  document.getElementById("model-export").disabled = (task.state === "exporting");
+  if (task.state === "exporting") modelStartPoll(); else modelStopPoll();
+  if (task.state === "exported" && task.engine && task.engine !== modelLastDone) {
+    modelLastDone = task.engine;
+    toast("导出完成：" + task.engine, "ok");
+    modelRefresh();
+  }
+  if (task.state === "failed" && task.error && task.error !== modelLastErr) {
+    modelLastErr = task.error;
+    toast("导出失败：" + task.error, "err");
+  }
+}
+
+function modelRenderInfo(info){
+  var kv = document.getElementById("model-kv");
+  kv.textContent = "";
+  var eng = info.engine || {};
+  var wm = info.worker_model;
+  var rows = [
+    ["当前 engine", eng.rel || "-"],
+    ["文件", eng.exists ? (fmtSize(eng.size) + " · " + eng.mtime) : "不存在"],
+    ["类别", (eng.names_count !== undefined)
+      ? (eng.names_count + " 类 · imgsz " + JSON.stringify(eng.imgsz))
+      : (eng.meta_error || "-")],
+    ["worker", wm ? (wm.engine + (wm.pending_reload ? " · 待重载" : "") +
+                     (wm.reload_error ? " · 错误：" + wm.reload_error : "") +
+                     (wm.reload_count ? " · 已重载 " + wm.reload_count + " 次" : ""))
+                  : "未接入"]
+  ];
+  rows.forEach(function(r){
+    kv.appendChild(el("span", "k", r[0]));
+    kv.appendChild(el("span", "v", String(r[1])));
+  });
+  document.getElementById("model-tag").textContent = eng.exists
+    ? ("engine " + (eng.names_count !== undefined ? eng.names_count + " 类" : "?") +
+       " · " + fmtSize(eng.size))
+    : "onnx → TensorRT engine";
+  document.getElementById("model-reload").disabled = !eng.exists;
+
+  var list = document.getElementById("model-exports");
+  list.textContent = "";
+  var items = info.exports || [];
+  if (!items.length) {
+    list.appendChild(el("div", "empty", "暂无导出记录（上传 onnx 后可导出）"));
+  }
+  items.forEach(function(it){
+    var row = el("div", "model-row");
+    var isCur = it.rel === eng.rel;
+    row.appendChild(el("span", "n", it.name + (isCur ? "（当前）" : "")));
+    row.appendChild(el("span", "m",
+      fmtSize(it.size) + " · " + (it.names_count === null || it.names_count === undefined
+        ? "?" : it.names_count) + " 类 · " + it.mtime));
+    var btn = el("button", isCur ? null : "primary", isCur ? "重新加载" : "启用");
+    btn.addEventListener("click", function(){ modelReload(it.rel); });
+    row.appendChild(btn);
+    list.appendChild(row);
+  });
+
+  renderExportTask(info.export);
+}
+
+function modelRefresh(){
+  api("/api/model/info").then(function(data){
+    if (!data.ok) return;
+    modelRenderInfo(data);
+  }).catch(function(){});
+}
+
+function modelStartPoll(){
+  if (modelPollTimer) return;
+  modelPollTimer = setInterval(function(){
+    api("/api/model/export/status").then(function(data){
+      if (data.ok) renderExportTask(data.task);
+    }).catch(function(){});
+  }, 1200);
+}
+function modelStopPoll(){
+  if (modelPollTimer) { clearInterval(modelPollTimer); modelPollTimer = null; }
+}
+
+function modelReload(rel){
+  if (!rel) return;
+  confirmDanger("启用 engine：" + rel,
+    "将写入 config 的 model.engine 并置 pending_reload=true，worker 在下一帧重建模型\n" +
+    "（阻塞 2~5s，期间丢帧但进程不退出）。确认启用？")
+    .then(function(yes){
+      if (!yes) return;
+      api("/api/model/reload", {method:"POST", body:{engine: rel}}).then(function(data){
+        if (!data.ok) { modelHint(data.error || "启用失败", "err"); return; }
+        modelHint(data.message, "ok");
+        toast("已切换 engine：" + data.engine, "ok");
+        setTimeout(modelRefresh, 1500);
+        setTimeout(modelRefresh, 5000);
+      }).catch(function(){});
+    });
+}
+
+document.getElementById("model-refresh").addEventListener("click", modelRefresh);
+document.getElementById("model-file").addEventListener("change", function(ev){
+  var f = ev.target.files && ev.target.files[0];
+  document.getElementById("model-file-name").textContent =
+    f ? (f.name + " · " + fmtSize(f.size)) : "";
+  document.getElementById("model-upload").disabled = !f;
+});
+document.getElementById("model-names-clear").addEventListener("click", function(){
+  document.getElementById("model-names").value = "";
+});
+document.getElementById("model-coco").addEventListener("click", function(){
+  if (!modelUp) return;
+  if (modelUp.classes !== COCO_NAMES.length) {
+    modelHint("当前 onnx 是 " + modelUp.classes + " 类，不能直接套用 COCO 80 类", "warn");
+    return;
+  }
+  document.getElementById("model-names").value = COCO_NAMES.join("\n");
+  modelHint("已填入 COCO 80 类", "ok");
+});
+
+document.getElementById("model-upload").addEventListener("click", function(){
+  var input = document.getElementById("model-file");
+  var f = input.files && input.files[0];
+  if (!f) return;
+  if (!/\.onnx$/i.test(f.name)) { modelHint("只支持 .onnx 文件", "err"); return; }
+  var btn = this;
+  btn.disabled = true;
+  modelHint("上传并解析中…（≤50 MB）");
+  var fd = new FormData();
+  fd.append("onnx", f, f.name);
+  /* 不能走 api()：它会给 body 加 JSON Content-Type，破坏 multipart 边界 */
+  fetch("/api/model/upload", {
+    method: "POST", body: fd, credentials: "same-origin",
+    headers: { "X-Yolo-Token": getToken() }
+  }).then(function(resp){
+    return resp.json().catch(function(){
+      return {ok:false, error:"响应不是 JSON（HTTP " + resp.status + "）"};
+    }).then(function(data){ data._status = resp.status; return data; });
+  }).then(function(data){
+    if (!data.ok) { modelHint(data.error || "上传失败", "err"); return; }
+    modelUp = data;
+    document.getElementById("model-names-box").hidden = false;
+    document.getElementById("model-classes").textContent =
+      "onnx 推断 " + data.classes + " 类 · imgsz " + JSON.stringify(data.imgsz) +
+      " · opset " + data.opset + " · " + fmtSize(data.size);
+    var lines = [];
+    for (var i = 0; i < data.classes; i++) {
+      lines.push((data.names && data.names[String(i)]) || ("class_" + i));
+    }
+    document.getElementById("model-names").value = lines.join("\n");
+    var warn = (data.warnings || []).join("；");
+    modelHint("上传成功" + (warn ? "；" + warn : ""), warn ? "warn" : "ok");
+    if (data.classes === COCO_NAMES.length) {
+      document.getElementById("model-names").value = COCO_NAMES.join("\n");
+    }
+  }).catch(function(e){
+    modelHint("上传失败：" + (e && e.message ? e.message : e), "err");
+  }).then(function(){
+    btn.disabled = false;
+  });
+});
+
+document.getElementById("model-export").addEventListener("click", function(){
+  if (!modelUp) { modelHint("请先上传 onnx", "err"); return; }
+  var names = document.getElementById("model-names").value.split("\n")
+    .map(function(s){ return s.trim(); })
+    .filter(function(s){ return s.length > 0; });
+  if (names.length !== modelUp.classes) {
+    modelHint("类别清单有 " + names.length + " 行，与 onnx 推断的 " + modelUp.classes
+              + " 类不一致（必须逐行对应，行号即类别 id）", "err");
+    return;
+  }
+  var ws = parseInt(document.getElementById("model-ws").value, 10) || 1024;
+  var half = document.getElementById("model-half").checked;
+  var btn = this;
+  btn.disabled = true;
+  api("/api/model/export", {method:"POST", body:{
+    upload_id: modelUp.upload_id, names: names, workspace_mb: ws, half: half
+  }}).then(function(data){
+    if (!data.ok) { modelHint(data.error || "导出启动失败", "err"); btn.disabled = false; return; }
+    modelHint("导出中 → " + data.target + "（workspace " + data.workspace_mb + " MB）", "ok");
+    document.getElementById("model-progress-box").hidden = false;
+    modelStartPoll();
+  }).catch(function(e){
+    if (!e || !e.abort) modelHint("导出请求失败：" + e, "err");
+    btn.disabled = false;
+  });
+});
+
+document.getElementById("model-reload").addEventListener("click", function(){
+  /* 默认重载「当前配置」的 engine：由服务端按 config 解析路径 */
+  api("/api/model/info").then(function(data){
+    if (!data.ok) return;
+    modelReload((data.engine && data.engine.rel) || null);
+  }).catch(function(){});
+});
+
+/* =====================================================================
+ * P5：存储清理（占用统计 / 按需清空）
+ * 语义对齐 m20-ai-detect 的 ADR-008（留存清理）与 ADR-011（数据清空）
+ * =================================================================== */
+var STORAGE_TARGETS = ["pics", "trash", "uploads", "exports", "logs"];
+var STORAGE_LABEL = {pics: "抓拍图片", trash: "回收站", uploads: "上传缓存",
+                     exports: "导出 engine", logs: "日志（截断）"};
+
+function storageSelected(){
+  var out = [];
+  for (var i = 0; i < STORAGE_TARGETS.length; i++){
+    var el = document.getElementById("st-" + STORAGE_TARGETS[i]);
+    if (el && el.checked) out.push(STORAGE_TARGETS[i]);
+  }
+  return out;
+}
+
+function storageHint(msg, kind){
+  var box = document.getElementById("storage-hint");
+  if (!msg) { box.hidden = true; box.textContent = ""; return; }
+  box.hidden = false;
+  box.textContent = msg;
+  box.style.color = kind === "err" ? "var(--err)" : (kind === "ok" ? "var(--ok)" : "var(--warn)");
+}
+
+function storageRefresh(){
+  api("/api/maintenance/storage").then(function(d){
+    if (!d.ok) return;
+    var kinds = (d.storage || {}).kinds || {};
+    var html = "";
+    for (var i = 0; i < STORAGE_TARGETS.length; i++){
+      var k = STORAGE_TARGETS[i];
+      var v = kinds[k] || {files: 0, bytes: 0};
+      html += '<div class="kv"><span class="k">' + STORAGE_LABEL[k] +
+              '</span><span class="v">' + v.files + " 个 · " + fmtSize(v.bytes) + "</span></div>";
+    }
+    html += '<div class="kv"><span class="k">合计</span><span class="v">' +
+            fmtSize((d.storage || {}).total_bytes || 0) + "</span></div>";
+    document.getElementById("storage-list").innerHTML = html;
+
+    var r = d.retention || {};
+    document.getElementById("st-conf-days").textContent = r.pic_keep_days;
+    document.getElementById("st-conf-mb").textContent = r.pic_max_mb;
+    document.getElementById("st-conf-trash").textContent = r.trash_keep_days;
+    document.getElementById("st-conf-interval").textContent = r.prune_interval_s;
+
+    /* P4.6：占比条 + 留存策略内联编辑（retention 段改了不重启 yolo） */
+    renderStorageUsage(d);
+    retentionLoad(r);
+
+    var ps = d.prune_state || {};
+    document.getElementById("storage-tag").textContent = ps.last_ts
+      ? ("上次清理 " + String(ps.last_ts).slice(11, 19))
+      : "日志轮换 · 留存清理 · 按需清空";
+    if (ps.error) storageHint("上次清理出错：" + ps.error, "err");
+    else if (d.timing_cache_note) storageHint(d.timing_cache_note);
+  }).catch(function(e){
+    storageHint("读取占用失败：" + (e && e.error ? e.error : e), "err");
+  });
+}
+
+function storagePurge(){
+  var targets = storageSelected();
+  if (!targets.length) { toast("先勾一个清空范围", "warn"); return; }
+  var names = [];
+  for (var i = 0; i < targets.length; i++) names.push(STORAGE_LABEL[targets[i]]);
+  if (!window.confirm("确定清空【" + names.join("、") + "】？\n\n此操作不可恢复，确定继续？")) return;
+  var keep = document.getElementById("st-keep-cache").checked;
+  storageHint("清空中…");
+  api("/api/maintenance/purge", {
+    method: "POST",
+    body: {targets: targets, keep_timing_cache: keep}   // api() 内部会 JSON.stringify
+  }).then(function(d){
+    if (!d.ok) { storageHint(d.error || "清空失败", "err"); return; }
+    storageHint((d.message || "已清空") + " · 释放 " + fmtSize(d.freed_bytes), "ok");
+    toast(d.message || "清空完成", "ok");
+    storageRefresh();
+  }).catch(function(e){
+    storageHint("清空失败：" + (e && e.error ? e.error : e), "err");
+  });
+}
+
+document.getElementById("storage-refresh").addEventListener("click", storageRefresh);
+document.getElementById("storage-purge").addEventListener("click", storagePurge);
+for (var si = 0; si < STORAGE_TARGETS.length; si++){
+  (function(k){
+    var el = document.getElementById("st-" + k);
+    if (el) el.addEventListener("change", function(){
+      document.getElementById("storage-purge").disabled = storageSelected().length === 0;
+    });
+  })(STORAGE_TARGETS[si]);
+}
+
+/* =====================================================================
+ * toast
+ * =================================================================== */
+function toast(msg, kind){
+  var root = document.getElementById("toast");
+  var t = el("div", "toast " + (kind || ""), msg);
+  root.appendChild(t);
+  setTimeout(function(){ t.style.opacity = "0"; t.style.transition = "opacity .4s"; }, 2600);
+  setTimeout(function(){ if (t.parentNode) t.parentNode.removeChild(t); }, 3200);
+}
+
+/* =====================================================================
+ * P4.6 可用性改造：卡片折叠 / 占用占比条 / 配置内联编辑
+ *
+ * 控件语义统一（避免"有的按钮、有的文本框、有的裸 checkbox"）：
+ *   布尔 → 开关 switch；有范围的数值 → 滑块 + 数字框联动；枚举 → 下拉；
+ *   长文本 → 文本域；危险操作 → danger 按钮 + 二次确认；
+ *   耗时任务 → 进度条 + 阶段文案；只读指标 → kv 文本。
+ * 折叠状态存 localStorage，刷新后保持；折叠时标题右侧仍显示关键结论，
+ * 做到"收起看结论、展开看细节"。
+ * =================================================================== */
+var COLLAPSE_KEY = "yolo8_card_collapsed";
+var lastStorageTotal = 0;
+
+function lsGet(key, def){
+  try { var v = localStorage.getItem(key); return v === null ? def : v; } catch (e) { return def; }
+}
+function lsSet(key, val){ try { localStorage.setItem(key, val); } catch (e) {} }
+
+function closestNode(node, sel){
+  while (node && node.nodeType === 1) {
+    if (node.matches && node.matches(sel)) return node;
+    node = node.parentNode;
+  }
+  return null;
+}
+function isInteractive(node){
+  return !!closestNode(node, "button,input,select,textarea,label,a");
+}
+
+function collapsedMap(){
+  var raw = lsGet(COLLAPSE_KEY, ""), m = {};
+  if (raw) {
+    var parts = String(raw).split(",");
+    for (var i = 0; i < parts.length; i++) if (parts[i]) m[parts[i]] = 1;
+  }
+  return m;
+}
+function saveCollapsed(m){
+  var out = [];
+  for (var k in m) if (m[k]) out.push(k);
+  lsSet(COLLAPSE_KEY, out.join(","));
+}
+
+/* ---------------- P4.7：首访默认折叠 + 卡片定位 ----------------
+ * 实测：配置 / 模型 / 存储三张卡单卡高 1232px（视口 720），首屏被它们占满，
+ * 真正要盯的服务状态反而在最下面要滚很久。首次访问默认收起这三张重卡，
+ * 之后完全尊重用户选择（用独立标志位，不能用 collapsedMap —— 用户全展开后
+ * 存的是空串，和"首次访问"无法区分，会导致每次刷新都被重新折叠）。 */
+var COLLAPSE_DEFAULT_KEY = "yolo8_card_defaults_done";
+var DEFAULT_COLLAPSED = ["card-config", "card-model", "card-storage"];
+
+function applyDefaultCollapse(saved){
+  if (lsGet(COLLAPSE_DEFAULT_KEY, "")) return saved;
+  for (var i = 0; i < DEFAULT_COLLAPSED.length; i++) saved[DEFAULT_COLLAPSED[i]] = 1;
+  saveCollapsed(saved);
+  lsSet(COLLAPSE_DEFAULT_KEY, "1");
+  return saved;
+}
+
+/** 强制展开某张卡（告警横幅"去处理"用），并写回记忆 */
+function expandCard(id){
+  var card = document.getElementById(id);
+  if (!card) return;
+  if (card.className.indexOf("collapsed") >= 0) {
+    card.className = card.className.replace(/\s*collapsed/g, "");
+    var m = collapsedMap(); delete m[id]; saveCollapsed(m);
+  }
+  syncToggleAllBtn();
+}
+/** 展开 + 滚动定位（顶栏是 sticky，用 scroll-margin-top 让开高度） */
+function gotoCard(id){
+  expandCard(id);
+  var card = document.getElementById(id);
+  if (card && card.scrollIntoView) card.scrollIntoView({behavior: "smooth", block: "start"});
+}
+
+/* ---------------- 页面级告警横幅（P4.7） ----------------
+ * 原来"rosbridge 未运行"这类跨卡告警埋在话题卡内部，滚过去才看得见。
+ * 提到页面级，并给一个直达按钮（自动展开目标卡 + 滚动过去）。 */
+function renderAlerts(st){
+  var box = document.getElementById("alert-banner");
+  if (!box) return;
+  var svc = st.services || {}, host = st.host || {}, wk = st.worker || {};
+  var items = [];
+  if (svc.rosbridge && !svc.rosbridge.running)
+    items.push({lv:"warn", txt:"rosbridge 未运行：Foxglove 与话题订阅都连不上",
+                go:"card-rosbridge", goTxt:"去启动"});
+  if (wk.model && wk.model.reload_error)
+    items.push({lv:"err", txt:"engine 重载失败：" + wk.model.reload_error,
+                go:"card-model", goTxt:"去处理"});
+  if (wk.snapshot && wk.snapshot.disk_low)
+    items.push({lv:"err", txt:"抓拍已触发磁盘红线，已自动暂停", go:"card-storage", goTxt:"去清理"});
+  if (host.disk_avail_gb < 5)
+    items.push({lv:"err", txt:"磁盘可用仅 " + host.disk_avail_gb + " GB", go:"card-storage", goTxt:"去清理"});
+  if (host.mem_avail_mb < 1024)
+    items.push({lv:"warn", txt:"内存可用仅 " + host.mem_avail_mb + " MB", go:null});
+
+  box.textContent = "";
+  if (!items.length) { box.hidden = true; return; }
+  var hasErr = false;
+  for (var i = 0; i < items.length; i++) if (items[i].lv === "err") hasErr = true;
+  box.className = "banner alert" + (hasErr ? " lv-err" : "");
+  box.hidden = false;
+  items.forEach(function(it){
+    var row = el("div", "al-row");
+    row.appendChild(el("span", "al-txt", (it.lv === "err" ? "✕ " : "! ") + it.txt));
+    if (it.go) {
+      var b = el("button", "al-go", it.goTxt);
+      /* 单表达式闭包：避免循环变量捕获问题 */
+      b.addEventListener("click", (function(id){ return function(){ gotoCard(id); }; })(it.go));
+      row.appendChild(b);
+    }
+    box.appendChild(row);
+  });
+}
+
+/* ---------------- 卡片折叠 ---------------- */
+function initCollapsible(){
+  var cards = document.querySelectorAll("#app-view .grid > .card");
+  var saved = applyDefaultCollapse(collapsedMap());
+  for (var i = 0; i < cards.length; i++) buildCardHead(cards[i], saved);
+  var boxes = document.querySelectorAll(".icfg");
+  for (var j = 0; j < boxes.length; j++) bindIcfgHead(boxes[j]);
+  bindRetentionEvents();
+  bindQuickCfgEvents();
+  var btn = document.getElementById("toggle-all-btn");
+  if (btn) btn.addEventListener("click", toggleAllCards);
+  syncToggleAllBtn();
+}
+
+function buildCardHead(card, saved){
+  var h2 = card.querySelector("h2");
+  if (!h2) return;
+  var id = card.id || ("card-x" + Math.random().toString(36).slice(2, 7));
+  if (!card.id) card.id = id;
+
+  var head = el("div", "card-head");
+  var summary = el("span", "card-summary");
+  summary.id = "sum-" + id;
+  card.insertBefore(head, h2);
+  head.appendChild(el("span", "card-arrow", "▾"));
+  head.appendChild(h2);
+  head.appendChild(summary);
+
+  /* h2 之后的兄弟节点整体折进 .card-body */
+  var body = el("div", "card-body");
+  var node = head.nextSibling;
+  while (node) {
+    var next = node.nextSibling;
+    body.appendChild(node);
+    node = next;
+  }
+  card.appendChild(body);
+
+  if (saved[id]) card.className += " collapsed";
+  head.title = "点击折叠 / 展开";
+  head.addEventListener("click", function(ev){
+    if (isInteractive(ev.target)) return;
+    toggleCard(card, id);
+  });
+}
+
+function toggleCard(card, id){
+  var on = card.className.indexOf("collapsed") >= 0;
+  if (on) card.className = card.className.replace(/\s*collapsed/g, "");
+  else card.className += " collapsed";
+  var m = collapsedMap();
+  if (on) delete m[id]; else m[id] = 1;
+  saveCollapsed(m);
+  syncToggleAllBtn();
+}
+
+function allCardsCollapsed(){
+  var cards = document.querySelectorAll("#app-view .grid > .card"), n = 0;
+  for (var i = 0; i < cards.length; i++) if (cards[i].className.indexOf("collapsed") >= 0) n++;
+  return cards.length > 0 && n === cards.length;
+}
+function toggleAllCards(){
+  var cards = document.querySelectorAll("#app-view .grid > .card");
+  var toCollapse = !allCardsCollapsed(), m = {};
+  for (var i = 0; i < cards.length; i++) {
+    var card = cards[i], on = card.className.indexOf("collapsed") >= 0;
+    if (toCollapse && !on) card.className += " collapsed";
+    if (!toCollapse && on) card.className = card.className.replace(/\s*collapsed/g, "");
+    if (toCollapse) m[card.id] = 1;
+  }
+  saveCollapsed(m);
+  syncToggleAllBtn();
+}
+function syncToggleAllBtn(){
+  var btn = document.getElementById("toggle-all-btn");
+  if (btn) btn.textContent = allCardsCollapsed() ? "全部展开" : "全部折叠";
+}
+function bindIcfgHead(box){
+  var head = box.querySelector(".icfg-head");
+  if (!head) return;
+  head.addEventListener("click", function(ev){
+    if (isInteractive(ev.target)) return;
+    if (box.className.indexOf("collapsed") >= 0) box.className = box.className.replace(/\s*collapsed/g, "");
+    else box.className += " collapsed";
+  });
+}
+
+/** 折叠后仍能看到的关键结论。dot: ok / warn / err / "" */
+function setCardSummary(id, text, dot){
+  var node = document.getElementById("sum-" + id);
+  if (!node) return;
+  node.textContent = "";
+  if (dot) node.appendChild(el("span", "sdot " + dot));
+  node.appendChild(el("span", "", text == null ? "" : String(text)));
+}
+
+/* ---------------- 占用占比条 ---------------- */
+function renderStorageUsage(d){
+  var box = document.getElementById("storage-usage");
+  if (!box) return;
+  var kinds = (d.storage || {}).kinds || {};
+  var total = (d.storage || {}).total_bytes || 0;
+  lastStorageTotal = total;
+  box.textContent = "";
+  var max = 0;
+  for (var i = 0; i < STORAGE_TARGETS.length; i++) {
+    var v = kinds[STORAGE_TARGETS[i]] || {bytes: 0};
+    if (v.bytes > max) max = v.bytes;
+  }
+  if (!max) { box.hidden = true; return; }
+  box.hidden = false;
+  for (var j = 0; j < STORAGE_TARGETS.length; j++) {
+    var k = STORAGE_TARGETS[j];
+    var item = kinds[k] || {files: 0, bytes: 0};
+    /* 按"最大一类"归一：否则小类（几十 KB）永远看不见 */
+    var pct = item.bytes > 0 ? Math.max(item.bytes / max * 100, 2) : 0;
+    var row = el("div", "usage-row is-" + k);
+    row.appendChild(el("span", "usage-name", STORAGE_LABEL[k]));
+    var track = el("div", "usage-track");
+    var fill = el("div", "usage-fill");
+    fill.style.width = pct + "%";
+    track.appendChild(fill);
+    row.appendChild(track);
+    row.appendChild(el("span", "usage-val", item.files + " 个 · " + fmtSize(item.bytes)));
+    box.appendChild(row);
+  }
+  setCardSummary("card-storage", "合计 " + fmtSize(total));
+}
+
+/* ---------------- 留存策略内联编辑（retention：改了不重启 yolo） ---------------- */
+var rtBaseline = null;
+var RT_NODES = {pic_max_mb: "rt-max-mb", pic_keep_days: "rt-keep-days",
+                trash_keep_days: "rt-trash-days", prune_interval_s: "rt-interval"};
+
+function retentionLoad(r){
+  if (!r || !Object.keys(r).length) return;
+  rtBaseline = {
+    pic_max_mb: Number(r.pic_max_mb), pic_keep_days: Number(r.pic_keep_days),
+    trash_keep_days: Number(r.trash_keep_days), prune_interval_s: Number(r.prune_interval_s)
+  };
+  Object.keys(RT_NODES).forEach(function(k){
+    var node = document.getElementById(RT_NODES[k]);
+    /* 轮询 1s 一次，用户正在输入时不要覆盖（否则光标被打断） */
+    if (node && document.activeElement !== node) node.value = rtBaseline[k];
+  });
+  retentionDirty();
+}
+
+function retentionRead(){
+  return {
+    pic_max_mb: Number(document.getElementById("rt-max-mb").value),
+    pic_keep_days: Number(document.getElementById("rt-keep-days").value),
+    trash_keep_days: Number(document.getElementById("rt-trash-days").value),
+    prune_interval_s: Number(document.getElementById("rt-interval").value)
+  };
+}
+
+function retentionDirty(){
+  if (!rtBaseline) return false;
+  var cur = retentionRead(), dirty = false;
+  Object.keys(rtBaseline).forEach(function(k){ if (cur[k] !== rtBaseline[k]) dirty = true; });
+  var save = document.getElementById("rt-save");
+  var flag = document.getElementById("rt-dirty");
+  if (save) save.disabled = !dirty;
+  if (flag) flag.hidden = !dirty;
+  setCardSummary("card-storage",
+    (dirty ? "留存策略未保存 · " : "") + "合计 " + fmtSize(lastStorageTotal));
+  var sum = document.getElementById("rt-summary");
+  if (sum) {
+    sum.textContent = "";
+    if (dirty) {
+      sum.appendChild(el("span", "sdot warn"));
+      sum.appendChild(el("span", "", "未保存"));
+    } else {
+      sum.textContent = cur.pic_keep_days + " 天 / " + cur.pic_max_mb + " MB";
+    }
+  }
+  return dirty;
+}
+
+function retentionRevert(){
+  if (!rtBaseline) return;
+  Object.keys(RT_NODES).forEach(function(k){
+    var node = document.getElementById(RT_NODES[k]);
+    if (node) node.value = rtBaseline[k];
+  });
+  retentionDirty();
+}
+
+function retentionSave(){
+  if (!rtBaseline) return;
+  var cur = retentionRead(), patch = {};
+  Object.keys(rtBaseline).forEach(function(k){ if (cur[k] !== rtBaseline[k]) patch[k] = cur[k]; });
+  if (!Object.keys(patch).length) { toast("没有任何修改", "warn"); return; }
+  /* 前端先按后端校验规则兜一遍，别让用户等一个 400 */
+  var bad = null;
+  Object.keys(patch).forEach(function(k){
+    var v = patch[k];
+    if (!isFinite(v) || v < 0) bad = k + " 必须是非负数字";
+    else if (k !== "pic_max_mb" && Math.floor(v) !== v) bad = k + " 必须是整数";
+  });
+  if (!bad && patch.prune_interval_s !== undefined && patch.prune_interval_s < 60) {
+    bad = "检查间隔不能小于 60 秒";
+  }
+  if (bad) { toast(bad, "err"); return; }
+  var btn = document.getElementById("rt-save");
+  btn.disabled = true; btn.textContent = "保存中…";
+  api("/api/config", {method: "POST", body: {config: {retention: patch}}}).then(function(d){
+    if (d.ok) {
+      toast(d.message || "留存策略已保存（不重启 yolo）", "ok");
+      cfgLoaded = false;            /* cfgtree 里的 retention 也要跟着变 */
+      rtBaseline = null;
+      refreshConfig();
+      storageRefresh();
+    } else {
+      toast(d.error || "保存失败", "err");
+    }
+  }).catch(function(e){ if (!e || !e.abort) toast("网络错误", "err"); })
+    .then(function(){ btn.textContent = "保存留存策略"; retentionDirty(); });
+}
+
+function bindRetentionEvents(){
+  Object.keys(RT_NODES).forEach(function(k){
+    var node = document.getElementById(RT_NODES[k]);
+    if (node) node.addEventListener("input", retentionDirty);
+  });
+  var sv = document.getElementById("rt-save");
+  if (sv) sv.addEventListener("click", retentionSave);
+  var rv = document.getElementById("rt-revert");
+  if (rv) rv.addEventListener("click", retentionRevert);
+}
+
+/* ---------------- 快速设置（detect/snapshot/stream：改了会重启 yolo） ---------------- */
+var qcBaseline = null;
+
+function quickCfgLoad(cfg){
+  if (!cfg || !cfg.detect || !cfg.snapshot || !cfg.stream) return;
+  qcBaseline = {
+    conf: Number(cfg.detect.conf_threshold),
+    snap: !!cfg.snapshot.enabled,
+    quota: Number(cfg.snapshot.daily_quota),
+    rtmp: !!cfg.stream.rtmp,
+    bitrate: Number(cfg.stream.rtmp_bitrate),
+    url: String(cfg.stream.rtmp_url || "")
+  };
+  var act = document.activeElement;
+  var rg = document.getElementById("qc-conf-range");
+  var nm = document.getElementById("qc-conf-num");
+  if (rg && act !== rg) rg.value = qcBaseline.conf;
+  if (nm && act !== nm) nm.value = qcBaseline.conf;
+  var ids = {snap: "qc-snap", quota: "qc-quota", rtmp: "qc-rtmp",
+             bitrate: "qc-bitrate", url: "qc-rtmp-url"};
+  Object.keys(ids).forEach(function(k){
+    var node = document.getElementById(ids[k]);
+    if (!node || act === node) return;
+    if (k === "snap" || k === "rtmp") node.checked = qcBaseline[k];
+    else node.value = qcBaseline[k];
+  });
+  quickCfgDirty();
+}
+
+function quickCfgRead(){
+  return {
+    conf: Number(document.getElementById("qc-conf-num").value),
+    snap: document.getElementById("qc-snap").checked,
+    quota: Number(document.getElementById("qc-quota").value),
+    rtmp: document.getElementById("qc-rtmp").checked,
+    bitrate: Number(document.getElementById("qc-bitrate").value),
+    url: String(document.getElementById("qc-rtmp-url").value || "").trim()
+  };
+}
+
+function quickCfgDirty(){
+  if (!qcBaseline) return false;
+  var cur = quickCfgRead(), dirty = false;
+  Object.keys(qcBaseline).forEach(function(k){ if (cur[k] !== qcBaseline[k]) dirty = true; });
+  var save = document.getElementById("qc-save");
+  var flag = document.getElementById("qc-dirty");
+  if (save) save.disabled = !dirty;
+  if (flag) flag.hidden = !dirty;
+  var sum = document.getElementById("qc-summary");
+  if (sum) {
+    sum.textContent = "";
+    if (dirty) {
+      sum.appendChild(el("span", "sdot warn"));
+      sum.appendChild(el("span", "", "未保存"));
+    } else {
+      sum.textContent = "阈值 " + cur.conf;
+    }
+  }
+  return dirty;
+}
+
+function quickCfgRevert(){
+  if (!qcBaseline) return;
+  quickCfgLoad({
+    detect: {conf_threshold: qcBaseline.conf},
+    snapshot: {enabled: qcBaseline.snap, daily_quota: qcBaseline.quota},
+    stream: {rtmp: qcBaseline.rtmp, rtmp_bitrate: qcBaseline.bitrate,
+             rtmp_url: qcBaseline.url}
+  });
+  quickCfgDirty();
+}
+
+function quickCfgSave(){
+  if (!qcBaseline) return;
+  var cur = quickCfgRead(), patch = {};
+  if (cur.conf !== qcBaseline.conf) {
+    if (!(cur.conf >= 0.05 && cur.conf <= 0.95)) { toast("检测置信度必须在 0.05 ~ 0.95", "err"); return; }
+    patch.detect = {conf_threshold: cur.conf};
+  }
+  var snap = {};
+  if (cur.snap !== qcBaseline.snap) snap.enabled = cur.snap;
+  if (cur.quota !== qcBaseline.quota) {
+    if (!isFinite(cur.quota) || cur.quota < 0 || Math.floor(cur.quota) !== cur.quota) {
+      toast("每日抓拍上限必须是非负整数", "err"); return;
+    }
+    snap.daily_quota = cur.quota;
+  }
+  if (Object.keys(snap).length) patch.snapshot = snap;
+  var stm = {};
+  if (cur.rtmp !== qcBaseline.rtmp) stm.rtmp = cur.rtmp;
+  if (cur.bitrate !== qcBaseline.bitrate) {
+    if (!isFinite(cur.bitrate) || cur.bitrate < 0) { toast("码率必须是非负数字", "err"); return; }
+    stm.rtmp_bitrate = cur.bitrate;
+  }
+  if (cur.url !== qcBaseline.url) {
+    if (!/^rtmps?:\/\/[^/\s]+\/[^\s]+$/.test(cur.url)) {
+      toast("推流地址形如 rtmp://host:1936/live/流名", "err"); return;
+    }
+    stm.rtmp_url = cur.url;
+  }
+  if (Object.keys(patch).length === 0) { toast("没有任何修改", "warn"); return; }
+
+  confirmDanger("保存快速设置",
+    "将写入 config/yolo8.json 并自动重启 yolo（约 35s 冷启动，期间推理与推流中断）。确认保存？")
+    .then(function(yes){
+      if (!yes) return;
+      var btn = document.getElementById("qc-save");
+      btn.disabled = true; btn.textContent = "保存中…";
+      api("/api/config", {method: "POST", body: {config: patch}}).then(function(d){
+        if (d.ok) {
+          cfgLoaded = false;
+          qcBaseline = null;
+          refreshConfig();
+          if (d.restart && d.restart.skipped) {
+            toast(d.message || "已保存（yolo 未运行，下次启动生效）", "ok");
+          } else if (d.needs_restart && d.needs_restart.indexOf("yolo") >= 0) {
+            toast((d.message || "已保存") + "，yolo 正在重启（约 35s）", "ok");
+            showRestartBanner();
+          } else {
+            toast(d.message || "已保存", "ok");
+          }
+          refreshAll();
+        } else {
+          toast(d.error || "保存失败", "err");
+        }
+      }).catch(function(e){ if (!e || !e.abort) toast("网络错误", "err"); })
+        .then(function(){ btn.textContent = "保存并重启 yolo"; quickCfgDirty(); });
+    });
+}
+
+function bindQuickCfgEvents(){
+  var rg = document.getElementById("qc-conf-range");
+  var nm = document.getElementById("qc-conf-num");
+  /* 滑块与数字框双向联动 */
+  if (rg && nm) {
+    rg.addEventListener("input", function(){ nm.value = rg.value; quickCfgDirty(); });
+    nm.addEventListener("input", function(){
+      var v = Number(nm.value);
+      if (isFinite(v) && v >= 0.05 && v <= 0.95) rg.value = v;
+      quickCfgDirty();
+    });
+  }
+  ["qc-snap", "qc-rtmp"].forEach(function(id){
+    var node = document.getElementById(id);
+    if (node) node.addEventListener("change", quickCfgDirty);
+  });
+  ["qc-quota", "qc-bitrate", "qc-rtmp-url"].forEach(function(id){
+    var node = document.getElementById(id);
+    if (node) node.addEventListener("input", quickCfgDirty);
+  });
+  var sv = document.getElementById("qc-save");
+  if (sv) sv.addEventListener("click", quickCfgSave);
+  var rv = document.getElementById("qc-revert");
+  if (rv) rv.addEventListener("click", quickCfgRevert);
+}
+
+/* =====================================================================
+ * P4.7：回到顶部（分区后页面更长；滚过一屏才出现，不打扰）
+ * =================================================================== */
+function initToTop(){
+  var btn = document.getElementById("totop");
+  if (!btn) return;
+  function sync(){
+    var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+    btn.hidden = y < 400;
+  }
+  window.addEventListener("scroll", sync, false);
+  btn.addEventListener("click", function(){
+    try { window.scrollTo({top: 0, behavior: "smooth"}); }
+    catch (e) { window.scrollTo(0, 0); }
+  });
+  sync();
+}
+
+/* =====================================================================
+ * 启动：带 token 试探一次，有效直接进主界面
+ * =================================================================== */
+(function init(){
+  initCollapsible();               /* P4.6：先把卡片折叠骨架装好 */
+  initToTop();                     /* P4.7：分区后页面更长，回顶按钮 */
+  if (getToken()) {
+    api("/api/state").then(function(data){
+      if (data.ok) { showApp(); refreshAll(); }
+      else showLogin("会话已过期，请重新登录");
+    }).catch(function(){ showLogin(); });
+  } else {
+    showLogin();
+  }
+})();
+</script>
+</body>
+</html>

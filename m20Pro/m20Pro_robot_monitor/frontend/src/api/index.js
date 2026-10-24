@@ -54,12 +54,46 @@ export function createRobotSocket ({ onSnapshot, onStatus } = {}) {
   }
 }
 
-/** REST 助手：控制指令等写操作。 */
+// ── 终端标识（控制权归属 / 多操作员互斥）──────────────────────────────
+// 控制闸在后端是全局单例，同一时刻只有一个 owner。**每个写请求都必须能回答
+// "这条指令是哪个终端发的"**，否则会被归属闸拒：NOT_OWNER「未携带终端标识」。
+//
+// 2026-10-19 真踩：机器人设置面板走 /api/v1/robot/light 这类**独立端点**，
+// 只在 useRobotState.js 里带 session_id 覆盖不到 → 单人也报"被占用"。
+// 因此标识改由本层统一注入（见 postJson），任何面板都不会漏。
+const SESSION_KEY = 'm20-console-session-id'
+
+/** 读取（或首次生成）本终端标识。
+ *  与 useRobotState.js 共用同一个 storage key —— 两处若各自生成，
+ *  会出现"自己是 owner，却因为带了另一个 id 被自己拒掉"的怪象。 */
+export function getSessionId () {
+  const gen = () => 'term-' + Math.random().toString(36).slice(2, 10)
+  try {
+    let sid = sessionStorage.getItem(SESSION_KEY)
+    if (!sid) {
+      sid = gen()
+      sessionStorage.setItem(SESSION_KEY, sid)
+    }
+    return sid
+  } catch (err) {
+    return gen()          // 隐私模式 / 禁用 storage 时兜底（刷新会换终端）
+  }
+}
+
+/** REST 助手：控制指令等写操作。
+ *
+ *  **自动注入 `session_id`**：调用方不必关心归属（也避免漏带）。
+ *  显式传入的 `session_id` 优先（便于测试 / 特殊情况）。
+ *  非对象 body（数组 / 字符串）原样发送，不注入。
+ */
 export async function postJson (path, body = {}) {
+  const payload = (body && typeof body === 'object' && !Array.isArray(body))
+    ? { session_id: getSessionId(), ...body }
+    : body
   const res = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    body: JSON.stringify(payload)
   })
   return res.json()
 }

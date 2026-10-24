@@ -1532,12 +1532,17 @@ class TestCardFold(unittest.TestCase):
         self.assertIn("initFolds();\napplyI18n();", self.html)
 
     def test_fold_pauses_polling(self):
-        """折叠卡片时暂停其自动刷新（截图/日志/时间轴），页面隐藏仍照旧暂停。"""
-        self.assertIn('''
-setInterval(function(){ if (!document.hidden && !isFolded("snap") && el("snap-auto").checked) snapLoad(); }, 3000);''', self.html)
+        """折叠卡片时暂停其自动刷新（日志/时间轴/最近检测），页面隐藏仍照旧暂停。
+
+        相机画面已升级为自适应节奏（见 TestSnapThrottle：ring 3s / live 10s /
+        失败退避 60s），同样在 snapAutoDue() 里判折叠与后台。
+        """
         self.assertIn('!isFolded("log")', self.html)
         self.assertIn('!isFolded("tl")', self.html)
         self.assertIn('!isFolded("recent")', self.html)
+        due = re.search(r"function snapAutoDue\(\)\{.*?\n\}", self.html, re.S).group(0)
+        self.assertIn('isFolded("snap")', due)
+        self.assertIn("document.hidden", due)
 
     def test_h2_never_carries_data_i18n(self):
         """v0.8.5 起：卡片标题 h2 自身不得带 data-i18n。
@@ -1571,3 +1576,102 @@ setInterval(function(){ if (!document.hidden && !isFolded("snap") && el("snap-au
         ).group(1))["zh"]
         for k in ("card.fold", "card.unfold", "top.fold_all", "top.unfold_all"):
             self.assertTrue(zh[k].strip(), "%s 为空" % k)
+
+
+class TestSnapThrottle(unittest.TestCase):
+    """相机画面拉流节奏与多相机（ADR-012 2026-10-18）：不为看不见的画面占用车端带宽。
+
+    能力：相机多选（前/后/都选/都不选）、刷新频率可调（自适应 / 1~60s / 关闭）、
+    失败退避 60s、折叠与后台停发、一键停止拉流。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        path = os.path.join(os.path.dirname(server.__file__), "static", "index.html")
+        with open(path, encoding="utf-8") as fh:
+            cls.html = fh.read()
+
+    def test_no_fixed_interval_loop(self):
+        self.assertNotIn('setInterval(function(){ if (!document.hidden && !isFolded("snap")', self.html)
+        self.assertIn("snapSchedule();", self.html)
+        self.assertIn("function snapDelay()", self.html)
+
+    def test_adaptive_delays_and_backoff(self):
+        for probe in ("var SNAP_RING_MS = 3000", "SNAP_LIVE_MS = 10000",
+                      "SNAP_FAIL_MAX = 3", "SNAP_PROBE_MS = 60000"):
+            self.assertIn(probe, self.html, probe)
+        body = re.search(r"function snapDelay\(\)\{.*?\n\}", self.html, re.S).group(0)
+        self.assertIn("SNAP_LIVE_MS", body)
+        self.assertIn("SNAP_PROBE_MS", body)
+        self.assertIn("snapEveryMs()", body, "用户显式频率应优先于自适应")
+
+    def test_gate_covers_all_stop_paths(self):
+        body = re.search(r"function snapAutoDue\(\)\{.*?\n\}", self.html, re.S).group(0)
+        self.assertIn("!SNAP_SEL.length", body, "未选相机时必须不拉流")
+        self.assertIn('SNAP_EVERY === "0"', body, "选「关闭」时必须不拉流")
+        self.assertIn("document.hidden", body)
+        self.assertIn('isFolded("snap")', body)
+
+    def test_camera_multi_select(self):
+        """相机可前/后/都选/都不选：chips + localStorage 记忆 + 每台一个 img。"""
+        self.assertIn('id="snap-cams"', self.html)
+        self.assertIn("function snapToggleCam(", self.html)
+        self.assertIn('var SNAP_KEY_SEL = "m20ai-snap-cams"', self.html)
+        self.assertIn("function renderSnapChips(", self.html)
+        self.assertIn("function renderSnapGrid(", self.html)
+        self.assertIn('id="snap-grid"', self.html)
+        body = re.search(r"function snapToggleCam\(n\)\{.*?\n\}", self.html, re.S).group(0)
+        self.assertIn('t("snap.no_cam")', body, "取消全部相机后要明确提示不拉流")
+        self.assertIn("snapIdle()", body)
+
+    def test_interval_select_and_stop(self):
+        self.assertIn('id="snap-every"', self.html)
+        self.assertIn("function snapEveryChange(", self.html)
+        self.assertIn('SNAP_KEY_EVERY = "m20ai-snap-every"', self.html)
+        for v in ('value="auto"', 'value="1000"', 'value="10000"', 'value="60000"', 'value="0"'):
+            self.assertIn(v, self.html, v)
+        self.assertIn("function stopSnap(", self.html)
+        stop = re.search(r"function stopSnap\(\)\{.*?\n\}", self.html, re.S).group(0)
+        self.assertIn('sel.value = "0"', stop)
+
+    def test_each_camera_fetched_separately(self):
+        self.assertIn("function snapLoadOne(", self.html)
+        self.assertIn("function snapAggregate(", self.html)
+        self.assertIn("SNAP_BUSY[cam]", self.html, "每台应有独立 in-flight 标记")
+        self.assertIn('t("snap.partial")', self.html, "部分不可达要有单独提示")
+        self.assertIn('t("snap.down_msg"', self.html)
+
+    def test_round_renders_all_at_once(self):
+        """整轮统一上屏：不能"谁先回来谁先跳"，否则多相机看起来永远不同步。"""
+        apply_body = re.search(r"function snapApply\(cam, d\)\{.*?\n\}", self.html, re.S).group(0)
+        self.assertIn("SNAP_PENDING[cam]", apply_body)
+        self.assertNotIn("img.src", apply_body, "单路完成时不应直接更新 DOM")
+        done = re.search(r"function snapRoundDone\(\)\{.*?\n\}", self.html, re.S).group(0)
+        self.assertIn("renderSnapOne(c, p)", done)
+        self.assertIn("SNAP_SEL.forEach", done)
+
+    def test_busy_skip_does_not_hang_round(self):
+        """某路上一轮还卡着时也必须报到，否则整轮悬挂、画面停更。"""
+        one = re.search(r"function snapLoadOne\(cam\)\{.*?\n\}", self.html, re.S).group(0)
+        self.assertIn("snapRoundDone()", one)
+
+    def test_failure_backoff_and_recovery(self):
+        agg = re.search(r"function snapAggregate\(\)\{.*?\n\}", self.html, re.S).group(0)
+        self.assertIn("SNAP_FAILS + 1", agg)
+        self.assertIn("(SNAP_FAILS + 1) : 0", agg, "成功/未全灭时应清零失败计数")
+        self.assertIn('t("snap.auto_paused"', agg)
+
+    def test_new_i18n_keys_present_and_used(self):
+        zh = json.loads(re.search(
+            r'<script type="application/json" id="i18n-data">(.*?)</script>', self.html, re.S
+        ).group(1))["zh"]
+        for k in ("snap.cams_label", "snap.every_label", "snap.every_auto", "snap.every_off",
+                  "snap.no_cam", "snap.cap_ring", "snap.cap_live", "snap.cap_stale",
+                  "snap.cap_fail", "snap.partial", "snap.partial_msg", "snap.live_multi",
+                  "snap.cost_warn"):
+            self.assertTrue(zh[k].strip(), k)
+        used = set(re.findall(r't\("([^"]+)"', self.html))
+        for k in ("snap.no_cam", "snap.cap_ring", "snap.cap_live", "snap.cap_stale",
+                  "snap.cap_fail", "snap.partial", "snap.partial_msg", "snap.live_multi",
+                  "snap.cost_warn"):
+            self.assertIn(k, used, "%s 未被 JS 引用" % k)

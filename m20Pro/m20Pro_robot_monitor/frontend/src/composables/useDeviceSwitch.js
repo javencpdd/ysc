@@ -15,6 +15,7 @@
  */
 
 import { ref } from 'vue'
+import { askConfirm } from './useConfirm.js'
 
 /** @param {{ sendCommand: Function|null }} props 由页面透传 */
 export function useDeviceSwitch (props) {
@@ -44,10 +45,23 @@ export function useDeviceSwitch (props) {
     }
   }
 
+  /** 断电后果按设备分别说明（确认弹窗用，避免一句套话覆盖所有设备） */
+  const POWER_OFF_DETAIL = {
+    Video: '画面与推流会立即中断，需重新上电并点「重新连接」才恢复。',
+    Lidar: '感知输入消失；站立 / RL 控制运动中关闭会被服务端拒绝。',
+    GPS: '定位数据停止更新；与「GPS 时间同步」不是同一条指令，不影响时钟。',
+    LedHost: '主机电源指示灯熄灭，不影响运动与感知。',
+    LedExt: '外部负载指示灯熄灭。',
+    LoadPower: '外部负载断电，挂载设备会停止工作。',
+    FP: '对频模块断电，遥控器需重新对频。',
+    FanSpeed: '散热风扇停转，长时间高负载运行请注意机体温度。'
+  }
+
   function describe (key, side) {
     const names = {
       Video: '相机', Lidar: '雷达', GPS: 'GPS', LedHost: '主机电源指示灯',
-      LedExt: '外部负载电源指示灯', LoadPower: '外部负载供电', FP: '对频模块'
+      LedExt: '外部负载指示灯', LoadPower: '外部负载供电', FP: '对频模块',
+      FanSpeed: '散热风扇'
     }
     const base = names[key] || key
     if (side === 'Front') return `${base}（前）`
@@ -71,13 +85,15 @@ export function useDeviceSwitch (props) {
     const what = describe(key, side)
 
     if (turningOff) {
-      const ok = window.confirm(
-        `确认关闭${what}供电？\n\n` +
-        '该操作会物理断电：\n' +
-        '· 相机断电后画面与推流都会中断，需重新上电才恢复\n' +
-        '· 雷达断电后感知输入消失\n\n' +
-        '（站立/RL 运动中关闭雷达会被服务端拒绝）'
-      )
+      // 统一走确认弹窗（原 window.confirm）：按设备给出**具体**后果，
+      // 而不是对所有设备套同一句"会物理断电"。
+      const ok = await askConfirm({
+        title: `确认关闭${what}供电？`,
+        message: '关闭后会物理断电，需重新开启才能恢复。',
+        detail: POWER_OFF_DETAIL[key] || '对应部件将立即停止工作。',
+        confirmText: '确认关闭供电',
+        danger: true
+      })
       if (!ok) return { ok: false, reason: 'CANCELLED' }
     }
 

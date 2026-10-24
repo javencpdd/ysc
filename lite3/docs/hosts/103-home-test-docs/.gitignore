@@ -77,6 +77,9 @@ credentials
 # 例外：yolo-publish.env 是推流服务的唯一配置文件，复现必需，必须入库
 !yolo8/deploy/yolo-publish.env
 
+# ---------- 浏览器验收产物（playwright-cli 快照，可重新生成；*.log 已在上文覆盖） ----------
+.playwright-cli/
+
 # ---------- 备份与编辑器临时文件 ----------
 *.bak
 *.bak-*

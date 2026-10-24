@@ -3,64 +3,92 @@
        放在全局底部而不是某个标签页里 —— 相机页 / GPS 页 / 运动控制页发的指令
        都要能就地看到响应，切页才能看等于看不到。 -->
   <section class="pkt">
-    <header class="pkt-head" @click="toggle">
+    <header class="pkt-head" @click="toggle" :aria-expanded="open">
       <span class="pkt-title">指令报文记录</span>
-      <span v-if="lastBadge" class="pkt-badge" :class="lastBadge.cls">{{ lastBadge.text }}</span>
-      <span v-else class="pkt-badge dim">暂无</span>
+      <span v-if="lastBadge" class="pill" :class="lastBadge.cls">{{ lastBadge.text }}</span>
+      <span v-else class="pill pill-muted">暂无</span>
       <span class="pkt-counts">
-        <b class="ok">{{ stats.ok || 0 }}</b> 成功 ·
-        <b class="err">{{ stats.error || 0 }}</b> 失败 ·
-        <b class="nr">{{ stats.no_response || 0 }}</b> 无响应 ·
-        <b class="rj">{{ stats.rejected || 0 }}</b> 被拒
+        <b class="ok num">{{ stats.ok || 0 }}</b> 成功 ·
+        <b class="err num">{{ stats.error || 0 }}</b> 失败 ·
+        <b class="nr num">{{ stats.no_response || 0 }}</b> 无响应 ·
+        <b class="rj num">{{ stats.rejected || 0 }}</b> 被拒 ·
+        <b class="sf num">{{ stats.send_failed || 0 }}</b> 未发出
       </span>
-      <span class="pkt-spacer"></span>
-      <button class="pkt-toggle" type="button">{{ open ? '收起 ▲' : '展开 ▼' }}</button>
+      <span class="spacer" />
+      <button
+        class="btn-sm btn-ghost"
+        type="button"
+        :title="open ? '收起报文列表（收起后停止轮询后端）' : '展开报文列表（开始每 1.5s 轮询）'"
+        @click.stop="toggle"
+      >{{ open ? '收起' : '展开' }}</button>
     </header>
 
     <div v-show="open" class="pkt-body">
-      <p class="pkt-note">
+      <p class="note" style="margin-bottom: var(--sp-2)">
         报文是<b>线上真实的字节</b>（含 16 字节帧头），点 hex 可整条复制。
         <b>「无响应」不代表车没执行</b> —— basic_server 对部分指令（如站立/趴下）执行了但并不回帧，
         这一列是"不知道"，不是"失败"。
       </p>
 
-      <table class="pkt-table">
-        <thead>
-          <tr>
-            <th class="c-time">时间</th>
-            <th class="c-cmd">指令</th>
-            <th class="c-frame">报文（hex）</th>
-            <th class="c-resp">响应</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="it in items" :key="it.seq" :class="{ expanded: expanded === it.seq }">
-            <td class="c-time">{{ hhmmss(it.ts) }}</td>
-            <td class="c-cmd">
-              <span class="cmd-name">{{ it.name }}</span>
-              <span v-if="it.type != null" class="cmd-tc">{{ it.type }}/{{ it.command }}</span>
-              <span v-else class="cmd-tc dim">未生成</span>
-            </td>
-            <td class="c-frame">
-              <code v-if="it.frame_hex" :title="it.frame_hex" @click="copy(it.frame_hex)">
-                {{ shortHex(it.frame_hex) }}
-              </code>
-              <span v-else class="dim">—</span>
-              <button v-if="it.frame_hex" class="mini" type="button"
-                      @click="expanded = expanded === it.seq ? 0 : it.seq">
-                {{ expanded === it.seq ? '收起' : '详情' }}
-              </button>
-            </td>
-            <td class="c-resp">
-              <span class="resp" :class="respCls(it.resp.status)">{{ respText(it) }}</span>
-              <span v-if="it.resp.latency_ms != null" class="lat">{{ it.resp.latency_ms }} ms</span>
-            </td>
-          </tr>
-          <tr v-if="!items.length">
-            <td colspan="4" class="empty">还没有指令记录 —— 在任意页面点一个控制按钮试试</td>
-          </tr>
-        </tbody>
-      </table>
+      <!-- 首次加载中的骨架提示：避免"展开后空白"被当成没数据 -->
+      <div v-if="loading" class="empty-state">
+        <span class="spinner" />
+        <span class="empty-title">正在读取报文…</span>
+      </div>
+
+      <template v-else>
+        <table class="pkt-table">
+          <thead>
+            <tr>
+              <th class="c-time">时间</th>
+              <th class="c-cmd">指令</th>
+              <th class="c-frame">报文（hex）</th>
+              <th class="c-resp">响应</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="it in items" :key="it.seq" :class="{ expanded: expanded === it.seq }">
+              <td class="c-time">{{ hhmmss(it.ts) }}</td>
+              <td class="c-cmd">
+                <span class="cmd-name">{{ it.name }}</span>
+                <span v-if="it.type != null" class="cmd-tc">{{ it.type }}/{{ it.command }}</span>
+                <span v-else class="cmd-tc dim">未生成</span>
+              </td>
+              <td class="c-frame">
+                <code
+                  v-if="it.frame_hex"
+                  :title="it.frame_hex"
+                  @click="copy(it, it.frame_hex)"
+                >{{ shortHex(it.frame_hex) }}</code>
+                <span v-else class="dim">—</span>
+                <button
+                  v-if="it.frame_hex"
+                  class="btn-sm btn-ghost"
+                  type="button"
+                  @click="expanded = expanded === it.seq ? 0 : it.seq"
+                >{{ expanded === it.seq ? '收起详情' : '详情' }}</button>
+                <span v-if="copiedSeq === it.seq" class="copied">已复制</span>
+              </td>
+              <td class="c-resp">
+                <span class="pill" :class="respCls(it.resp.status)">
+                  <span class="status-dot" :class="dotCls(it.resp.status)" />
+                  {{ respText(it) }}
+                </span>
+                <span v-if="it.resp.latency_ms != null" class="lat">{{ it.resp.latency_ms }} ms</span>
+              </td>
+            </tr>
+            <tr v-if="!items.length">
+              <td colspan="4">
+                <div class="empty-state">
+                  <span class="empty-icon">∅</span>
+                  <span class="empty-title">还没有指令记录</span>
+                  <span class="empty-desc">在任意页面点一个控制按钮后，这里会留下发出的原始报文与车侧响应。</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </template>
 
       <!-- 展开详情：完整 JSON（发出 + 响应）-->
       <pre v-if="detail" class="pkt-detail">{{ detail }}</pre>
@@ -76,15 +104,28 @@ const open = ref(false)
 const items = ref([])
 const stats = ref({})
 const expanded = ref(0)
+const loading = ref(true)
+const copiedSeq = ref(0)
 let timer = null
+let copyTimer = null
 
+// 去掉 emoji：改用统一的状态点 + 文字，与全站徽标一致
 const RESP_LABEL = {
-  ok: '✅ 成功',
-  error: '❌ 失败',
-  no_response: '⏳ 无响应',
-  send_failed: '🚫 未发出',
-  rejected: '⛔ 被拒',
-  pending: '⋯ 等待中'
+  ok: '成功',
+  error: '失败',
+  no_response: '无响应',
+  send_failed: '未发出',
+  rejected: '被拒',
+  pending: '等待中'
+}
+
+const RESP_DOT = {
+  ok: 'ok',
+  error: 'bad',
+  no_response: 'warn',
+  send_failed: 'warn',
+  rejected: 'off',
+  pending: 'off'
 }
 
 async function load () {
@@ -94,6 +135,8 @@ async function load () {
     stats.value = d.stats || {}
   } catch {
     /* 后端不可用时静默：报文面板是诊断件，不该把主界面拖垮 */
+  } finally {
+    loading.value = false
   }
 }
 
@@ -110,7 +153,7 @@ function stopPoll () {
 }
 
 onMounted(() => { load() })
-onUnmounted(stopPoll)
+onUnmounted(() => { stopPoll(); if (copyTimer) clearTimeout(copyTimer) })
 
 // 只在展开时轮询（1.5s）—— 收起时不打后端，也不干扰主链路
 watch(open, (v) => { v ? startPoll() : stopPoll() })
@@ -119,7 +162,10 @@ const lastItem = computed(() => items.value[0] || null)
 const lastBadge = computed(() => {
   const it = lastItem.value
   if (!it) return null
-  return { cls: respCls(it.resp.status), text: `${it.name} ${RESP_LABEL[it.resp.status] || it.resp.status}` }
+  return {
+    cls: respCls(it.resp.status),
+    text: `${it.name} ${RESP_LABEL[it.resp.status] || it.resp.status}`
+  }
 })
 
 const detail = computed(() => {
@@ -148,21 +194,27 @@ function shortHex (hex) {
   return `${hex.slice(0, 40)}…${hex.slice(-24)}`
 }
 function respCls (st) {
-  return { ok: 'ok', error: 'err', no_response: 'nr',
-           send_failed: 'sf', rejected: 'rj', pending: 'pd' }[st] || 'pd'
+  return { ok: 'pill-ok', error: 'pill-bad', no_response: 'pill-warn',
+           send_failed: 'pill-warn', rejected: 'pill-muted', pending: 'pill-muted' }[st]
+    || 'pill-muted'
 }
+function dotCls (st) { return RESP_DOT[st] || 'off' }
 function respText (it) {
   const base = RESP_LABEL[it.resp.status] || it.resp.status
   if (it.resp.status === 'error') {
     return `${base}${it.resp.error_code != null ? ` (${it.resp.error_code})` : ''}`
   }
   if (it.resp.status === 'rejected') return `${base} ${it.resp.reason || ''}`.trim()
-  if (it.resp.status === 'ok' && it.resp.error_code == null) return '✅ 已响应'
+  if (it.resp.status === 'ok' && it.resp.error_code == null) return '已响应'
   return base
 }
-async function copy (hex) {
+async function copy (it, hex) {
   try {
     await navigator.clipboard.writeText(hex)
+    // 复制成功给一个可见反馈（原实现静默，用户无法确认到底复制了没）
+    copiedSeq.value = it.seq
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => { copiedSeq.value = 0 }, 1500)
   } catch {
     /* 剪贴板不可用（非 HTTPS / 权限）时静默失败，用户还能手动选 */
   }
@@ -171,97 +223,107 @@ async function copy (hex) {
 
 <style scoped>
 .pkt {
-  margin-top: 14px;
-  border: 1px solid var(--border, #d8dce3);
-  border-radius: 8px;
-  background: var(--panel-2, #f7f8fa);
-  font-size: 12px;
+  margin-top: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  font-size: var(--fs-12);
+  overflow: hidden;
 }
+
 .pkt-head {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-2);
   align-items: center;
-  padding: 7px 10px;
+  flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-3);
   cursor: pointer;
   user-select: none;
+  transition: background var(--t-fast);
 }
-.pkt-title { font-weight: 600; }
-.pkt-spacer { flex: 1 1 auto; }
-.pkt-badge { padding: 1px 8px; border: 1px solid currentColor; border-radius: 10px; }
-.pkt-badge.ok { color: var(--ok, #2e9e5b); }
-.pkt-badge.err { color: var(--danger, #d0453b); }
-.pkt-badge.nr { color: var(--warn, #c47f17); }
-.pkt-badge.rj { color: var(--muted, #888); }
-.pkt-badge.dim { color: var(--muted, #888); }
-.pkt-counts { color: var(--muted, #888); }
-.pkt-counts .ok { color: var(--ok, #2e9e5b); }
-.pkt-counts .err { color: var(--danger, #d0453b); }
-.pkt-counts .nr { color: var(--warn, #c47f17); }
-.pkt-toggle {
-  padding: 1px 8px;
-  font-family: inherit;
-  color: var(--muted, #888);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-}
-.pkt-body { padding: 0 10px 10px; }
-.pkt-note { margin: 0 0 8px; color: var(--muted, #888); line-height: 1.6; }
+.pkt-head:hover { background: var(--panel-2); }
+
+.pkt-title { font-weight: 600; font-size: var(--fs-13); color: var(--text); }
+
+.pkt-counts { color: var(--muted); }
+.pkt-counts .ok { color: var(--ok); }
+.pkt-counts .err { color: var(--danger); }
+.pkt-counts .nr { color: var(--warn); }
+.pkt-counts .sf { color: var(--warn); }
+.pkt-counts .rj { color: var(--muted); }
+
+.pkt-body { padding: 0 var(--sp-3) var(--sp-3); }
+
 .pkt-table { width: 100%; border-collapse: collapse; }
 .pkt-table th {
-  padding: 4px 6px;
-  color: var(--muted, #888);
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--muted);
   font-weight: 500;
+  font-size: var(--fs-11);
   text-align: left;
-  border-bottom: 1px solid var(--border, #d8dce3);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
 }
-.pkt-table td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-.pkt-table tr.expanded td { background: var(--panel, #fff); }
-.c-time { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted, #888); width: 62px; }
-.c-cmd { width: 96px; }
-.cmd-name { display: block; }
-.cmd-tc { color: var(--muted, #888); font-size: 11px; }
+.pkt-table td {
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.pkt-table tr.expanded td { background: var(--panel-2); }
+
+.c-time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  width: 66px;
+}
+.c-cmd { width: 104px; }
+.cmd-name { display: block; color: var(--text); }
+.cmd-tc { color: var(--muted); font-size: var(--fs-11); }
+
 .c-frame code {
   display: inline-block;
-  max-width: 340px;
+  max-width: 320px;
   overflow: hidden;
-  color: var(--accent, #2f6fed);
+  color: var(--accent);
   text-overflow: ellipsis;
   white-space: nowrap;
   vertical-align: bottom;
   cursor: copy;
-  font-size: 11px;
+  font-family: var(--ff-mono);
+  font-size: var(--fs-11);
 }
-.mini {
-  margin-left: 6px;
-  padding: 0 6px;
-  font-size: 11px;
-  font-family: inherit;
-  color: var(--muted, #888);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 4px;
+.c-frame code:hover { text-decoration: underline; }
+
+.copied {
+  margin-left: var(--sp-1);
+  font-size: var(--fs-11);
+  color: var(--ok);
 }
-.c-resp { width: 150px; white-space: nowrap; }
-.resp { font-weight: 600; }
-.resp.ok { color: var(--ok, #2e9e5b); }
-.resp.err { color: var(--danger, #d0453b); }
-.resp.nr { color: var(--warn, #c47f17); }
-.resp.sf { color: var(--warn, #c47f17); }
-.resp.rj { color: var(--muted, #888); }
-.resp.pd { color: var(--muted, #888); }
-.lat { margin-left: 6px; color: var(--muted, #888); font-variant-numeric: tabular-nums; }
-.empty { padding: 12px 6px; color: var(--muted, #888); text-align: center; }
-.dim { color: var(--muted, #888); }
+
+.c-resp { width: 168px; white-space: nowrap; }
+.lat {
+  margin-left: var(--sp-1);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-11);
+}
+.dim { color: var(--muted); }
+
 .pkt-detail {
   max-height: 260px;
-  margin: 8px 0 0;
-  padding: 8px 10px;
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-2) var(--sp-3);
   overflow: auto;
-  font-size: 11px;
+  font-family: var(--ff-mono);
+  font-size: var(--fs-11);
   line-height: 1.5;
-  background: var(--panel, #fff);
-  border: 1px solid var(--border, #d8dce3);
-  border-radius: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+@media (max-width: 560px) {
+  .c-frame code { max-width: 160px; }
 }
 </style>

@@ -2,6 +2,10 @@
 
 > 目标主机：**AOS 192.168.0.196**（SSH 别名 `m20pro-f20-0-196`，账号 `user`）· 安装目录：**`/home/djw/monitor`**
 > 相关：[QUICKSTART.md](../QUICKSTART.md)（10 分钟版）· 计划书 §15（完整部署方案）
+>
+> 📄 **要装到另一台 M20？** 见 [`note/移植部署流程.md`](../note/移植部署流程.md)
+> （复制什么、安装路径要求、运行用户如何被路径决定、常见坑）。
+> 本文默认"同一台机器"。目标机可先跑 `tools/preflight_new_host.sh` 做只读预检。
 
 ---
 
@@ -80,12 +84,14 @@ ssh m20pro-f20-0-196 "printf \"'\n\" | sudo -S systemctl restart m20pro-console"
 
 | 步骤 | 行为 | 防的坑 |
 | --- | --- | --- |
-| [1/6] 目录与文件 | `copy_dir()`（`rsync -a --delete` 或 `cp -r src/. dst/`）复制 backend / dist / tools / note | **`cp -r src dst/` 在目标已存在时会嵌套成 `dst/backend/backend`**，导致"改了不生效"（实测踩过，骗过两轮） |
-| [2/6] 虚拟环境 | 三层降级：`python3 -m venv` → `apt install python3.8-venv python3-pip` → `pip install --user virtualenv` | 196 **缺 ensurepip**，裸 `python3 -m venv` 必失败 |
-| [3/6] 依赖 | `pip install -r requirements.txt -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com` | 196 时钟慢 846 天 → **HTTPS/TLS 全废**；清华 http 返回 403，阿里可用 |
-| [4/6] 权限 | `chown -R $RUN_USER:$RUN_USER $INSTALL_DIR` | 服务以非 root 运行 |
-| [5/6] systemd | `sed` 替换单元中的路径字面量与 `User=`/`Group=` → `/etc/systemd/system/m20pro-console.service` + `daemon-reload` + `enable` | 支持装到非默认目录 |
-| [6/6] 启动验证 | `restart` + 5s 后 `is-active` + `/health` | 失败即打印 journal 尾部 |
+| [1/8] 目录与文件 | `copy_dir()`（`rsync -a --delete` 或 `cp -r src/. dst/`）复制 backend / dist / tools / note | **`cp -r src dst/` 在目标已存在时会嵌套成 `dst/backend/backend`**，导致"改了不生效"（实测踩过，骗过两轮） |
+| [2/8] 虚拟环境 | 三层降级：`python3 -m venv` → `apt install python3.8-venv python3-pip` → `pip install --user virtualenv` | 196 **缺 ensurepip**，裸 `python3 -m venv` 必失败 |
+| [3/8] 依赖 | `pip install -r requirements.txt -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com` | 196 时钟慢 846 天 → **HTTPS/TLS 全废**；清华 http 返回 403，阿里可用 |
+| [4/8] 权限 | `chown -R $RUN_USER:$RUN_USER $INSTALL_DIR` | 服务以非 root 运行 |
+| [5/8] systemd | `sed` 替换单元中的路径字面量与 `User=`/`Group=` → `/etc/systemd/system/m20pro-console.service` + `daemon-reload` + `enable` | 支持装到非默认目录 |
+| [6/8] 启动验证 | `restart` + 5s 后 `is-active` + `/health` | 失败即打印 journal 尾部 |
+| [7/8] `m20monitor` | 装 `/usr/local/bin/m20monitor` + sudoers | 可选组件，失败只 warn |
+| **[8/8] 受控提权 helper** | 装 `/usr/local/sbin/m20-ap-ctl`、`m20-video-ctl` + 两份 sudoers（**用户名按 `$RUN_USER` 生成**） | **2026-10-18 补**。此前完全不碰 `/usr/local/sbin`，换机后热点/推流面板报「受控入口不存在」——最容易漏的一步 |
 
 **运行用户（`RUN_USER`）探测逻辑**：取安装目录属主（`/home/djw/monitor` → `djw`）；**该用户不存在则降级为 `sudo` 调用者（`user`）并 warn**。
 > 196 现状：**`djw` 账户不存在**，服务实际以 `user` 运行（功能无差异）。将来创建 `djw` 后：`chown -R djw:djw /home/djw/monitor` + 改单元 `User=`/`Group=` + `daemon-reload` + `restart`。
@@ -105,6 +111,7 @@ ssh m20pro-f20-0-196 "printf \"'\n\" | sudo -S systemctl restart m20pro-console"
 | `M20_ROBOT__TARGET_IP/PORT` | `127.0.0.1` / `30000` | 回环直达 basic_server（实测其监听 0.0.0.0） |
 | `M20_SERVICE__PORT` | `8080` | 已避让 196 全部冲突端口（C5 清单） |
 | `M20_CONTROL__ENABLED` | **`false`** | L0 只监默认（安全设计） |
+| `M20_CONTROL__LIDAR_DEFAULT_OFF` | **`false`** | 雷达默认关闭策略（见 README §3.6）；196 当前**未开启** |
 | `M20_VIDEO__ENABLED` | `true` | 196 部署开启视频代理 |
 | `M20_VIDEO__RTSP_URL` | `rtsp://127.0.0.1:8554/video1` | 196 本机 MediaMTX |
 | `M20_VIDEO__HLS_DIR` | `/home/djw/monitor/hls` | 切片产物（有界自动删除） |

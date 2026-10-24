@@ -10,36 +10,39 @@ import subprocess
 import time
 from typing import Callable, List, Optional
 
-from .config import FORBIDDEN_TOKENS, Camera, Config
+from .config import Camera, Config
+from .sources import LOW_DELAY_TYPES, Resolved, assert_safe, merge_extra, resolve
 
 Log = Callable[[str], None]
 
 
 def _input_args(cam: Camera) -> List[str]:
-    """按源协议补输入参数：RTSP 强制 TCP；RTMP 声明 flv；mjpeg over http 声明封装。"""
-    if cam.src.startswith("rtsp://"):
-        return ["-rtsp_transport", "tcp"]
-    if cam.src.startswith("rtmp://"):
-        return ["-f", "flv"]  # RTMP 必须显式声明封装，否则 ffmpeg 认不出
-    if cam.src.startswith(("http://", "https://")) and cam.src.endswith((".mjpg", ".mjpeg")):
-        return ["-f", "mjpeg"]
-    return []
+    """按源协议补 ``-i`` 之前的参数（历史函数名，内部已改为走适配层）。
+
+    保留它是为了向后兼容：单测与外部调用方都直接用这个名字。
+    新代码请直接用 ``sources.resolve()`` —— 它还能给出 target / low_delay 等信息。
+    """
+    return list(resolve(cam).input_args)
 
 
 def build_ffmpeg_cmd(cam: Camera, cfg: Config, out_pattern: str) -> List[str]:
-    """拼出常驻抽帧命令。按协议自动补输入参数，并对命令行做安全自检。"""
+    """拼出常驻抽帧命令。按协议自动补输入参数，并对命令行做安全自检。
+
+    逐路 fps：源上带了 ``|fps=`` 就用它，否则继承全局 ``M20AI_FPS``。
+    """
+    res: Resolved = resolve(cam)
     cmd: List[str] = [cfg.ffmpeg_bin, "-loglevel", "error", "-hide_banner"]
-    cmd += _input_args(cam)
-    cmd += list(cfg.ffmpeg_extra)
+    cmd += merge_extra(res, cam, cfg)
+    fps = cam.effective_fps(cfg.fps)
     cmd += [
-        "-i", cam.src,
-        "-vf", "fps=%g" % cfg.fps,
+        "-i", res.target,
+        "-vf", "fps=%g" % fps,
         "-q:v", str(cfg.jpeg_q),
         "-strftime", "1",
         "-f", "image2",
         out_pattern,
     ]
-    _assert_safe(cmd)
+    _assert_safe(cmd, res)
     return cmd
 
 
@@ -49,30 +52,35 @@ def build_snapshot_cmd(cam: Camera, cfg: Config) -> List[str]:
     与常驻抽帧的差异：不做 fps 过滤、不落盘、抓完即退。RTSP 单次握手实测
     1.6~2.0 s（2026-10-14 AOS），调用方必须带超时与短缓存（见 snapshot.py）。
     """
+    res: Resolved = resolve(cam)
     cmd: List[str] = [cfg.ffmpeg_bin, "-loglevel", "error", "-hide_banner"]
-    cmd += _input_args(cam)
-    cmd += list(cfg.ffmpeg_extra)
+    # ★低延迟抓单帧（2026-10-18）：默认 ffmpeg 会先做流探测并缓冲一段再出帧，
+    # 实测单路 2.7~6.6 s；加 nobuffer/low_delay/小 probesize 后降到 1.0~1.6 s。
+    # 预览 1s 刷新要立刻生效，这几秒的启动开销就是瓶颈。
+    # 2026-10-19：从 rtsp:// 字符串判断换成 res.low_delay —— 网络流（含 RTMP）都适用。
+    if res.low_delay or res.type in LOW_DELAY_TYPES:
+        cmd += ["-fflags", "nobuffer", "-flags", "low_delay",
+                "-probesize", "32768", "-analyzeduration", "0"]
+    cmd += merge_extra(res, cam, cfg)
     cmd += [
-        "-i", cam.src,
+        "-i", res.target,
         "-frames:v", "1",
         "-q:v", str(cfg.jpeg_q),
         "-f", "image2pipe",
         "-vcodec", "mjpeg",
         "pipe:1",
     ]
-    _assert_safe(cmd)
+    _assert_safe(cmd, res)
     return cmd
 
 
-def _assert_safe(cmd: List[str]) -> None:
-    """防止命令行里出现上游 pkill 的关键词（见 config.FORBIDDEN_TOKENS）。"""
-    joined = " ".join(cmd)
-    for token in FORBIDDEN_TOKENS:
-        if token in joined:
-            raise RuntimeError(
-                "ffmpeg 命令行含禁用关键词 %r，会被机器人上游 restart.sh 误杀：%s"
-                % (token, joined)
-            )
+def _assert_safe(cmd: List[str], res: Optional[Resolved] = None) -> None:
+    """防止命令行里出现上游 pkill 的关键词（见 config.FORBIDDEN_TOKENS）。
+
+    ``device://`` 会展开出 ``-f v4l2`` —— 这类源在 Config 校验阶段已经要求平台
+    显式放行（``M20AI_ALLOW_LOCAL_DEVICE=1``），这里只是不再重复拦截。
+    """
+    assert_safe(cmd, allow_local=bool(res.needs_local_ok) if res else False)
 
 
 class Capture:

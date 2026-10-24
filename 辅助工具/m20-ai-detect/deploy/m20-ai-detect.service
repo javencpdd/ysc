@@ -1,13 +1,14 @@
 [Unit]
-Description=m20-ai-detect: M20 Pro video -> AI detection sampler
+Description=m20-ai-detect: video -> AI detection sampler
 Documentation=file:/home/djw/m20-ai-detect/README.md
-# 只在网络就绪后启动；不依赖机器人任何服务（AOS 挂了只是没帧，不应拖累本机）
+# 只在网络就绪后启动；不依赖机器人任何服务（上游挂了只是没帧，不应拖累本机）
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# GOS 无 djw 系统账户；登录账户是 user（uid 1003，sudo 组）。
+# 运行账户按目标机实际情况填（deploy/render_units.py --run-user / --run-group）。
+# 参考部署（GOS 10.21.31.104）：无 djw 系统账户，登录账户是 user（uid 1003，sudo 组）；
 # /home/djw 是 root 所有的目录，已设 ACL 授权 user:user:rwx（含 default ACL），
 # 故工作空间按用户决策仍放 /home/djw/m20-ai-detect，服务以 user 运行。
 User=user
@@ -19,9 +20,9 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 -m m20_ai_detect run
 Restart=always
 RestartSec=5
-# GOS 隔离了 4 个 A76 大核给厂商关键任务，普通负载只用小核 0-3
+# CPU 亲和性与内存上限按目标机填。参考部署：GOS 把 4 个 A76 大核隔离给厂商关键
+# 任务，普通负载只用小核 0-3；采样器很轻（ffmpeg 抽帧 + 每帧一次 HTTP），1G 够用。
 CPUAffinity=0-3
-# 资源上限：采样器本身很轻（ffmpeg 抽帧 + 每帧一次 HTTP），给 1G 足够
 MemoryMax=1G
 Nice=5
 # 日志：stdout 走 journal，另由 logrotate 管文件日志

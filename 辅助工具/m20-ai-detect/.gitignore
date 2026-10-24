@@ -29,3 +29,7 @@ Thumbs.db
 
 # ---- 本地浏览器验证产物（playwright-cli）----
 .playwright-cli/
+
+# ---- 部署前统一配置（含内网地址，不入库；模板见 deploy/site.env.example）----
+deploy/site.env
+.runtime/

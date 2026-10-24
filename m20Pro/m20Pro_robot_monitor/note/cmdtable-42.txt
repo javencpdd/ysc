@@ -1,0 +1,56 @@
+# M20 Pro basic_server 指令注册表全表（42 条）
+#
+# 生成：2026-10-18，源二进制 /opt/robot/share/basic_server/bin/basic_server
+#        md5 e578e07a2039a4180885c670687e70ea
+# 命令：python3 tools/re_cmdtable.py bs.asm > tbl.txt
+#       python3 tools/re_cmdname.py  tbl.txt syms.txt > cmdtable-42.txt
+#
+# ⚠️ 本文件是 re_cmdname 的【输出】，不能再喂回 re_cmdname ——
+#    后者要的是带 handler 地址的三列中间表（tbl.txt）。
+#    换固件版本时请按上面两条命令重新生成，别改这个文件。
+#
+# 列：Type  Command  handler函数名
+# 解读与逐条说明见同目录《逆向与真机取证笔记.md》§1
+#
+2      21     Steer
+2      22     Motion
+2      23     Gait
+2      24     Charge
+2      25     RealSteer
+2      26     SetSoftwareEmergencyStop
+100    100    HeartBeat
+1002   2      GetInfo
+1002   3      GetError
+1003   1      NavTasks
+1003   2      NavTasks
+1004   1      CancelNavTask
+1007   1      GetNavTaskStatus
+1007   2      GetLocationStatus
+1101   2      LED
+1101   3      SetDevice
+1101   4      Direction
+1101   5      ControlUsage
+1101   6      SetSleep
+1101   7      GetSleepConfig
+1101   8      ResetJointsZero
+1101   9      AligningBodyPosture
+1101   10     SetAutoResetJointsZero
+1101   11     GetAutoResetJointsZero
+1101   12     GetKeyBoard
+1101   13     EnableSDK
+1101   14     CustomLED
+1101   15     SyncUTC
+1101   16     SetGpsSyncInfo
+1101   17     Reboot
+1101   1003   DeviceCtrl
+1101   1004   CollectData
+1101   1005   TurnMark
+1101   1006   CollectTopics
+1101   1007   GetCollectTopics
+2002   1      GetNavExecStatus
+2003   1      GetReleaseNote
+2101   1      InitLocation
+2101   2      CancelReLocation
+3001   0      GetSn
+9900   0      GetOfflineNav
+9900   1      GetOnlineNav

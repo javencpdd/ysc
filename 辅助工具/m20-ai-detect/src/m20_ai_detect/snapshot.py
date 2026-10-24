@@ -26,8 +26,9 @@ from .store import Store
 
 #: 单次抓帧超时（秒）。RTSP 握手实测 1.6~2.0 s，留足余量。
 GRAB_TIMEOUT = 8.0
-#: 成功抓帧缓存（秒）：同一相机在该窗口内的重复请求直接复用。
-CACHE_TTL = 1.5
+#: 成功抓帧缓存（秒）：只为合并"同一时刻的并发请求"（多标签页/连点）。
+#: 2026-10-18 由 1.5 收到 0.6 —— 1.5s 会让 1s 轮询有一半轮次复用旧图（看着像"没刷新"）。
+CACHE_TTL = 0.6
 #: 失败缓存（秒）：防止多客户端连击 ffmpeg 反复拉起。
 CACHE_TTL_ERROR = 3.0
 #: 环形帧"新鲜"窗口 = max(5 s, FRESH_FACTOR / fps)；fps=1 时约 5 s。
@@ -35,9 +36,24 @@ FRESH_FACTOR = 4.0
 
 Grabber = Callable[[Camera, Config], Optional[bytes]]
 
-#: cam.name -> (monotonic 时刻, jpeg 或 None, "live"/"error")
-_cache: Dict[str, Tuple[float, Optional[bytes], str]] = {}
-_lock = threading.Lock()
+#: cam.name -> (monotonic 时刻[TTL 用], wall 时刻[展示用], jpeg 或 None, "live"/"error")
+_cache: Dict[str, Tuple[float, float, Optional[bytes], str]] = {}
+#: ★按相机分锁（2026-10-18 修）：原先一把全局锁把**整个抓帧过程**包住，导致
+#: 多相机 live 抓帧串行（前台 2s + 后台 2s），两路画面错开约 2s、且总耗时翻倍。
+#: 现在"同一路"仍串行（防连击/防重复拉起 ffmpeg），"不同路"可并行。
+_grab_locks: Dict[str, threading.Lock] = {}
+_grab_locks_guard = threading.Lock()
+#: 仅保护 _cache 字典本身（微秒级），不与抓帧耗时可交叉。
+_cache_lock = threading.Lock()
+
+
+def _cam_lock(key: str) -> threading.Lock:
+    with _grab_locks_guard:
+        lk = _grab_locks.get(key)
+        if lk is None:
+            lk = threading.Lock()
+            _grab_locks[key] = lk
+        return lk
 
 
 def _grab_jpeg(cam: Camera, cfg: Config) -> Optional[bytes]:
@@ -69,14 +85,14 @@ def _pick_cam(
     ``code`` 供 webconsole 做中英映射（ADR-013）；``error`` 保留中文原文，
     供 CLI / 其它调用方与单测使用。
     """
-    if not cfg.cameras:
+    if not cfg.enabled_cameras:
         return None, "没有启用任何相机（在「相机与采集」里勾选前视/后视后保存）", "no_cameras", {}
     if not name:
-        return cfg.cameras[0], "", "", {}
-    for cam in cfg.cameras:
+        return cfg.enabled_cameras[0], "", "", {}
+    for cam in cfg.enabled_cameras:
         if cam.name == name:
             return cam, "", "", {}
-    names = [c.name for c in cfg.cameras]
+    names = [c.name for c in cfg.enabled_cameras]
     return (
         None,
         "未知相机 %s（可用：%s）" % (name, "、".join(names)),
@@ -118,35 +134,53 @@ def _cached_grab(
     cfg: Config,
     grabber: Grabber,
     clock: Callable[[], float],
-) -> Optional[bytes]:
-    """带短缓存的即时抓帧（成功 1.5 s / 失败 3 s），并发请求串行化防连击。
+) -> Optional[Tuple[bytes, float]]:
+    """带短缓存的即时抓帧；返回 ``(jpeg, 抓帧完成时刻[wall])``，失败返回 None。
 
-    注意缓存时间戳用**抓帧完成时刻**：单次握手本身要 2~4 s，若用开始时刻计时，
+    并发请求串行化：**按相机**加锁（不同相机可并行，多相机画面才可能同步）。
+    注意 TTL 时间戳用**抓帧完成时刻**：单次握手本身要 2~4 s，若用开始时刻计时，
     等第一个请求回来时 TTL 已耗尽，多标签页/连点刷新永远命中不了缓存。
+
+    ⚠️ 展示用的 ``ts`` 必须是"这张图真正被取到的时刻"（wall），不是本次响应的
+    打包时刻 —— 否则缓存命中时 ts 会变，界面看起来像"两路不同步/一直在换图"。
     """
     key = cam.name
-    with _lock:
-        hit = _cache.get(key)
+    with _cam_lock(key):          # 只锁这一路：不同相机可同时抓帧
+        with _cache_lock:
+            hit = _cache.get(key)
         if hit is not None:
-            ts, data, _tag = hit
+            mono_ts, wall_ts, data, _tag = hit
             ttl = CACHE_TTL if data else CACHE_TTL_ERROR
-            if clock() - ts < ttl:
-                return data
+            if clock() - mono_ts < ttl:
+                return (data, wall_ts) if data else None
         data = grabber(cam, cfg)
-        _cache[key] = (clock(), data, "live" if data else "error")
-        return data
+        wall_now = time.time()
+        with _cache_lock:
+            _cache[key] = (clock(), wall_now, data, "live" if data else "error")
+        return (data, wall_now) if data else None
 
 
 def _pack(
-    cam: Camera, jpeg: bytes, source: str, age_s: float, frame: Optional[str]
+    cam: Camera,
+    jpeg: bytes,
+    source: str,
+    age_s: float,
+    frame: Optional[str],
+    ts: Optional[float] = None,
 ) -> Dict[str, Any]:
     return {
         "ok": True,
         "cam": cam.name,
         "src": cam.src,
+        # 源类型（rtsp / rtmp / device / file / http…），由 uri scheme 决定（ADR-016）。
+        # 控制台据此显示"这是一路什么源"，用户不必自己从 URL 猜。
+        "type": cam.type,
         "source": source,
         "age_s": round(max(0.0, age_s), 1),
         "frame": frame,
+        # 这张图**真正取到的时刻**（ring=帧文件 mtime；live=抓帧完成时刻）。
+        # 多相机同时刷新时，前端按此显示时间戳：两路 ts 接近 = 真同步。
+        "ts": round(ts if ts is not None else time.time(), 3),
         "image": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode(),
     }
 
@@ -176,19 +210,20 @@ def snapshot_frame(
         if age <= _fresh_window(cfg):
             jpeg = _read_file(latest[0])
             if jpeg:
-                return _pack(cam, jpeg, "ring", age, os.path.basename(latest[0]))
+                return _pack(cam, jpeg, "ring", age, os.path.basename(latest[0]), ts=latest[1])
 
     # 环形帧过期/缺失 → 即时抓帧（带缓存）
-    jpeg_live = _cached_grab(cam, cfg, grabber, clock)
-    if jpeg_live:
-        return _pack(cam, jpeg_live, "live", 0.0, None)
+    live = _cached_grab(cam, cfg, grabber, clock)
+    if live:
+        jpeg_live, grabbed_at = live
+        return _pack(cam, jpeg_live, "live", 0.0, None, ts=grabbed_at)
 
     # 兜底：过期环形帧（如实标注 age，UI 显示"已定格"）
     if latest is not None:
         jpeg = _read_file(latest[0])
         if jpeg:
             age = wall - latest[1]
-            return _pack(cam, jpeg, "stale", age, os.path.basename(latest[0]))
+            return _pack(cam, jpeg, "stale", age, os.path.basename(latest[0]), ts=latest[1])
 
     return {
         "ok": False,

@@ -45,6 +45,7 @@ from control import patrol_codec  # noqa: E402
 from control.axis_watchdog import AxisWatchdog  # noqa: E402
 from control.control_gateway import ControlGateway, UdpControlSink  # noqa: E402
 from control.command_log import CommandLog
+from control.lidar_default import LidarDefaultPolicy
 from net import ap_ctl
 from video import service_ctl as video_service
 from errors import ConfigError, ProtocolError  # noqa: E402
@@ -72,6 +73,8 @@ class AxisRequest(BaseModel):
     continuous: bool = False
     #: 轴指令通道："steer"（2/21 主通道，默认）/ "real"（2/25 实时通道）
     channel: str = "steer"
+    #: 发起终端标识（控制权归属校验用）
+    session_id: str = ""
 
 
 class TimedAxisRequest(BaseModel):
@@ -87,6 +90,8 @@ class TimedAxisRequest(BaseModel):
     duration_s: float = Field(default=2.0, ge=0.5, le=30.0)
     #: 轴指令通道："steer"（默认）/ "real"
     channel: str = "steer"
+    #: 发起终端标识（控制权归属校验用）
+    session_id: str = ""
 
 
 class MotionRequest(BaseModel):
@@ -101,11 +106,25 @@ class CommandRequest(BaseModel):
     name: str
     params: Dict[str, Any] = Field(default_factory=dict)
     confirmed: bool = False
+    #: 发起终端标识（控制权归属校验用；留空 = 无主模式，仅供本机脚本）
+    session_id: str = ""
 
 
 class ControlToggle(BaseModel):
     enable: bool = True
     confirmed: bool = False
+    #: 发起终端标识（前端生成，见 useRobotState.js）
+    session_id: str = ""
+    #: 终端可读名（如"操作员A-笔记本"），用于在他终端上显示"谁在控制"
+    label: str = ""
+    #: 强制接管他人控制权（危险动作，前端需二次确认）
+    force: bool = False
+
+
+class LeaseRequest(BaseModel):
+    """租约续约请求（``session_id`` 用于归属校验，见 ControlGateway.renew_lease）。"""
+
+    session_id: str = ""
 
 
 class VideoServiceRequest(BaseModel):
@@ -128,12 +147,29 @@ class LightRequest(BaseModel):
     """前后补光灯（1101/2）。"""
     front: bool = False
     back: bool = False
+    #: 发起终端标识（控制权归属校验；前端 postJson 自动注入）
+    session_id: str = ""
+
+
+class LidarDefaultRequest(BaseModel):
+    """雷达默认关闭策略开关（2026-10-20 加）。
+
+    注意它**不是**雷达供电开关：改的是"开机 / 唤醒后的默认行为"。
+    """
+    enabled: bool = True
+    #: 改策略同样要二次确认（会立即改变机器人的上电行为）
+    confirmed: bool = False
+    #: 开启时是否立即应用一次（默认 true：开开关就要看到效果，而不是等下次开机）
+    apply_now: bool = True
+    #: 发起终端标识（只进审计，策略本身不走控制权归属闸）
+    session_id: str = ""
 
 
 class AutoResetRequest(BaseModel):
     """首启回零开关（1101/10 写 / 1101/11 读）。"""
     enable: bool = True
     confirmed: bool = False
+    session_id: str = ""
 
 
 class SleepConfigRequest(BaseModel):
@@ -145,6 +181,8 @@ class SleepConfigRequest(BaseModel):
     sleep: bool = False
     auto: bool = False
     minutes: int = 10
+    #: 发起终端标识（控制权归属校验）
+    session_id: str = ""
     confirmed: bool = False
 
 
@@ -206,6 +244,15 @@ class MonitorService:
             device_provider=self._device_fields,
         )
         self.control.command_log = self.command_log
+        # 雷达默认关闭策略（显式配置开关，2026-10-20 加）。
+        # 与设备开关的关系：人工开关走 execute()（L1 + 归属 + 全套闸）；
+        # 本策略在"没人操作"的时机生效，走 execute_system_device（只保留安全闸）。
+        self.lidar_default = LidarDefaultPolicy(
+            gateway=self.control,
+            device_provider=self._device_fields,
+            basic_provider=self._basic_fields,
+            enabled=self.settings.control.lidar_default_off)
+        self._lidar_startup_thread: Optional[Any] = None
         self.watchdog = AxisWatchdog(
             self.control, hz=self.settings.control.axis_hz,
             timeout_ms=self.settings.control.axis_timeout_ms,
@@ -296,18 +343,25 @@ class MonitorService:
             },
             "auto_reset": _auto_reset_view(ar),
             "sleep": _sleep_view(sc),
+            # 雷达默认关闭（显式配置开关，2026-10-20 加）：
+            # 状态随 /robot/config 一起返回，前端进「机器人设置」页就能看到，
+            # 不必为它单开一个轮询。
+            "lidar_default": self.lidar_default.status(),
         }
 
-    def robot_config_refresh(self) -> Dict[str, Any]:
+    def robot_config_refresh(self, session_id: Optional[str] = None) -> Dict[str, Any]:
         """主动发两条查询指令（1101/11、1101/7）。
 
         只负责"问"，不负责"等"—— 应答是异步到 UDP 接收线程的，落到
         command_log 的查询缓存后由下一次 :meth:`robot_config` 读到。
         前端的节奏应该是「进页面问一次 → 2s 后读」。
+
+        两条都是**只读查询**（``always_allowed``），归属闸已豁免；
+        ``session_id`` 照传只为审计一致性，非 owner 也能读配置。
         """
         sent = {}
         for name in ("auto_reset_query", "sleep_query"):
-            res = self.control.execute(name, {})
+            res = self.control.execute(name, {}, session_id=session_id)
             sent[name] = res.get("ok", False)
         return {"ok": any(sent.values()), "sent": sent}
 
@@ -395,6 +449,7 @@ class MonitorService:
             self.control.enable()
         if self.video is not None:
             self.video.start()
+        self._start_lidar_default()
         logger.info("监控服务已启动: data_source=%s video=%s",
                     self.settings.data_source, bool(self.video))
 
@@ -415,6 +470,23 @@ class MonitorService:
         if self.video is not None:
             self.video.stop()
         logger.info("监控服务已停止")
+
+    # ------------------------------------------------ 雷达默认关闭（启动触发）
+    def _start_lidar_default(self) -> None:
+        """开关关着就不起线程（零副作用）；开着才等设备帧到了应用一次。
+
+        线程是守护线程且自带 60s 超时：链路断 / mock 无数据时静默退出，
+        不会拖住停机，也不会留下野线程。
+        """
+        if not self.lidar_default.enabled:
+            logger.info("雷达默认关闭未开启，启动时不自动下发（可用页面开关启用）")
+            return
+        import threading
+        self._lidar_startup_thread = threading.Thread(
+            target=self.lidar_default.apply_after_startup,
+            args=(self.state.is_stale,),
+            name="lidar-default-startup", daemon=True)
+        self._lidar_startup_thread.start()
 
 
 # ---------------------------------------------------------------- 应用装配
@@ -530,26 +602,55 @@ async def control_status() -> Dict[str, Any]:
     return {"control": s.control.status(), "watchdog": s.watchdog.status()}
 
 
-@app.post("/api/v1/control/enable", tags=["control"])
-async def control_enable(req: ControlToggle) -> Dict[str, Any]:
-    """开启 L1（需二次确认）。"""
+@app.post("/api/v1/control/acquire", tags=["control"])
+async def control_acquire(req: ControlToggle) -> Dict[str, Any]:
+    """申请控制权（多操作员互斥的核心入口）。
+
+    - 无人占用 → 成为 owner 并启用 L1；
+    - 自己已占用 → 幂等续期；
+    - 他人占用 → 409 ``CONTROL_HELD`` + 占用者信息；带 ``force=true`` 可强制接管
+      （接管前会先发安全零位把车停下，属危险动作，前端须二次确认）。
+    """
     s = _svc()
     if not req.confirmed:
         return {"ok": False, "reason": "CONFIRM_REQUIRED",
-                "detail": "开启控制需前端二次确认"}
+                "detail": "申请控制权需前端二次确认"}
+    return s.control.acquire(req.session_id, req.label, force=req.force)
+
+
+@app.post("/api/v1/control/release", tags=["control"])
+async def control_release(req: ControlToggle) -> Dict[str, Any]:
+    """释放控制权（= 停用并回到 L0）。非 owner 释放会被拒，除非 force。"""
+    s = _svc()
+    return s.control.release(req.session_id, force=req.force)
+
+
+@app.post("/api/v1/control/enable", tags=["control"])
+async def control_enable(req: ControlToggle) -> Dict[str, Any]:
+    """开启/停用 L1（**兼容入口**，内部转调 acquire/release）。
+
+    新前端请用语义更明确的 ``/acquire`` 与 ``/release``。
+    """
+    s = _svc()
+    if not req.confirmed:
+        return {"ok": False, "reason": "CONFIRM_REQUIRED",
+                "detail": "开启/停用控制需前端二次确认"}
     if req.enable:
-        s.control.enable()
-        s.control.renew_lease()
-    else:
-        s.control.disable()
-    return {"ok": True, "enabled": s.control.enabled}
+        return s.control.acquire(req.session_id, req.label, force=req.force)
+    return s.control.release(req.session_id, force=req.force)
 
 
 @app.post("/api/v1/control/lease", tags=["control"])
-async def control_lease() -> Dict[str, Any]:
-    """续约（WS 断开即失效）。"""
+async def control_lease(req: Optional[LeaseRequest] = None) -> Dict[str, Any]:
+    """续约（WS 断开即失效）。
+
+    ``session_id`` 给出时按归属校验：非 owner 续约无效（返回 0），
+    否则旁观终端开着页面就能替操作员无限续约，令"断开即失效"保护失效。
+    """
     s = _svc()
-    return {"ok": True, "lease_remaining": s.control.renew_lease()}
+    sid = req.session_id if req else ""
+    return {"ok": True, "lease_remaining": s.control.renew_lease(
+        session_id=sid if sid else None)}
 
 
 @app.post("/api/v1/link/heartbeat", tags=["link"])
@@ -583,9 +684,19 @@ async def control_heartbeat_status() -> Dict[str, Any]:
 
 @app.post("/api/v1/control/command", tags=["control"])
 async def control_command(req: CommandRequest) -> Dict[str, Any]:
-    """下发白名单指令（name 取自 patrol_codec.COMMANDS）。"""
+    """下发白名单指令（name 取自 patrol_codec.COMMANDS）。
+
+    ``session_id`` 用于控制权归属校验：非 owner 发驱动类指令会被拒（409 NOT_OWNER），
+    安全指令（软急停等）不受限。
+    """
     s = _svc()
-    return s.control.execute(req.name, req.params, confirmed=req.confirmed)
+    res = s.control.execute(req.name, req.params, confirmed=req.confirmed,
+                            session_id=req.session_id or None)
+    # 唤醒整车之后：按取证结论唤醒会恢复传感器供电，故雷达默认关闭策略要再应用一次
+    # （策略内部仍会判"当前是否开着 / 是否运动中 / 是否距上次太近"，这里只负责触发）。
+    if req.name == "wake_up" and res.get("ok"):
+        s.lidar_default.maybe_apply("wake")
+    return res
 
 
 @app.post("/api/v1/control/axis", tags=["control"])
@@ -595,11 +706,15 @@ async def control_axis(req: AxisRequest) -> Dict[str, Any]:
     values = {"x": req.x, "y": req.y, "z": req.z,
               "roll": req.roll, "pitch": req.pitch, "yaw": req.yaw}
     if req.continuous:
-        s.watchdog.feed(values, channel=req.channel)
+        if not s.watchdog.feed(values, channel=req.channel,
+                               session_id=req.session_id or None):
+            return {"ok": False, "reason": "NOT_OWNER", "status": 409,
+                    "detail": "控制权属于其他终端，当前终端无法持续驱动"}
         if not s.watchdog.is_active():
             s.watchdog.start()
         return {"ok": True, "continuous": True, "watchdog": s.watchdog.status()}
-    return s.control.execute(patrol_codec.channel_command(req.channel), values)
+    return s.control.execute(patrol_codec.channel_command(req.channel), values,
+                             session_id=req.session_id or None)
 
 
 @app.post("/api/v1/control/axis/timed", tags=["control"])
@@ -619,10 +734,14 @@ async def control_axis_timed(req: TimedAxisRequest) -> Dict[str, Any]:
     s = _svc()
     values = {"x": req.x, "y": req.y, "z": req.z,
               "roll": req.roll, "pitch": req.pitch, "yaw": req.yaw}
-    rejected = s.control.precheck(patrol_codec.channel_command(req.channel))
+    rejected = s.control.precheck(patrol_codec.channel_command(req.channel),
+                                  session_id=req.session_id or None)
     if rejected is not None:
         return rejected
-    s.watchdog.feed_timed(values, req.duration_s, channel=req.channel)
+    if not s.watchdog.feed_timed(values, req.duration_s, channel=req.channel,
+                                 session_id=req.session_id or None):
+        return {"ok": False, "reason": "NOT_OWNER", "status": 409,
+                "detail": "控制权属于其他终端，当前终端无法定时移动"}
     if not s.watchdog.is_active():
         s.watchdog.start()
     resp: Dict[str, Any] = {"ok": True, "timed": s.watchdog.status()}
@@ -761,9 +880,43 @@ async def robot_config() -> Dict[str, Any]:
 
 
 @app.post("/api/v1/robot/config/refresh", tags=["robot"])
-async def robot_config_refresh() -> Dict[str, Any]:
-    """发查询指令（1101/11 + 1101/7）。应答异步到达，请 2s 后再读 GET。"""
-    return _svc().robot_config_refresh()
+async def robot_config_refresh(req: Optional[LeaseRequest] = None) -> Dict[str, Any]:
+    """发查询指令（1101/11 + 1101/7）。应答异步到达，请 2s 后再读 GET。
+
+    只读查询，任何终端都可发起（归属闸对 ``always_allowed`` 豁免）。
+    """
+    return _svc().robot_config_refresh(req.session_id if req else None)
+
+
+@app.post("/api/v1/robot/lidar-default", tags=["robot"])
+async def robot_lidar_default(req: LidarDefaultRequest) -> Dict[str, Any]:
+    """雷达默认关闭开关（**显式配置开关**的运行时入口，2026-10-20 加）。
+
+    语义（重要，别和"关闭雷达供电"混为一谈）：
+
+      - 本接口**不改雷达当前供电**，改的是"以后开机 / 唤醒后要不要自动关"；
+      - ``enabled=true`` 且 ``apply_now=true``（默认）会**立即应用一次**，
+        也就是当次就把雷达关掉 —— 与人工关雷达走同一道安全闸（站立/RL 态会被拒）；
+      - ``enabled=false`` 只是关掉这个策略，**不会**把雷达重新打开
+        （要开雷达请去运动控制页的雷达供电开关）；
+      - 运行时值重启后回到部署配置（``M20_CONTROL__LIDAR_DEFAULT_OFF``），
+        响应里的 ``source`` 会说明当前值来自配置还是页面。
+
+    为什么不需要控制权：策略影响的是"上电初值"，生效时机本来就没人在操作；
+    并且它只走系统通道（``execute_system_device``），审计里 actor=system 可追溯。
+    """
+    if not req.confirmed:
+        return {"ok": False, "reason": "CONFIRM_REQUIRED",
+                "detail": "修改雷达默认关闭策略需前端二次确认"}
+    s = _svc()
+    s.lidar_default.set_enabled(req.enabled)
+    result = None
+    # 只有"开启"才可能立即应用 —— 关闭策略时无事可做（它不会把雷达打开），
+    # 若也跟着跑一次 maybe_apply，只会把"最近一次应用"覆盖成"策略未开启"，
+    # 让人以为刚才那次应用失败了（2026-10-20 真机验证时发现）。
+    if req.apply_now and req.enabled:
+        result = s.lidar_default.maybe_apply("manual")
+    return {"ok": True, "applied": result, **s.lidar_default.status()}
 
 
 @app.post("/api/v1/robot/light", tags=["robot"])
@@ -776,7 +929,8 @@ async def robot_light(req: LightRequest) -> Dict[str, Any]:
     """
     s = _svc()
     return s.control.execute("light", {"front": 1 if req.front else 0,
-                                       "back": 1 if req.back else 0})
+                                       "back": 1 if req.back else 0},
+                             session_id=req.session_id or None)
 
 
 @app.post("/api/v1/robot/auto_reset", tags=["robot"])
@@ -789,7 +943,8 @@ async def robot_auto_reset(req: AutoResetRequest) -> Dict[str, Any]:
     """
     s = _svc()
     out = s.control.execute("auto_reset_set", {"enable": bool(req.enable)},
-                            confirmed=req.confirmed)
+                            confirmed=req.confirmed,
+                            session_id=req.session_id or None)
     if out.get("ok"):
         out["verify_hint"] = "该指令无应答，请发 1101/11 回读确认是否生效"
     return out
@@ -816,7 +971,8 @@ async def robot_sleep(req: SleepConfigRequest) -> Dict[str, Any]:
     return s.control.execute("sleep", {"enable": bool(req.sleep),
                                        "auto": bool(req.auto),
                                        "minutes": req.minutes},
-                             confirmed=req.confirmed)
+                             confirmed=req.confirmed,
+                             session_id=req.session_id or None)
 
 
 # ---------------------------------------------------------------- 热点（M4）

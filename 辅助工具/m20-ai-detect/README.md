@@ -10,7 +10,7 @@
 - **目标图片时间轴与留存清理（ADR-008）**：留存时写入真实时间 `_saved_at`，控制台"目标图片时间轴"卡片滑动时间条回看检出图；`saved/` 按总量上限/天数自动清理
 - **单位语义与启动行为（ADR-010）**：数值字段**带不带单位都行**（体积裸数字=MB、时长裸数字=天，支持 K/M/G/T 与 s/m/h/d/w，非法单位明确报错）；**启动只起控制台**，采集默认关闭由网页「采集开关」或 `aiDetect collect on|off` 控制（`--all` 已移除）
 - **关注目标与数据清空（ADR-011）**：网页「关注目标」卡可视化编辑"只保存哪些目标"（`alert` 模式 = 只存命中关注目标的帧，今日检出标签一键点选）；留存卡「清理数据」可一键清空 `saved/`/`results/`/`raw/`/`spool/`（停采集仅当运行中，清完恢复原状态，绝不拉起停着的采集）
-- **相机画面（ADR-012）**：控制台「相机画面」卡实时看当前相机——采集运行中显示采样器**当前帧**（即检测器输入本身，零额外开销），未运行则从同一路 RTSP **即时抓帧**兜底；自动刷新 3 秒、页签隐藏自动暂停；**取不到实时帧时红色告警「视频源不可达」**（旧帧置暗 + 按采集状态给出排查指向，不误导为"画面卡住"）
+- **相机画面（ADR-012）**：控制台「相机画面」卡——**相机可多选**（front / back / 都选 / 都不选，全不选=不拉流）、**刷新频率可调**（自适应 / 1~60s / 关闭）；采集运行中读本地 `raw/`（**零额外带宽**），未运行则逐路 RTSP 即时抓帧（**每路每次一条会话**，自动 10s 并给成本提醒）；连续失败退避 60s、可一键「停止拉流」；折叠/切后台/不选相机 = **0 请求**；单路红标「部分相机不可达」、全灭标「视频源不可达」
 - **界面中英适配（ADR-013）**：控制台顶栏**中文/EN 一键切换**（localStorage 记忆，默认中文）——静态界面 + JS 拼装文案 + 接口返回的 detail/notes/错误全部随语言切换，单测保证双语词典键集合一致、无漏译
 - **留存卡按钮语义澄清（ADR-014）**：留存策略卡原有两个都叫「保存…（重启后生效）」的按钮（容量/时长 vs 留存条件）易被按错；已拆成 ①留存条件 / ②容量与时长 两节并各自紧贴自己的保存按钮，按钮文案点明维度、说明 note 写清"只管哪一段、与什么无关"，并有单测固化两按钮文案不可混淆
 - **指标卡口径统一 + journal 归位（ADR-013 延伸，v0.8.2 / v0.8.6）**：顶栏第五项由「journal 占用」改为「**检测数据**」——显示 `raw+results+saved+spool` 合计与四项明细，与留存卡「清理数据」的占用**逐项对得上**（此前 journal 的 200 MB 与下方 KB 级数字并列，易被误读成"同一本账"）。整机 journal 大小移到「日志与数据留存策略」卡的 **journal 区**（它本来就在那里被 vacuum / `SystemMaxUse` 管理），并给出构成：`当前整机 journal ≈ 200.0 MB（含所有 systemd 单元；本服务 m20-ai-detect 仅 385 行 ≈ 26 KB，大头是厂商 rsdriver 等系统服务）`。⚠️ 两个事实：`journalctl --disk-usage` **会忽略 `-u` 等过滤器**（返回值必为整机合计），"本服务占多少"只能用 `journalctl -u X -o cat` 的文本量估算（`sysactions.journal_service_usage()`）
@@ -51,41 +51,62 @@ m20-ai-detect/
 │   ├── capture.py                 #   ffmpeg 常驻抽帧进程管理（按协议自动补 -rtsp_transport/-f flv）
 │   ├── detect.py                  #   手工 multipart 编码 + HTTP 调用 + 结果图 base64 解码 + 剥离大图字段
 │   ├── store.py                   #   七个数据目录 + JSONL 追加 + 环形缓冲 + 统计 + results 保留清理 + save_pair 留存
+│   ├── identity.py                #   身份与命名（ADR-017）：app_id 派生 unit/env/helper/sudoers/logrotate 名
+│   ├── sources.py                 #   Source 模型 + scheme 推导 + 串禁词守卫（ADR-016）
+│   ├── discover.py                #   三级视频源发现器：标准接口/本机推断/候选路径穷举（ADR-016）
 │   ├── snapshot.py                #   相机画面单帧快照（raw 最新帧优先 / ffmpeg 即时抓帧兜底，ADR-012）
-│   ├── sampler.py                 #   主循环：spool → 推理 → 落库 → raw/；退避重试；每小时清理旧 results
+│   ├── sampler.py                 #   主循环：spool → 推理 → 落库 → raw/；逐路退避重试；每小时清理旧 results
 │   └── cli.py                     #   run / doctor / stats / paths 四个子命令
 │
 ├── webconsole/                    # 可视化控制台（独立服务，见 ADR-005）
-│   ├── __init__.py                #   __version__ = 0.7.0（与 sampler 同号）
+│   ├── __init__.py                #   __version__ = 0.8.12（与 src/m20_ai_detect 同号）
 │   ├── __main__.py                #   python3 -m webconsole 入口（systemd ExecStart 调它）
 │   ├── envfile.py                 #   env 文件读取/就地改写/整份校验（纯逻辑）
 │   ├── i18n.py                    #   中英文案目录（X-Lang 请求头驱动，ADR-013）
 │   ├── sysactions.py              #   systemctl/journalctl/helper 动作封装 + 值格式预校验
 │   ├── logfilter.py               #   journal 行解析/级别分类/过滤（纯逻辑）
-│   ├── server.py                  #   HTTP 壳：JSON API + 静态页 + 单帧检测 + 最近记录/响应详情 + 相机画面快照
+│   ├── server.py                  #   HTTP 壳：JSON API + 静态页 + 单帧检测 + 最近记录/响应详情 + 相机画面快照 + 视频源管理/发现
 │   └── static/index.html          #   单页前端（原生 JS，亮/暗双主题，token 可选）
 │
-├── tests/                         # unittest（非 pytest），249 项，含本地假 AI 服务端到端
+├── tests/                         # unittest（非 pytest），418 项，含本地假 AI 服务端到端
 │   ├── test_config.py             #   默认值/校验/禁用关键词/凭据打码/时钟偏移/保留天数/SAVE_MODE
 │   ├── test_detect.py             #   multipart 结构/HTTP 错误/网络错误/Date 头/时钟测量
 │   ├── test_store.py              #   JSONL/环形删最旧/告警帧/results 保留清理/save_pair 留存
-│   ├── test_sampler.py            #   FakeDetector 驱动，失败保留帧/时钟校准/清理钩子/SAVE_MODE 触发矩阵
+│   ├── test_sampler.py            #   FakeDetector 驱动，失败保留帧/时钟校准/清理钩子/SAVE_MODE 触发矩阵/逐路退避
 │   ├── test_cli.py                #   doctor 门禁（storage/时钟三态）
 │   ├── test_integration.py        #   ThreadingHTTPServer 假 AI 服务，真 HTTP 全链路
 │   ├── test_snapshot.py           #   相机画面：单帧抓拍命令/来源优先级/缓存/失败兜底（ADR-012）
-│   └── test_webconsole.py         #   envfile/logfilter/sysactions 单测 + 控制台 HTTP 端到端 + 响应查看/单帧留存/时间轴/只读文件浏览/相机画面
+│   ├── test_webconsole.py         #   envfile/logfilter/sysactions 单测 + 控制台 HTTP 端到端 + 响应查看/单帧留存/时间轴/只读文件浏览/相机画面
+│   ├── test_identity.py           #   身份与命名：字符集/派生名/env 反查（ADR-017）
+│   ├── test_sources.py            #   Source 模型：scheme 推导/语法解析/禁词守卫（ADR-016）
+│   ├── test_sources_api.py        #   dump_sources 序列化往返 / mutate_sources 列表运算 / /api/sources 与 discover HTTP 行为（ADR-016）
+│   ├── test_adapter.py            #   scheme → ffmpeg 参数适配（含 device:// 的 allow_local_device 闸门）
+│   ├── test_discover.py           #   发现器三级降级/并发与预算控制/假 runner
+│   ├── test_deploy_units.py       #   部署渲染契约：render_env/render_units + 缺省身份字节级不变 + 漂移检测
+│   ├── test_env_upsert.py         #   env 键级 upsert（改名迁移只动身份派生键）
+│   └── fixtures/                  #   render_env_legacy.py：ADR-017 改造前的渲染器快照（只读守护）
 │
 ├── deploy/
-│   ├── m20-ai-detect.service      #   systemd unit（User=user / CPUAffinity=0-3 / MemoryMax=1G）
+│   ├── m20-ai-detect.service      #   systemd unit（User=user / CPUAffinity=0-3 / MemoryMax=1G）——由 units/ 模板渲染
 │   ├── m20-ai-detect.env.example  #   GOS 生产配置模板（可入库，不含密钥）
+│   ├── site.env.example           #   部署前统一配置（目标机/相机/端口/APP_ID）；cp 成 site.env 后由 install.sh 渲染
+│   ├── render_env.py              #   site.env + 模板 → 远端 env（--app-id 改名；缺省身份不写键）
+│   ├── render_units.py            #   units/*.tmpl → unit×2/helper/sudoers 四类产物（--check 防漂移）
+│   ├── identity.sh                #   bash 侧身份解析（与 identity.py 逐条对齐）+ 现场渲染
+│   ├── env_upsert.py              #   env 键级 upsert（迁移工具的核心，可单测）
+│   ├── migrate-rename.sh          #   老部署改名：dry-run → --apply → --switch → --purge-legacy
 │   ├── bootstrap.sh               #   【104 上执行】首次部署：依赖检查/目录/unit/logrotate/doctor
+│   ├── preflight.sh               #   【主机上执行】部署前只读体检：7 组 ~20 项，PASS/WARN/FAIL + 退出码
 │   ├── install.sh                 #   【开发机执行】测试→备份→同步→自检→重启→回滚指引
-│   ├── m20-ai-console.service     #   控制台 unit（User=user / 0-3 小核 / MemoryMax=256M）
+│   ├── install-local.sh           #   【主机上执行】离线就地更新：先拷过来，再白名单覆盖+自检+重启
+│   ├── m20-ai-console.service     #   控制台 unit（User=user / 0-3 小核 / MemoryMax=256M）——由 units/ 模板渲染
 │   ├── m20-ai-console.env.example #   控制台自身配置（绑定/端口/token，可入库）
-│   ├── m20-ai-console-helper      #   root 提权 helper（sudoers 白名单精确调用，参数二次校验）
-│   ├── m20-ai-console.sudoers     #   sudoers 白名单（13 条精确命令，无通配符）
-│   ├── aiDetect                   #   【104 上执行】终端运维命令（up/down/restart/enable/disable/reset/status/log，ADR-007）
-│   └── console-bootstrap.sh       #   【104 上执行】控制台首次部署：env/helper/sudoers/aiDetect/unit/冒烟/启动
+│   ├── m20-ai-console-helper      #   root 提权 helper（sudoers 白名单精确调用，参数二次校验）——由 units/ 模板渲染
+│   ├── m20-ai-console.sudoers     #   sudoers 白名单（13 条精确命令，无通配符）——由 units/ 模板渲染
+│   ├── aiDetect                   #   【104 上执行】终端运维命令（up/down/restart/enable/disable/reset/status/log，ADR-007；按身份反查）
+│   ├── console-bootstrap.sh       #   【104 上执行】控制台首次部署：env/helper/sudoers/aiDetect/unit/冒烟/启动
+│   ├── profiles/                  #   平台差异片段：m20pro-dual / lite3-single / ipc-generic / local-usb
+│   └── units/                     #   unit/helper/sudoers 模板（@@APP_ID@@ 等占位符，render_units.py 渲染）
 │
 └── docs/
     ├── adr-template.md            #   架构决策记录模板
@@ -101,9 +122,13 @@ m20-ai-detect/
     ├── ADR-010-配置单位语义与启动行为.md # 裸数字=默认单位（体积MB/时长天）、up只起控制台、采集默认关闭
     ├── ADR-011-关注目标与数据清空.md # 关注目标=告警+alert 留存过滤（网页可编辑）；purge 清空 saved/results/raw/spool
     ├── ADR-012-相机画面预览.md      #   单帧快照：raw 最新帧优先 / ffmpeg 即时抓帧兜底；「相机画面」卡自动刷新
-    ├── ADR-013-控制台界面中英适配.md #   X-Lang 请求头 + 前端 i18n JSON（217 键）；顶栏中文/EN 切换；词典一致性单测
+    ├── ADR-013-控制台界面中英适配.md #   X-Lang 请求头 + 前端 i18n JSON（234 键）；顶栏中文/EN 切换；词典一致性单测
     ├── ADR-014-留存卡按钮语义澄清.md #   ①留存条件 / ②容量与时长 分节；按钮文案点明维度；不可混淆单测
-    └── ADR-015-卡片折叠.md          #   每卡 ▾ 折叠 + 顶栏全部折叠/展开；状态记 localStorage；折叠暂停轮询
+    ├── ADR-015-卡片折叠.md          #   每卡 ▾ 折叠 + 顶栏全部折叠/展开；状态记 localStorage；折叠暂停轮询
+    ├── ADR-016-通用视频源与设备适配.md #  Source 模型 / type:// URI / 三级发现器 / profile 文件（多机型通用化）
+    ├── ADR-017-身份与命名.md        #   app_id 派生全部对外名字（unit/env/helper/sudoers/logrotate）；缺省 m20 字节级不变；migrate-rename.sh 改名迁移
+    ├── 部署到新M20.md              #   换机器部署手册：只传哪个子目录/路径四条硬要求/6 项必改配置/两种部署模式（推送 or 就地覆盖）/验收/回滚/已知坑
+    └── 迁移到Lite3.md              #   跨平台迁移手册：部署位选 103（120 无 ffmpeg）、复用 120 的 MediaMTX 流 rtsp+tcp://192.168.1.120:8554/test、APP_ID=lite3 身份隔离
 ```
 
 ### 运行时数据目录（部署后由 `Store` 自动创建，已 gitignore）
@@ -140,11 +165,15 @@ m20-ai-detect/
 
 ### 2.3 配置注入：全部走 `M20AI_*` 环境变量
 
-三层配置，优先级从低到高：
+**运行时是三层**（优先级从低到高）：
 
 1. **代码默认值**（`config.py` dataclass field）——只放"换任何机器都不变"的值；
-2. **`m20-ai-detect.env`**（由 `deploy/m20-ai-detect.env.example` 复制，**不入库**）——systemd 经 `EnvironmentFile=` 加载，本机私密；
+2. **`<BASE>/m20-ai-detect.env`**（由 `deploy/m20-ai-detect.env.example` 复制，**不入库**）——systemd 经 `EnvironmentFile=` 加载，**唯一的现场配置源**；
 3. **shell 环境变量**——临时调试覆盖，如 `M20AI_FPS=0.2 make run`。
+
+**部署期还有一层**（不参与运行时）：`deploy/site.env` —— 在开发机上把目标机/相机源/端口一次填好，
+`install.sh` 调用 `deploy/render_env.py` 把它渲染成第 2 层再上传（首次自动写；已有则需 `--with-env`，
+会先备份）。详见 `docs/部署到新M20.md` §3.5。
 
 常用变量（完整列表见 `deploy/m20-ai-detect.env.example` 注释）：
 
@@ -153,7 +182,8 @@ m20-ai-detect/
 | `M20AI_BASE_DIR` | `/home/djw/m20-ai-detect` | **改它必须同步改 unit 的 `ReadWritePaths`** |
 | `M20AI_AI_BASE` | `http://jsxy.aihyzh.com:30881` | AI 服务地址；含 `@` 时日志自动打码 |
 | `M20AI_CAP_ID` | `ai-04-yolov8-object-detection` | 33 项能力之一 |
-| `M20AI_ENABLE_F/_B`、`M20AI_SRC_F/_B` | 前视开/后视关 | **换部署位只改这里**，不动代码 |
+| `M20AI_ENABLE_F/_B`、`M20AI_SRC_F/_B` | 前视开/后视关 | 旧两槽位写法，仍有效；**换部署位优先用 `M20AI_SOURCES`**（下行），不动代码 |
+| `M20AI_SOURCES` | 空 | **新写法**（ADR-016）：`name=类型://地址[|选项]`，`;` 分隔，任意 N 路（rtsp/rtmp/http/device/file/onvif）；设了即覆盖旧两槽位。控制台「视频源与采集」卡可视化增删改启停 + 扫描；本地相机 `device://` 需配合 `M20AI_ALLOW_LOCAL_DEVICE=1` |
 | `M20AI_FPS` | `1` | 每秒抽帧数；2 Mbps 流下 1 fps 足够 |
 | `M20AI_RING_MAX_MB` | `200` | raw/ 环形缓冲上限（**默认单位 MB**，≥10；可写 `200M`/`1G`） |
 | `M20AI_SAVE_MODE` | `off` | 响应留存条件（ADR-006）：`off`=只写 JSONL；`alert`=只存出现「关注目标」的帧（见下行，ADR-011）；`any`=检出任意目标；`all`=每帧。触发时成对落 `saved/<cam>/`（标注图 + 原始响应），JSONL 记 `saved_image`/`resp_path` |
@@ -170,7 +200,7 @@ m20-ai-detect/
 
 ### 3.1 单仓库单版本号
 
-- 版本号唯一来源：`src/m20_ai_detect/__init__.py` 的 `__version__`（当前 `0.8.6`；`webconsole/__init__.py` 同步同号）。
+- 版本号唯一来源：`src/m20_ai_detect/__init__.py` 的 `__version__`（当前 `0.8.12`；`webconsole/__init__.py` 同步同号）。
 - `pyproject.toml` 不重复写版本；`python3 -m m20_ai_detect --version` 可直接核对远端部署的是哪一版。
 - 版本语义：`0.x` 期表示接口（JSONL 字段、CLI 子命令）仍可能调；`1.0` 锁定 JSONL `v` 字段 schema。
 
@@ -185,7 +215,7 @@ main（稳定，随时可部署）
 - **提交信息**：`类型: 摘要`，类型取 `feat/fix/refactor/test/docs/deploy/chore`。
 - **`docs/ADR-*` 是契约**：改部署位、改依赖策略、改 JSONL schema，必须先写/改 ADR 再改码——ADR 记录"为什么"，代码记录"是什么"。
 - **禁止入库**：`m20-ai-detect.env`、任何含口令/Token 的文件、`spool/raw/results/alerts` 运行数据。`.gitignore` 已覆盖，新增敏感文件请同时更新它。
-- **行尾**：`.gitattributes` 固化 LF；Windows 检出若变 CRLF，脚本上主机会报 `bad interpreter`——`install.sh` 第 1 步有 `file` 检查兜底。
+- **行尾**：`.gitattributes` 固化 LF；Windows 上写出的 `.sh` 极易带 CRLF（上机会报 `bad interpreter` / `syntax error near unexpected token in`）——`install.sh` 第 1 步用 **Python 按字节**检测（Windows 的 `file` 与 MSYS 的 `grep $'\r'` 都会漏检），命中即拒部署；`install-local.sh` 也会自动把 CRLF 转 LF。
 
 ### 3.3 远端与本地的对应关系
 
@@ -208,11 +238,14 @@ make logs                     # 远端 journalctl -u m20-ai-detect -n 80
 make stop                     # 停远端服务（不影响机器人推流）
 ```
 
-换主机：`HOST=m20pro-NOS.106 make deploy`（NOS 上同样可达相机流；配合改 env 里的 `M20AI_SRC_*` 即可，代码零改动）。
+换主机：`./deploy/install.sh user@<IP> --check` 先测连通，再 `./deploy/install.sh user@<IP>`（也支持 `make deploy HOST=user@<IP>`；配合改 env 里的 `M20AI_SRC_*` 即可，代码零改动）。
 
 ### 4.2 首次部署（104 上一鱼次）
 
 ```bash
+# ⓿ 目标机：先只读体检（判断能不能装、装哪个路径），FAIL 就别急着部署
+ssh m20pro-GOS.104 'bash ~/m20-ai-detect/deploy/preflight.sh --base /home/djw/m20-ai-detect'
+
 # ① 开发机：只同步代码，不重启（此时 unit 还没装）
 NO_RESTART=1 make deploy
 
@@ -258,7 +291,7 @@ make deploy-doctor               # 远端真实环境跑，这才是门禁
 
 ### 4.5 可视化控制台（ADR-005）
 
-浏览器打开 **`http://10.21.31.104:5050`**（GOS 内网），零依赖单页：状态总览、服务启停、**中英切换（顶栏 中文/EN，ADR-013）**、**相机画面（采集运行中=采样器当前帧、未运行=即时抓帧，ADR-012）**、**目标图片时间轴（滑动时间条回看检出图，ADR-008）**、**数据文件只读浏览（五个数据目录，ADR-009）**、日志查看（级别过滤/搜索/自动刷新/着色）、检测能力与参数编辑（保存即写 env；采集运行中自动重启生效，停着的不拉起）、单帧检测（上传图→AI→结果图）、相机/采集配置、**关注目标（告警 + alert 留存过滤，今日检出标签一键点选，ADR-011）**、留存策略（两区：①留存条件 `SAVE_MODE`／②容量与时长 ring·results·saved 上限与天数，各配自己的保存按钮，ADR-014；另有 journal 清理/logrotate）、**数据清理（勾选清空 saved/results/raw/spool；停采集仅当运行中、清完恢复原状态，ADR-011）**。
+浏览器打开 **`http://10.21.31.104:5050`**（GOS 内网），零依赖单页：状态总览、服务启停、**中英切换（顶栏 中文/EN，ADR-013）**、**相机画面（采集运行中=采样器当前帧、未运行=即时抓帧，ADR-012）**、**目标图片时间轴（滑动时间条回看检出图，ADR-008）**、**数据文件只读浏览（五个数据目录，ADR-009）**、日志查看（级别过滤/搜索/自动刷新/着色）、检测能力与参数编辑（保存即写 env；采集运行中自动重启生效，停着的不拉起）、单帧检测（上传图→AI→结果图）、视频源/采集配置（ADR-016：源列表增删改启停 + 扫描发现，任意 N 路）、**关注目标（告警 + alert 留存过滤，今日检出标签一键点选，ADR-011）**、留存策略（两区：①留存条件 `SAVE_MODE`／②容量与时长 ring·results·saved 上限与天数，各配自己的保存按钮，ADR-014；另有 journal 清理/logrotate）、**数据清理（勾选清空 saved/results/raw/spool；停采集仅当运行中、清完恢复原状态，ADR-011）**。
 
 **只读文件浏览（ADR-009）**：控制台"数据文件（只读浏览）"卡片可逐级点开 `saved/`、`raw/`、`results/`、`spool/`、`log/`，点文件即预览（图片直接显示，文本读末尾 N 行），并提供下载直链。也可直接调接口：
 
@@ -307,6 +340,19 @@ make deploy-console              # 一键部署（install.sh → console-bootstr
 > **启动行为（ADR-010）**：`up/down/restart/enable/disable` 只作用于控制台；采集另由 `collect` 或网页「采集开关」控制，默认关闭。旧的 `--all` 参数已移除（传参会直接报错，不会静默忽略）。
 
 提权模型不变：服务动作经 sudoers 白名单调 helper（NOPASSWD、精确命令行，无任何自由参数）；删 `spool/` 帧不提权（文件归 `user`）。脚本本体 `deploy/aiDetect` 为纯 bash 单文件、零依赖；`install.sh` 本地门禁已加入 `bash -n` 语法检查与 LF 行尾检查。
+
+### 4.7 身份与改名（ADR-017）
+
+unit / env / helper / sudoers / logrotate 的名字全部由 **`app_id`** 派生，**缺省 `m20` ⇒ GOS 104 上正跑的那份部署零改动**（缺省身份的渲染结果与改造前逐字相同，由 `tests/fixtures/render_env_legacy.py` 字节级守护）。
+
+| 场景 | 做法 |
+|---|---|
+| 老部署继续跑 | 什么都不用做——env 文件名前缀即身份反查依据 |
+| 新机器装 Lite3 / IPC / UGV | `deploy/site.env` 写 `APP_ID=lite3`，按平台 `cat deploy/profiles/lite3-single.env >> <app_id>-ai-detect.env`，再走 `bootstrap.sh` |
+| 老机器改名（不重装） | `bash deploy/migrate-rename.sh --to lite3`（dry-run）→ `--apply` 装入新身份 → `--switch` 停旧起新 → `--purge-legacy` 清理残留 |
+| 换部署路径（不改名） | `site.env` 的 `DEPLOY_DIR` + `bootstrap.sh`（路径同样是配置项，不写死在 unit 里） |
+
+`migrate-rename.sh` 的安全边界：**dry-run 缺省**（一个字节都不碰系统）；`--apply` 只装入不切换（新旧服务并存，旧服务继续跑）；env 迁移是"拷贝 + 只改身份派生键"，你调过的 `M20AI_SRC_*` / `M20AIC_TOKEN` 等一律原样保留；旧 env 文件永不删除。
 
 ---
 
@@ -366,6 +412,7 @@ make deploy-console              # 一键部署（install.sh → console-bootstr
 - **留存清理与时间轴（ADR-008）**：留存 JSON 写入时带 `_saved_at`（真实时钟，ADR-004 修正）与 `_alert`，控制台"目标图片时间轴"卡片据此**滑动时间条回看检出图**；`saved/` 按 `M20AI_SAVED_MAX_MB`（默认 500）/`M20AI_SAVED_KEEP_DAYS`（默认 0）从最旧成对清理（采样器每 10 分钟检查）。磁盘参考（2026-10-16 实测：单对 ≈0.1 MB、检出率 96.2%）：`any` ≈ 7 GB/天（500 MB ≈ 最近 1~2 小时）、`alert` ≈ 0.3 GB/天（500 MB ≈ 1~2 天）——上限、磁盘占用、可回看时长三者联动。
 - **留存过滤与数据清空（ADR-011）**：`SAVE_MODE=alert` 的"过滤清单"就是**关注目标**（`M20AI_ALERT_LABELS`/`M20AI_ALERT_SCORE`）——想"只保存检测到人的图片"，在网页「关注目标」卡设置（含今日检出标签一键点选）即可，保存后采集运行中会自动重启生效。网页「清理数据」块或 `POST /api/retention {"purge":[...]}` 可整体清空 `saved/`（图片+响应）/`results/`（仅 `*.jsonl`）/`raw/`/`spool/`：停采集**仅当运行中**、清完恢复原状态，**不会拉起停着的采集**（ADR-010）；`results/` 属权威数据，手动清空不可恢复。
 - **相机画面（ADR-012）**：控制台「相机画面」卡看当前相机——采集运行中 = `raw/` 最新一页（检测器输入本身，不额外拉流）；未运行 = `ffmpeg` 单次抓帧（同一路 RTSP，1.5 s 短缓存 / 8 s 超时）；再失败兜底显示最近一帧并标"已定格"。`GET /api/snapshot?cam=front`。
+- **视频源管理与发现（ADR-016）**：「视频源与采集」卡 = 源列表表格（名称/类型/地址/启停/删除）+ 手动添加 + 「扫描可视频源」（三级发现器：本机 `/dev/video*`/mediamtx 配置/API/端口穷举，`scope=local|auto|host:<ip>[:port]`）。增删改一律走 `POST /api/sources`（action: add/update/remove/enable/disable）：先 `parse_sources` → 列表运算 → `dump_sources` 整份序列化 → 合并整份校验 → 写 env → 采集在跑才重启（ADR-010 语义同配置保存）。网页保存与手写 env 同一条校验路径：源名重复、`device://` 未放行、全停用、URI 含分隔符等都在落盘前拦下。老部署无 `M20AI_SOURCES` 时列表即生效的两槽位视图，首次保存原地升级。
 - **留存卡按钮语义澄清（ADR-014）**：留存策略卡拆为 ①留存条件（`SAVE_MODE`，只管 `saved/` 准入）与 ②容量与时长（`RING_MAX_MB`/`RESULTS_KEEP_DAYS`/`SAVED_MAX_MB`/`SAVED_KEEP_DAYS`）两节，各自按钮紧贴参数；按钮文案点明维度，note 写明"只管哪段、与什么无关"（破除"改 SAVE_MODE 能省 raw 盘"的误解），单测固化两按钮文案不可混淆。
 - **AI 服务不可用**：指数退避（1→30 s），帧留在 `spool/` 不丢，同时写 `detect_fail` 事件行——恢复后自动续跑。
 - **相机源断了**：`Capture.ensure_running()` 每轮重启抽帧进程；持续断流超 `M20AI_SOURCE_DOWN_SEC` 写心跳行，便于事后区分"没目标"和"没画面"。
@@ -410,7 +457,7 @@ LogRateLimitBurst=30
 
 | 方向 | 触发条件 | 提示 |
 |---|---|---|
-| 双相机 + 多能力 | 后视 `M20AI_ENABLE_B=1`；换 `M20AI_CAP_ID` | 代码已支持，纯配置 |
+| 双相机 + 多能力 | 开启后视（网页「视频源与采集」卡或 `M20AI_ENABLE_B=1` 旧写法）；换 `M20AI_CAP_ID` | 代码已支持（N 路），纯配置；新部署直接写 `M20AI_SOURCES`，见 ADR-016 |
 | 迁 SRS 汇聚点（227） | 多路统一检测 / 跨源对账 / GOS 灾备 / 外部消费（2026-10-15 已降级为远期备选，见 ADR-001 修订记录；单纯账号获批不构成迁移理由） | 改 `M20AI_SRC_*` 为 `rtmp://127.0.0.1:1936/live/m20pro-f` + `M20AI_FFMPEG_EXTRA=-fflags nobuffer -rw_timeout 10000000` |
 | 告警外发 | 需要实时通知 | 当前只落盘；外发（邮件/企业微信）建议独立小模块，别塞进采样主循环 |
 | 本地推理替代公网服务 | AI 服务延迟/可用性不达标 | NOS 负载 0.12 是候选；但 RK3588 无 NPU，YOLOv8 需实测帧率后再议 |

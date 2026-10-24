@@ -5,6 +5,9 @@
 # 只被 sudoers 白名单以精确命令行调用（无通配符自由参数），
 # 参数经 req 文件传递并在本脚本内二次校验（纵深防御）。
 # 装入：sudo install -m 755 deploy/m20-ai-console-helper /usr/local/sbin/
+#
+# 本文件由 deploy/render_units.py 从 deploy/units/ai-console-helper.tmpl 渲染，
+# 不要直接改本文件——改模板后重跑渲染（仓库缺省成品由 --check 看守）。
 # ============================================================
 set -euo pipefail
 

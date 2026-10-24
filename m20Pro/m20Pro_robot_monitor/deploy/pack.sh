@@ -45,7 +45,16 @@ find "$PKG" -type d -name "venv" -prune -exec rm -rf {} + 2>/dev/null || true
 [[ -d "$PKG/tools/capture" ]] && rm -rf "$PKG/tools/capture" || true
 
 tar -czf "$OUT" -C "$TMP_DIR" m20pro_console
-rm -rf "$TMP_DIR"
+# ⚠️ 清理失败**不能**让脚本返回非 0 —— tar 已经生成，此时报错只会让
+#    `pack.sh && scp …` 这类串联静默中断（2026-10-18 连踩两次：
+#    某些环境（沙箱/安全软件）会拦 rm -rf，脚本 rc=1 但包是好的）。
+rm -rf "$TMP_DIR" 2>/dev/null || true
+
+# 真正的成败判据：包存在且非空
+if [[ ! -s "$OUT" ]]; then
+    echo "打包失败：$OUT 不存在或为空" >&2
+    exit 1
+fi
 
 SIZE="$(du -h "$OUT" 2>/dev/null | awk '{print $1}')"
 cat <<EOF

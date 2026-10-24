@@ -14,6 +14,8 @@ import shutil
 import subprocess
 from typing import Callable, Dict, List, Optional, Tuple
 
+#: 缺省身份（ADR-017）。真实的名字应由 Identity 派生后显式传入（service=...）。
+#: 保留模块级常量是为了向后兼容：老调用方不传参数时行为与改造前完全一致。
 SERVICE = "m20-ai-detect"
 
 Runner = Callable[[List[str], float], Tuple[int, str, str]]
@@ -33,15 +35,23 @@ def default_runner(cmd: List[str], timeout: float = 15.0) -> Tuple[int, str, str
 
 
 # ---------------------------------------------------------------- 服务状态
-def service_status(runner: Runner = default_runner) -> str:
-    """返回 active / inactive / failed / unknown。不提权。"""
+def service_status(
+    runner: Runner = default_runner, *, service: str = SERVICE
+) -> str:
+    """返回 active / inactive / failed / unknown。不提权。
+
+    ``service`` 由 Identity.unit_name 传入（ADR-017）；不传即缺省 m20-ai-detect。
+    ⚠️ 必须是**关键字参数**：历史上调用方都把 runner 放在第一个位置。
+    """
     if not shutil.which("systemctl"):
         return "unknown"
-    rc, out, _ = runner(["systemctl", "is-active", SERVICE], 10)
+    rc, out, _ = runner(["systemctl", "is-active", service], 10)
     return out.strip() if rc == 0 else (out.strip() or "unknown")
 
 
-def service_is_active(runner: Runner = default_runner) -> Optional[bool]:
+def service_is_active(
+    runner: Runner = default_runner, *, service: str = SERVICE
+) -> Optional[bool]:
     """采样器是否在运行：True / False；无法确认时 None。不提权。
 
     与 service_status 的差异：不依赖 shutil.which（测试可注入 runner 模拟任何环境），
@@ -49,7 +59,7 @@ def service_is_active(runner: Runner = default_runner) -> Optional[bool]:
     （不碰服务直接清，见 server._purge_with_restart 的说明）。
     activating/reloading 视为在运行（马上可停）；deactivating 视为未运行。
     """
-    rc, out, _ = runner(["systemctl", "is-active", SERVICE], 10)
+    rc, out, _ = runner(["systemctl", "is-active", service], 10)
     val = (out or "").strip().lower()
     if val in ("active", "reloading", "activating"):
         return True
@@ -68,11 +78,13 @@ def service_action(action: str, helper: str, runner: Runner = default_runner) ->
 
 
 # ---------------------------------------------------------------- 日志
-def journal_lines(n: int = 200, runner: Runner = default_runner) -> List[str]:
+def journal_lines(
+    n: int = 200, runner: Runner = default_runner, *, service: str = SERVICE
+) -> List[str]:
     """读本服务 journal（adm 组免提权）。返回原始行列表（最新在末尾）。"""
     n = max(1, min(int(n), 2000))
     rc, out, _ = runner(
-        ["journalctl", "-u", SERVICE, "-n", str(n), "--no-pager", "-o", "short-iso"], 15
+        ["journalctl", "-u", service, "-n", str(n), "--no-pager", "-o", "short-iso"], 15
     )
     if rc != 0:
         return []

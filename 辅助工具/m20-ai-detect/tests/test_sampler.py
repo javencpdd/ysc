@@ -3,9 +3,10 @@ import json
 import os
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 
-from m20_ai_detect.config import Config
+from m20_ai_detect.config import Config, Source
 from m20_ai_detect.detect import DetectResult
 from m20_ai_detect.sampler import Sampler
 from m20_ai_detect.store import Store
@@ -493,6 +494,76 @@ class TestSaveTrigger(unittest.TestCase):
         self.assertEqual(cfg.save_mode, "alert")
         rec = self._run_one(s, store, [{"label": "person", "score": 0.9}])
         self.assertIn("saved_image", rec)
+
+
+class TestPerCameraBackoff(unittest.TestCase):
+    """逐路退避（ADR-016 §5）：一路坏源不能拖慢其它路。
+
+    _on_failure 内部会 time.sleep(backoff)，这里统一 patch 掉 —— 否则指数退避
+    会把测试拖到几十秒。
+    """
+
+    def setUp(self) -> None:
+        self._sleep_patch = mock.patch("m20_ai_detect.sampler.time.sleep")
+        self.slept = []
+        self._sleep_patch.start().side_effect = lambda sec: self.slept.append(sec)
+
+    def tearDown(self) -> None:
+        self._sleep_patch.stop()
+
+    def _cfg(self, names=("front", "back"), **over):
+        cams = [Source(n, "rtsp://h/" + n) for n in names]
+        base = dict(cameras=cams, retry_base=1.0, retry_max=30.0)
+        base.update(over)
+        return Config(**base)  # type: ignore[arg-type]
+
+    def _sampler(self, cfg: Config) -> Sampler:
+        return Sampler(cfg, Store(cfg), detector=FakeDetector([]), log=lambda _m: None)
+
+    @staticmethod
+    def _fail() -> DetectResult:
+        return DetectResult(ok=False, error="boom", wall_ms=1.0, http_status=500, payload=None)
+
+    def test_backoff_is_per_camera(self):
+        cfg = self._cfg()
+        s = self._sampler(cfg)
+        for _ in range(3):
+            s._on_failure(cfg.cameras[0], "front_1.jpg", self._fail())
+        s._on_failure(cfg.cameras[1], "back_1.jpg", self._fail())
+
+        # front 连退三次：1→2→4→8；back 只退一次：1→2
+        self.assertEqual(s._backoff_of(cfg.cameras[0]), 8.0)
+        self.assertEqual(s._backoff_of(cfg.cameras[1]), 2.0)
+        self.assertEqual(self.slept, [2.0, 4.0, 8.0, 2.0])
+
+    def test_success_resets_only_that_camera(self):
+        cfg = self._cfg()
+        s = self._sampler(cfg)
+        for _ in range(2):
+            s._on_failure(cfg.cameras[0], "f.jpg", self._fail())
+            s._on_failure(cfg.cameras[1], "b.jpg", self._fail())
+        s._set_backoff(cfg.cameras[0], cfg.retry_base)
+        self.assertEqual(s._backoff_of(cfg.cameras[0]), 1.0)
+        self.assertEqual(s._backoff_of(cfg.cameras[1]), 4.0)
+
+    def test_backoff_capped_by_retry_max(self):
+        cfg = self._cfg(names=("c",), retry_max=5.0)
+        s = self._sampler(cfg)
+        for _ in range(10):
+            s._on_failure(cfg.cameras[0], "c.jpg", self._fail())
+        self.assertEqual(s._backoff_of(cfg.cameras[0]), 5.0)
+
+    def test_legacy_backoff_field_mirrors_last_value(self):
+        """旧字段仍被镜像刷新，防止老观察者读不到值（向后兼容）。"""
+        cfg = self._cfg(names=("c",))
+        s = self._sampler(cfg)
+        s._on_failure(cfg.cameras[0], "c.jpg", self._fail())
+        self.assertEqual(s._backoff, 2.0)
+
+    def test_unknown_camera_uses_retry_base(self):
+        cfg = self._cfg(names=("c",))
+        s = self._sampler(cfg)
+        self.assertEqual(s._backoff_of(Source("ghost", "rtsp://h/x")), 1.0)
 
 
 if __name__ == "__main__":

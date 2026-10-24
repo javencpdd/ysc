@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# ============================================================
+# @@APP_ID@@-ai-console-helper — 控制台唯一的提权入口（root 运行）
+#
+# 只被 sudoers 白名单以精确命令行调用（无通配符自由参数），
+# 参数经 req 文件传递并在本脚本内二次校验（纵深防御）。
+# 装入：sudo install -m 755 deploy/@@APP_ID@@-ai-console-helper /usr/local/sbin/
+#
+# 本文件由 deploy/render_units.py 从 deploy/units/ai-console-helper.tmpl 渲染，
+# 不要直接改本文件——改模板后重跑渲染（仓库缺省成品由 --check 看守）。
+# ============================================================
+set -euo pipefail
+
+BASE=@@BASE_DIR@@
+SUB="${1:-}"
+REQ="$BASE/tmp/console-$SUB.req"
+
+log() { logger -t @@APP_ID@@-ai-console-helper "$*" 2>/dev/null || true; }
+
+case "$SUB" in
+  svc-start|svc-stop|svc-restart|svc-enable|svc-disable)
+    verb="${SUB#svc-}"
+    systemctl "$verb" @@APP_ID@@-ai-detect
+    log "$verb ok"
+    ;;
+  console-start|console-stop|console-restart|console-enable|console-disable)
+    verb="${SUB#console-}"
+    systemctl "$verb" @@APP_ID@@-ai-console
+    log "console $verb ok"
+    ;;
+  journal-vacuum)
+    [[ -f "$REQ" ]] || { echo "missing req file"; exit 3; }
+    size="$(sed -n 's/^size=//p' "$REQ")"
+    tval="$(sed -n 's/^time=//p' "$REQ")"
+    rm -f "$REQ"
+    if [[ -n "$size" ]]; then
+      [[ "$size" =~ ^[0-9]+(\.[0-9]+)?[KMGT]?$ ]] || { echo "bad size"; exit 3; }
+      journalctl --vacuum-size="$size"
+    elif [[ -n "$tval" ]]; then
+      [[ "$tval" =~ ^[0-9]+(ms|s|m|h|d|w|y)?$ ]] || { echo "bad time"; exit 3; }
+      journalctl --vacuum-time="$tval"
+    else
+      echo "need size or time"; exit 3
+    fi
+    log "journal vacuum done"
+    ;;
+  journald-limits)
+    [[ -f "$REQ" ]] || { echo "missing req file"; exit 3; }
+    use="$(sed -n 's/^SystemMaxUse=//p' "$REQ")"
+    keep="$(sed -n 's/^MaxRetentionSec=//p' "$REQ")"
+    rm -f "$REQ"
+    [[ -z "$use"  || "$use"  =~ ^[0-9]+(\.[0-9]+)?[KMGT]?$ ]] || { echo "bad SystemMaxUse"; exit 3; }
+    [[ -z "$keep" || "$keep" =~ ^[0-9]+(ms|s|m|h|d|w|y)?$ ]] || { echo "bad MaxRetentionSec"; exit 3; }
+    CONF=/etc/systemd/journald.conf
+    [[ -f "$CONF" ]] || { echo "no journald.conf"; exit 3; }
+    sed -i '/# @@APP_ID@@-ai-console managed begin/,/# @@APP_ID@@-ai-console managed end/d' "$CONF"
+    {
+      echo "# @@APP_ID@@-ai-console managed begin"
+      [[ -n "$use"  ]] && echo "SystemMaxUse=$use"
+      [[ -n "$keep" ]] && echo "MaxRetentionSec=$keep"
+      echo "# @@APP_ID@@-ai-console managed end"
+    } >> "$CONF"
+    systemctl restart systemd-journald
+    log "journald limits updated"
+    ;;
+  logrotate-rotate)
+    [[ -f "$REQ" ]] || { echo "missing req file"; exit 3; }
+    n="$(sed -n 's/^rotate=//p' "$REQ")"
+    rm -f "$REQ"
+    [[ "$n" =~ ^[0-9]+$ ]] && [[ "$n" -ge 1 && "$n" -le 365 ]] || { echo "bad rotate"; exit 3; }
+    F=/etc/logrotate.d/@@APP_ID@@-ai-detect
+    [[ -f "$F" ]] || { echo "no logrotate file"; exit 3; }
+    sed -i "s/^[[:space:]]*rotate[[:space:]]\+[0-9]\+/    rotate $n/" "$F"
+    log "logrotate rotate=$n"
+    ;;
+  *)
+    echo "unknown subcommand: $SUB" >&2
+    exit 2
+    ;;
+esac

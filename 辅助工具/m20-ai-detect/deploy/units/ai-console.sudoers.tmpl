@@ -1,0 +1,8 @@
+# @@APP_ID@@-ai-console 提权白名单（root 所有，440）
+# 精确到完整命令行，无通配符自由参数；req 文件内的值由 helper 二次校验。
+# 装入：sudo install -m 440 deploy/@@APP_ID@@-ai-console.sudoers /etc/sudoers.d/@@APP_ID@@-ai-console
+#      sudo visudo -c   （校验语法，失败则不入库）
+# 本文件由 deploy/render_units.py 从 deploy/units/ai-console.sudoers.tmpl 渲染。
+# 2026-10-15 扩充①：新增 console-start/stop/restart（供 aiDetect 终端命令与管理动作），共 9 条。
+# 2026-10-15 扩充②：新增 svc/console 的 enable/disable（开机自启开关，部署默认关闭），共 13 条。
+user ALL=(root) NOPASSWD: /usr/local/sbin/@@APP_ID@@-ai-console-helper svc-start, /usr/local/sbin/@@APP_ID@@-ai-console-helper svc-stop, /usr/local/sbin/@@APP_ID@@-ai-console-helper svc-restart, /usr/local/sbin/@@APP_ID@@-ai-console-helper svc-enable, /usr/local/sbin/@@APP_ID@@-ai-console-helper svc-disable, /usr/local/sbin/@@APP_ID@@-ai-console-helper console-start, /usr/local/sbin/@@APP_ID@@-ai-console-helper console-stop, /usr/local/sbin/@@APP_ID@@-ai-console-helper console-restart, /usr/local/sbin/@@APP_ID@@-ai-console-helper console-enable, /usr/local/sbin/@@APP_ID@@-ai-console-helper console-disable, /usr/local/sbin/@@APP_ID@@-ai-console-helper journal-vacuum, /usr/local/sbin/@@APP_ID@@-ai-console-helper journald-limits, /usr/local/sbin/@@APP_ID@@-ai-console-helper logrotate-rotate

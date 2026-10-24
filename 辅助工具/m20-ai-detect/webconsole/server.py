@@ -6,6 +6,9 @@
   POST /api/service         {"action": start|stop|restart}
   GET  /api/config          当前 env（脱敏）+ 生效配置 + AI 能力列表
   POST /api/config          {"updates": {...}} 校验→写 env→（按需）重启
+  GET  /api/sources         当前视频源列表（含停用源）+ allow_local_device + env 原文
+  POST /api/sources         {"action": add|update|remove|enable|disable, ...}
+  POST /api/sources/discover  {"scope": local|auto|host:<ip>[:port]} 三级发现器
   GET  /api/logs            ?level=&q=&n=   过滤后的 journal 行
   POST /api/detect          单帧检测（body 为 JPEG，?cap=&include_image=1&save=1）
   GET  /api/recent          ?n=    今日 JSONL 尾部真实检测记录（解析后）
@@ -21,7 +24,7 @@
 提权与安全见 sysactions 模块 docstring 与 docs/ADR-005。
 响应留存与查看见 docs/ADR-006；时间轴与 saved/ 清理见 docs/ADR-008；
 受限只读文件浏览见 docs/ADR-009；关注目标与数据清空见 docs/ADR-011；
-相机画面预览见 docs/ADR-012。
+相机画面预览见 docs/ADR-012；视频源管理与发现见 docs/ADR-016。
 """
 from __future__ import annotations
 
@@ -37,7 +40,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import __version__, envfile, i18n, logfilter, sysactions
-from m20_ai_detect.config import Config, ConfigError
+from m20_ai_detect.config import (
+    NAME_RE,
+    Config,
+    ConfigError,
+    Source,
+    dump_sources,
+    parse_sources,
+)
+from m20_ai_detect.discover import discover as discover_sources
+from m20_ai_detect.identity import Identity, discover_app_id, resolve_env_file
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 INDEX_HTML = os.path.join(STATIC_DIR, "index.html")
@@ -53,14 +65,41 @@ class ConsoleConfig:
         self.port = int(env.get("M20AIC_PORT", "5050"))
         self.token = env.get("M20AIC_TOKEN", "").strip()
         self.base_dir = env.get("M20AIC_BASE_DIR", "/home/djw/m20-ai-detect")
-        self.env_file = env.get(
-            "M20AIC_ENV_FILE", os.path.join(self.base_dir, "m20-ai-detect.env")
+
+        # ---- 身份（ADR-017）：服务名 / helper / env 文件名全部由 app_id 派生 ----
+        # 鸡生蛋：env 文件名依赖 app_id，而 app_id 写在 env 文件里。
+        # 解法：先在 base_dir 里扫 *-ai-detect.env 反查，再用它拼出最终文件名。
+        # 不配任何东西时 app_id=m20 ⇒ 拼出来的文件名与改造前**完全相同**。
+        app_id = discover_app_id(self.base_dir, env)
+        explicit_env = (env.get("M20AIC_ENV_FILE") or "").strip()
+        if explicit_env:
+            self.env_file = explicit_env
+        else:
+            self.env_file = (
+                resolve_env_file(self.base_dir, app_id)
+                or os.path.join(self.base_dir, "%s-ai-detect.env" % app_id)
+            )
+        self.app_id = app_id
+        # helper 缺省随 app_id 走；显式 M20AIC_HELPER 优先（旧部署仍写死路径也能用）
+        self.helper = env.get("M20AIC_HELPER", "").strip() or (
+            "/usr/local/sbin/%s-ai-console-helper" % app_id
         )
-        self.helper = env.get("M20AIC_HELPER", "/usr/local/sbin/m20-ai-console-helper")
 
     @property
     def sampler_cfg(self) -> Config:
         return Config.from_env(envfile.read_env(self.env_file))
+
+    @property
+    def identity(self) -> Identity:
+        """身份：app_id 用已确定的那个，展示名/profile 从当前 env 读。"""
+        env_now = dict(envfile.read_env(self.env_file))
+        env_now["M20AI_APP_ID"] = self.app_id  # 已解析的结果优先，避免再绕一圈
+        return Identity.from_env(env_now, base_dir=self.base_dir)
+
+    @property
+    def unit_name(self) -> str:
+        """采样器 unit 名（journalctl -u / systemctl 用）。"""
+        return "%s-ai-detect" % self.app_id
 
 
 def _redact(env: Dict[str, str]) -> Dict[str, str]:
@@ -136,6 +175,111 @@ def _disk_stats(cfg: ConsoleConfig) -> Dict[str, Any]:
             out["disk_free_gb"] = round(usage.f_bavail * usage.f_frsize / 1073741824.0, 1)
     except OSError:
         out["disk_free_gb"] = None
+    return out
+
+
+# ---------------------------------------------------------------- 视频源管理（ADR-016）
+#: POST /api/sources 支持的动作
+SOURCE_ACTIONS = ("add", "update", "remove", "enable", "disable")
+
+#: discover 的 scope 白名单（local / auto / host:<ip>[:port]）
+_SCOPE_RE = re.compile(r"^(?:local|auto|host:[A-Za-z0-9._:-]+)$")
+
+
+def read_sources(cfg: "ConsoleConfig") -> Tuple[List[Source], Dict[str, str]]:
+    """读当前源列表与 env 原文。
+
+    env 里有 ``M20AI_SOURCES`` 就走新语法；老部署没有该键时，用**生效的
+    cameras**（旧两槽位 ENABLE_F/ENABLE_B 回落的结果）直接当列表返回 ——
+    网页上看到的就是生效配置；第一次保存时由 ``dump_sources`` 原地升级成
+    新语法（旧键仍在 env 里，但 Config 优先 SOURCES，不会再被读到）。
+    """
+    env = envfile.read_env(cfg.env_file)
+    raw = (env.get("M20AI_SOURCES") or "").strip()
+    if raw:
+        return parse_sources(raw), env
+    return list(cfg.sampler_cfg.cameras), env
+
+
+def _as_bool(v: Any) -> bool:
+    """body 里的布尔宽松判定：True/"1"/"true"/"on"/"yes" 都算开。"""
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _as_extra(v: Any) -> Tuple[str, ...]:
+    """extra 接受数组或逗号分隔串（与 env 语法一致）；逐项 strip，丢空。"""
+    if isinstance(v, (list, tuple)):
+        items = [str(x) for x in v]
+    else:
+        items = str(v or "").split(",")
+    return tuple(s.strip() for s in items if s.strip())
+
+
+def mutate_sources(
+    sources: List[Source], action: str, body: Dict[str, Any]
+) -> List[Source]:
+    """按 action 返回新列表（不改入参）。参数健全性由调用方提前校验。
+
+    只做列表运算；配置级校验（fps 区间、device:// 闸门、源名重复、
+    至少一路启用）统一交给写盘前的 ``validate_env``，保证网页保存与
+    手写 env 走同一条校验路径。
+    """
+    name = str(body.get("name", "")).strip()
+    out = list(sources)
+    idx = next((i for i, s in enumerate(out) if s.name == name), -1)
+
+    if action == "add":
+        uri = str(body.get("uri", "")).strip()
+        if not uri:
+            raise ConfigError("源 %r 的地址为空（正确写法：%s=rtsp://host/path）" % (name, name))
+        fps_raw = body.get("fps")
+        out.append(
+            Source(
+                name=name,
+                uri=uri,
+                transport=str(body.get("transport", "auto")).strip() or "auto",
+                # fps 已由调用方归一成 float / None（None = 继承全局）
+                fps=fps_raw if isinstance(fps_raw, float) else None,
+                extra=_as_extra(body.get("extra")),
+                enabled=_as_bool(body.get("enabled", True)),
+                note=str(body.get("note", "")).strip(),
+            )
+        )
+        return out
+
+    if idx < 0:
+        raise ConfigError("源 %r 不存在（现有：%s）" % (name, ", ".join(s.name for s in out)))
+    old = out[idx]
+
+    if action == "remove":
+        del out[idx]
+        return out
+
+    # update/enable/disable 共用同一套字段覆盖
+    uri = str(body.get("uri", old.uri)).strip() or old.uri
+    fps_raw = body.get("fps", old.fps)
+    fps: Optional[float] = None
+    if fps_raw not in (None, ""):
+        try:
+            fps = float(fps_raw)
+        except (TypeError, ValueError):
+            raise ConfigError("源 %r 的 fps=%r 不是数字" % (name, fps_raw))
+    enabled = _as_bool(body["enabled"]) if "enabled" in body else old.enabled
+    if action == "disable":
+        enabled = False
+    elif action == "enable":
+        enabled = True
+    out[idx] = replace(
+        old,
+        uri=uri,
+        transport=str(body.get("transport", old.transport)).strip() or "auto",
+        fps=fps,
+        extra=_as_extra(body["extra"]) if body.get("extra") not in (None, "") else old.extra,
+        enabled=enabled,
+        note=str(body.get("note", old.note)).strip(),
+    )
     return out
 
 
@@ -246,7 +390,7 @@ def _purge_with_restart(
     """
     from m20_ai_detect.store import Store
 
-    was_active = sysactions.service_is_active(runner)
+    was_active = sysactions.service_is_active(runner, service=cfg.unit_name)
     if was_active is True:
         ok, msg = sysactions.service_action("stop", cfg.helper, runner)
         if not ok:
@@ -795,6 +939,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._get_status()
             if path == "/api/config":
                 return self._get_config()
+            if path == "/api/sources":
+                return self._get_sources()
             if path == "/api/logs":
                 return self._get_logs()
             if path == "/api/recent":
@@ -826,6 +972,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._post_service()
             if path == "/api/config":
                 return self._post_config()
+            if path == "/api/sources":
+                return self._post_sources()
+            if path == "/api/sources/discover":
+                return self._post_sources_discover()
             if path == "/api/detect":
                 return self._post_detect()
             if path == "/api/retention":
@@ -851,7 +1001,7 @@ class Handler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "version": __version__,
-                "service": sysactions.service_status(),
+                "service": sysactions.service_status(service=cfg.unit_name),
                 "clock_offset_sec": offset,
                 "journal_bytes": sysactions.journal_disk_bytes(),
                 "disk": _disk_stats(cfg),
@@ -859,7 +1009,7 @@ class Handler(BaseHTTPRequestHandler):
                 "alerts_today": alerts,
                 "sampler": {
                     "cap_id": scfg.cap_id,
-                    "cameras": [c.name for c in scfg.cameras],
+                    "cameras": [c.name for c in scfg.enabled_cameras],
                     "fps": scfg.fps,
                     "base_dir": scfg.base_dir,
                 },
@@ -895,7 +1045,23 @@ class Handler(BaseHTTPRequestHandler):
             }
         )
 
+    def _get_sources(self) -> None:
+        """当前视频源列表（ADR-016）。停用源也在列表里——UI 要能重新启用。"""
+        cfg: ConsoleConfig = self.server.cfg
+        sources, env = read_sources(cfg)
+        scfg = cfg.sampler_cfg
+        self._send_json(
+            {
+                "ok": True,
+                "sources": [s.to_dict() for s in sources],
+                "allow_local_device": bool(scfg.allow_local_device),
+                "raw": (env.get("M20AI_SOURCES") or "").strip(),
+                "fps_global": scfg.fps,
+            }
+        )
+
     def _get_logs(self) -> None:
+        cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
         q = self._query()
         level = q.get("level", "all")
         if level not in logfilter.LEVELS:
@@ -904,7 +1070,7 @@ class Handler(BaseHTTPRequestHandler):
             n = int(q.get("n", "300"))
         except ValueError:
             n = 300
-        lines = sysactions.journal_lines(n)
+        lines = sysactions.journal_lines(n, service=cfg.unit_name)
         lines = logfilter.filter_lines(lines, level, q.get("q", ""))
         out = [{"raw": ln, "level": logfilter.classify(ln)} for ln in lines[-500:]]
         self._send_json({"ok": True, "lines": out, "total": len(lines)})
@@ -1076,7 +1242,7 @@ class Handler(BaseHTTPRequestHandler):
                 "saved_max_mb": round(scfg.saved_max_bytes / 1048576.0, 1),
                 "saved_keep_days": scfg.saved_keep_days,
                 "journal_bytes": sysactions.journal_disk_bytes(),
-                "journal_service": sysactions.journal_service_usage(),
+                "journal_service": sysactions.journal_service_usage(cfg.unit_name),
                 "journald_managed": _read_journald_block(),
                 "logrotate_rotate": _read_logrotate_rotate(),
                 "note": self._t("ret.note"),
@@ -1094,6 +1260,20 @@ class Handler(BaseHTTPRequestHandler):
         if not ok:
             return self._err(500, msg or self._t("svc.fail"))
         self._send_json({"ok": True, "action": action, "detail": msg})
+
+    def _restart_note(self, restart: bool) -> str:
+        """改动后的重启说明。语义与 POST /api/config 完全一致（ADR-010：
+        采集运行中才重启使其生效；采集关着**绝不拉起**，只提示下次生效）。"""
+        cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
+        if not restart:
+            return self._t("cfg.no_restart")
+        active = sysactions.service_is_active(service=cfg.unit_name)
+        if active is True:
+            ok, msg = sysactions.service_action("restart", cfg.helper)
+            return self._t("cfg.restarted") if ok else self._t("cfg.restart_fail", msg=msg)
+        if active is False:
+            return self._t("cfg.not_running")
+        return self._t("cfg.unknown_state")
 
     def _post_config(self) -> None:
         cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
@@ -1115,21 +1295,109 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, ValueError) as exc:
             return self._err(500, self._t("err.env_write", e=exc))
         restart = bool(body.get("restart", True))
-        detail = self._t("cfg.written")
-        if restart:
-            # ADR-010：采集开关由用户掌握——配置改动只在采集运行时重启使其生效，
-            # 采集关着时**不拉起**（旧行为会无条件 restart，把停着的采集启动）。
-            active = sysactions.service_is_active()
-            if active is True:
-                ok, msg = sysactions.service_action("restart", cfg.helper)
-                detail += self._t("cfg.restarted") if ok else self._t("cfg.restart_fail", msg=msg)
-            elif active is False:
-                detail += self._t("cfg.not_running")
-            else:
-                detail += self._t("cfg.unknown_state")
-        else:
-            detail += self._t("cfg.no_restart")
+        detail = self._t("cfg.written") + self._restart_note(restart)
         self._send_json({"ok": True, "detail": detail, "applied": sorted(clean)})
+
+    def _post_sources(self) -> None:
+        """视频源增删改启停（ADR-016）。
+
+        闭环：读当前源（老部署无 M20AI_SOURCES 时用生效 cameras 兜底）
+        → 列表运算 → dump_sources 整份序列化 → validate_env 合并整份校验
+        → 落盘 →（按需）重启采集。网页保存与手写 env 走同一条校验路径，
+        非法配置绝不落盘。
+        """
+        cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
+        body, err = self._body_json()
+        if err:
+            return self._err(400, err)
+        action = str(body.get("action", "")).strip().lower()
+        if action not in SOURCE_ACTIONS:
+            return self._err(
+                400, self._t("src.action_bad", actions="/".join(SOURCE_ACTIONS))
+            )
+        name = str(body.get("name", "")).strip()
+        if not name:
+            return self._err(400, self._t("src.name_required"))
+        if not NAME_RE.match(name):
+            return self._err(400, self._t("src.name_bad", name=name))
+
+        sources, _env = read_sources(cfg)
+        if action == "add" and any(s.name == name for s in sources):
+            return self._err(400, self._t("src.dup", name=name))
+        if action == "remove" and len(sources) <= 1:
+            return self._err(400, self._t("src.last_one"))
+
+        # fps 归一：float 或 None（清空 = 继承全局）；非数字早拒，消息可操作
+        fps_raw = body.get("fps")
+        if fps_raw not in (None, "") and action in ("add", "update"):
+            try:
+                body["fps"] = float(fps_raw)
+            except (TypeError, ValueError):
+                return self._err(400, self._t("src.fps_bad", v=fps_raw))
+
+        try:
+            new_sources = mutate_sources(sources, action, body)
+            raw_text = dump_sources(new_sources)
+        except ConfigError as exc:
+            return self._err(400, str(exc))
+        if not new_sources:  # 兜底：任何路径都不许把源列表清空
+            return self._err(400, self._t("src.last_one"))
+
+        current = envfile.read_env(cfg.env_file)
+        ok, errors = envfile.validate_env(current, {"M20AI_SOURCES": raw_text})
+        if not ok:
+            return self._err(400, self._t("err.validate", detail=self._sep("clause").join(errors)))
+        try:
+            envfile.set_env_keys(cfg.env_file, {"M20AI_SOURCES": raw_text})
+        except (OSError, ValueError) as exc:
+            return self._err(500, self._t("err.env_write", e=exc))
+
+        detail = self._t("src.written") + self._restart_note(bool(body.get("restart", True)))
+        self._send_json(
+            {
+                "ok": True,
+                "sources": [s.to_dict() for s in new_sources],
+                "raw": raw_text,
+                "detail": detail,
+            }
+        )
+
+    def _post_sources_discover(self) -> None:
+        """三级发现器入口（ADR-016 §3）：local / auto / host:<ip>[:port]。
+
+        只读探测（读配置 + 起短命 ffmpeg/curl 探测），不改任何配置；
+        候选列表连同 verdict 一起返回，勾选后再走 POST /api/sources 落盘。
+        """
+        cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
+        body, err = self._body_json()
+        if err:
+            return self._err(400, err)
+        scope = str(body.get("scope", "local")).strip() or "local"
+        if not _SCOPE_RE.match(scope):
+            return self._err(400, self._t("src.scope_bad"))
+        try:
+            timeout = float(body.get("timeout_s", 3.0))
+            budget = float(body.get("budget_s", 20.0))
+        except (TypeError, ValueError):
+            return self._err(400, self._t("src.timeout_bad"))
+        paths = body.get("paths")
+        if isinstance(paths, str):
+            paths = [p.strip() for p in paths.split(",") if p.strip()]
+        elif isinstance(paths, (list, tuple)):
+            paths = [str(p).strip() for p in paths if str(p).strip()]
+        else:
+            paths = []
+        scfg = cfg.sampler_cfg
+        out = discover_sources(
+            scope=scope,
+            ffmpeg_bin=scfg.ffmpeg_bin,
+            paths=list(paths)[:64],
+            base_dir=scfg.base_dir,
+            timeout=min(max(timeout, 0.5), 10.0),
+            budget_s=min(max(budget, 1.0), 60.0),
+        )
+        out["ok"] = True
+        self._send_json(out)
 
     def _post_detect(self) -> None:
         cfg: ConsoleConfig = self.server.cfg  # type: ignore[attr-defined]
@@ -1279,7 +1547,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # ---- 采集重启（让 env 级改动即时生效；purge 已恢复过采集则跳过）----
         if restart_collect and not purged:
-            active = sysactions.service_is_active()
+            active = sysactions.service_is_active(service=cfg.unit_name)
             if active is True:
                 ok, msg = sysactions.service_action("restart", cfg.helper)
                 if ok:

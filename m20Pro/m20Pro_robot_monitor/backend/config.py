@@ -105,6 +105,23 @@ class ControlSettings(BaseSettings):
     #   0.25≈0.32m/s 舒适档 / 0.40≈0.54m/s 上限 / ≥0.70≈1.1m/s 已实测危险）
     axis_min: float = -0.40
     axis_max: float = 0.40
+    # 雷达默认关闭（**显式配置开关**，2026-10-20 加，默认 False = 不改变既有行为）。
+    #
+    # 开启后，后端在下面两个时机**自动下发一次** 1101/3 {"Lidar":{"Front":0,"Back":0}}：
+    #   ① 服务启动并首次收到设备帧时（雷达当前开着才发）；
+    #   ② 任何人执行「唤醒整车」（1101/6）之后 —— 按取证结论，唤醒会恢复传感器供电。
+    #
+    # ⚠️ 三条硬边界（与人工操作同一道闸，一条都没放宽）：
+    #   · 站立 / RL 态**不关**（`_check_device_switch` 的运动锁照常生效）；
+    #   · 只在雷达当前确实开着时发，不会循环下发、不会和操作员抢着按；
+    #   · 走系统通道（`execute_system_device`），审计与报文记录里 actor=system，
+    #     可逐条追溯；但它**绕过 L1 / 控制权归属 / 租约闸** —— 因为"没人操作时"
+    #     这些闸必然是不满足的，否则策略永远不可能生效。
+    #
+    # 影响面（2026-10-20 实测）：关雷达 = 建图 / 定位 / 导航 / 自动回充失去输入
+    # （lio-perception、height_map_nav、localization、astar、localPlanner、
+    #  charge_manager 都吃雷达数据）；遥测 / 相机 / 推流 / GPS 不受影响。
+    lidar_default_off: bool = False
 
 
 class VideoSettings(BaseSettings):
